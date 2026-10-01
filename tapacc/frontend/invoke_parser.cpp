@@ -67,6 +67,17 @@ uint64_t ConvertToPortType(const clang::ASTContext& ctx,
   return converted.getZExtValue();
 }
 
+// Both control pipelines forward raw scalar bits. Distributed control packs
+// each source into a field sized for the child, so even integral resizing
+// requires a conversion that the generated wiring does not provide.
+bool CanForwardScalar(const clang::ASTContext& ctx, clang::QualType source,
+                      clang::QualType destination) {
+  if (ctx.hasSameUnqualifiedType(source, destination)) return true;
+  return source->isIntegerType() && destination->isIntegerType() &&
+         !source->isBooleanType() && !destination->isBooleanType() &&
+         ctx.getIntWidth(source) == ctx.getIntWidth(destination);
+}
+
 // step (bulk-synchronous mode), vector length, and whether an explicit instance
 // name is present, from the invoke method's template specialization arguments.
 struct InvokeMode {
@@ -446,6 +457,17 @@ void ParseInvocations(UpperTaskContext& uc, const clang::Expr* task_obj) {
           } else if (arg_value) {
             set_const(*arg_value, port);
           } else {
+            if (!CanForwardScalar(uc.ctx, arg->getType(), param->getType())) {
+              auto diag = ReportCustomDiag(
+                  uc.ctx, clang::DiagnosticsEngine::Error, arg->getBeginLoc(),
+                  "unsupported runtime scalar conversion from '%0' to '%1' "
+                  "for task port '%2'; use matching scalar types and convert "
+                  "inside a leaf task");
+              diag.AddString(arg->getType().getAsString());
+              diag.AddString(param->getType().getAsString());
+              diag.AddString(port);
+              continue;
+            }
             set_arg(arg_name, port, TapaKind::kNotTapa);  // scalar
           }
           continue;

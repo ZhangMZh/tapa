@@ -290,6 +290,62 @@ unsigned CountUpperTaskErrors(llvm::StringRef code, llvm::StringRef top) {
   return static_cast<unsigned>(run.diags.size());
 }
 
+TEST(InvokeParser, RuntimeScalarBindingsRequireBitPreservingTypes) {
+  constexpr char kForward[] = R"cpp(
+    using Scalar = float;
+    enum class Mode : unsigned { First };
+    void Float(const Scalar value) {}
+    void Integer(unsigned value) {}
+    void Enum(Mode value) {}
+    void Top(const float value, int integer, Mode mode) {
+      tapa::task().invoke(Float, value).invoke(Integer, integer).invoke(Enum, mode);
+    }
+  )cpp";
+  auto p = ParseCode(kForward, "Top");
+  const auto& insts = p.Task("Top").instances;
+  EXPECT_EQ(insts.at("Float")[0].args.at("value").arg, "value");
+  EXPECT_EQ(insts.at("Integer")[0].args.at("value").arg, "integer");
+  EXPECT_EQ(insts.at("Enum")[0].args.at("value").arg, "mode");
+
+  constexpr char kConvert[] = R"cpp(
+    enum class Mode : unsigned { First };
+    void Float(float value) {}
+    void Double(double value) {}
+    void Integer(int value) {}
+    void Flag(bool value) {}
+    void Wide(long long value) {}
+    void Narrow(unsigned short value) {}
+    void UnsignedWide(unsigned long long value) {}
+    void Enum(Mode value) {}
+    void Top(int integer, const int readonly, float fp, double dp,
+             unsigned unsigned_value) {
+      const int runtime = integer;
+      tapa::task()
+          .invoke(Float, integer)
+          .invoke(Float, readonly)
+          .invoke(Float, runtime)
+          .invoke(Integer, fp)
+          .invoke(Double, fp)
+          .invoke(Float, dp)
+          .invoke(Flag, integer)
+          .invoke(Wide, integer)
+          .invoke(Narrow, unsigned_value)
+          .invoke(UnsignedWide, unsigned_value)
+          .invoke(Enum, unsigned_value);
+    }
+  )cpp";
+  auto run = test_support::RunTreePipeline(
+      {test_support::VirtualTu{"/proj/scalar_conversion.cpp", kConvert}}, "Top",
+      testing::TempDir() + "/scalar_conversion", {"-std=c++17"});
+  EXPECT_FALSE(run.ok);
+  ASSERT_EQ(run.diags.size(), 11u);
+  for (const auto& diag : run.diags) {
+    EXPECT_NE(diag.find("unsupported runtime scalar conversion"),
+              std::string::npos)
+        << diag;
+  }
+}
+
 TEST(InvokeParser, NestedScopeStreamDeclIsAnErrorNotSilence) {
   // A stream declared inside a scope block was previously invisible to
   // CollectStreamDecls and silently dropped from the task graph.

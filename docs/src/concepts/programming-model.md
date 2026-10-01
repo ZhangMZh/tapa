@@ -133,6 +133,10 @@ The `--bitstream` flag is what controls which backend runs:
   named `constexpr` and constant-initialized `const` integers, are converted to
   the child scalar parameter type, including numeric conversion to `float` and
   `double`.
+  Runtime scalar bindings must use the same type (ignoring aliases and cv
+  qualifiers) or equal-width non-boolean integer types. Other conversions are
+  rejected; pass matching scalar types and convert inside a leaf task instead.
+  A `const` runtime parameter is not a compile-time constant.
 - Software simulation runs automatically when `tapa::invoke` receives an empty
   bitstream path.
 
