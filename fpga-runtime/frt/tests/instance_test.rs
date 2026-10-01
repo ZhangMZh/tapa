@@ -37,47 +37,45 @@ fn ensure_verilator() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-fn dpi_library_name() -> &'static str {
+fn dpi_library_name(package: &str) -> String {
     #[cfg(target_os = "macos")]
     {
-        "libfrt_dpi_verilator.dylib"
+        format!("lib{}.dylib", package.replace('-', "_"))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        "libfrt_dpi_verilator.so"
+        format!("lib{}.so", package.replace('-', "_"))
     }
 }
 
-fn ensure_dpi_lib_built() {
-    static READY: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    READY.get_or_init(|| {
-        // The runtime searches for the library starting from this test
-        // executable, so build into the target dir the executable actually
-        // runs from (`<target-root>/debug/deps/<test>`). Deriving it from
-        // the env or a default breaks under harnesses that relocate the
-        // target dir by flag, e.g. `cargo llvm-cov --target-dir`.
-        let exe = std::env::current_exe().expect("test executable path");
-        let target_root = exe
-            .ancestors()
-            .nth(3)
-            .expect("test executable under <target-root>/debug/deps");
-        let target_lib = target_root.join("debug").join(dpi_library_name());
-        if target_lib.exists() {
-            return;
-        }
-        let status = Command::new("cargo")
-            .args(["build", "-p", "frt-dpi-verilator", "--target-dir"])
-            .arg(target_root)
-            .current_dir(workspace_root())
-            .status()
-            .expect("spawn cargo build for frt-dpi-verilator");
-        assert!(status.success(), "failed to build frt-dpi-verilator");
-        assert!(
-            target_lib.exists(),
-            "frt-dpi-verilator built but {} is missing",
-            target_lib.display()
-        );
-    });
+fn ensure_dpi_lib_built(package: &str) -> PathBuf {
+    // The runtime searches for the library starting from this test
+    // executable, so build into the target dir the executable actually
+    // runs from (`<target-root>/debug/deps/<test>`). Deriving it from
+    // the env or a default breaks under harnesses that relocate the
+    // target dir by flag, e.g. `cargo llvm-cov --target-dir`.
+    let exe = std::env::current_exe().expect("test executable path");
+    let target_root = exe
+        .ancestors()
+        .nth(3)
+        .expect("test executable under <target-root>/debug/deps");
+    let target_lib = target_root.join("debug").join(dpi_library_name(package));
+    if target_lib.exists() {
+        return target_lib;
+    }
+    let status = Command::new("cargo")
+        .args(["build", "-p", package, "--target-dir"])
+        .arg(target_root)
+        .current_dir(workspace_root())
+        .status()
+        .expect("spawn cargo build for DPI library");
+    assert!(status.success(), "failed to build {package}");
+    assert!(
+        target_lib.exists(),
+        "{package} built but {} is missing",
+        target_lib.display()
+    );
+    target_lib
 }
 
 fn make_manual_zip() -> PathBuf {
@@ -164,7 +162,7 @@ fn open_cosim_verilator_zip_mmap_stream_roundtrip() {
         eprintln!("skipping: verilator not found in PATH");
         return;
     }
-    ensure_dpi_lib_built();
+    ensure_dpi_lib_built("frt-dpi-verilator");
 
     let zip_path = make_manual_zip();
     let mut instance =
@@ -199,12 +197,148 @@ fn open_cosim_verilator_zip_mmap_stream_roundtrip() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+fn xsim_write_response_survives_ready_withdrawal() {
+    use frt_cosim::context::CosimContext;
+    use frt_cosim::metadata::load_spec;
+    use frt_cosim::tb::xsim::{XsimOptions, XsimTbGenerator};
+    use std::collections::HashMap;
+
+    if !ensure_verilator() {
+        eprintln!("skipping: verilator not found in PATH");
+        return;
+    }
+    let dpi_lib = ensure_dpi_lib_built("frt-dpi-xsim");
+    let (spec, _extracted) = load_spec(&make_manual_zip()).expect("load manual kernel");
+    let mut ctx = CosimContext::new(&spec).expect("create cosim context");
+    ctx.resize_buffer("a", 4).expect("resize mmap");
+    ctx.buffers
+        .get_mut("a")
+        .expect("mmap")
+        .as_mut_slice()
+        .copy_from_slice(&10u32.to_le_bytes());
+    ctx.streams
+        .get_mut(&spec.args[1].name)
+        .expect("stream")
+        .try_push(&pack_stream_elem_u32(7, false))
+        .expect("push stream word");
+
+    let scalar_values = HashMap::new();
+    let mut tb = XsimTbGenerator::new(
+        &spec,
+        &dpi_lib,
+        &ctx.base_addresses,
+        &scalar_values,
+        "",
+        XsimOptions::default(),
+    )
+    .render_tb()
+    .expect("render Xsim testbench");
+    // Drive the DUT register so both endpoints see the same readiness. Change
+    // it only on falling edges: the WLAST edge sees BREADY=1 and BVALID=0,
+    // then the response must remain pending while BREADY is withdrawn.
+    tb.insert_str(
+        tb.rfind("endmodule").expect("testbench module end"),
+        r#"
+initial begin : stall_write_response
+  logic [64:0] accepted_id;
+  wait (ap_rst_n);
+  @(negedge ap_clk);
+  force dut.m_axi_a_BREADY = 1'b1;
+  do @(negedge ap_clk); while (!(m_axi_a_AWVALID && m_axi_a_AWREADY));
+  accepted_id = m_axi_a_AWID;
+  do @(negedge ap_clk); while (!(m_axi_a_WVALID && m_axi_a_WREADY && m_axi_a_WLAST));
+  if (m_axi_a_BVALID) $fatal(1, "write response arrived before WLAST");
+  @(negedge ap_clk);
+  force dut.m_axi_a_BREADY = 1'b0;
+  if (!m_axi_a_BVALID || m_axi_a_BID != accepted_id)
+    $fatal(1, "write response missing after WLAST");
+  repeat (2) begin
+    @(negedge ap_clk);
+    if (!m_axi_a_BVALID || m_axi_a_BID != accepted_id)
+      $fatal(1, "write response withdrawn before BVALID/BREADY handshake");
+  end
+  force dut.m_axi_a_BREADY = 1'b1;
+  @(negedge ap_clk);
+  if (m_axi_a_BVALID)
+    $fatal(1, "write response duplicated after BVALID/BREADY handshake");
+  release dut.m_axi_a_BREADY;
+end
+initial begin
+  repeat (200) @(posedge ap_clk);
+  $fatal(1, "mmap/stream roundtrip did not complete");
+end
+"#,
+    );
+    let tmp = tempfile::tempdir().expect("testbench directory");
+    let tb_path = tmp.path().join("tb.sv");
+    std::fs::write(&tb_path, tb).expect("write Xsim testbench");
+    let verilator =
+        std::env::var_os("VERILATOR_BIN").map_or_else(|| PathBuf::from("verilator"), PathBuf::from);
+    let verilator_root = std::env::var_os("VERILATOR_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| {
+            verilator
+                .parent()?
+                .parent()
+                .filter(|root| root.join("include/verilated.h").exists())
+                .map(PathBuf::from)
+        });
+    let verilator = std::fs::canonicalize(&verilator).unwrap_or(verilator);
+    let build = Command::new(verilator)
+        .args([
+            "--binary",
+            "--timing",
+            "--top-module",
+            "tb_manual_hls_top",
+            "--timescale-override",
+            "1ns/1ps",
+            "-j",
+            "2",
+            "-CFLAGS",
+            "-std=c++20",
+            "-LDFLAGS",
+        ])
+        .arg(&dpi_lib)
+        .args(["-LDFLAGS", "-Wl,--export-dynamic"])
+        .arg(&tb_path)
+        .args(&spec.verilog_files)
+        .env_remove("VERILATOR_BIN")
+        .envs(
+            verilator_root
+                .into_iter()
+                .map(|root| ("VERILATOR_ROOT", root)),
+        )
+        .current_dir(tmp.path())
+        .output()
+        .expect("build Xsim testbench with Verilator");
+    assert!(
+        build.status.success(),
+        "Xsim testbench build failed:\n{}\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(tmp.path().join("obj_dir/Vtb_manual_hls_top"))
+        .env(frt_shm::env::TAPA_DPI_CONFIG, ctx.dpi_config_json())
+        .current_dir(tmp.path())
+        .output()
+        .expect("run Xsim testbench");
+    assert!(
+        run.status.success(),
+        "Xsim write response failed:\n{}\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(ctx.buffers["a"].as_slice(), &17u32.to_le_bytes());
+}
+
+#[test]
 fn open_cosim_verilator_xo_mmap_axis_roundtrip() {
     if !ensure_verilator() {
         eprintln!("skipping: verilator not found in PATH");
         return;
     }
-    ensure_dpi_lib_built();
+    ensure_dpi_lib_built("frt-dpi-verilator");
 
     let xo_path = make_manual_xo();
     let mut instance =

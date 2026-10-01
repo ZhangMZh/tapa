@@ -367,13 +367,14 @@ always @(posedge ap_clk) begin
   end
 
   // ---- B channel: respond from completed-write queue ----
+  // Consume the response sampled at this edge before driving the next one.
+  if (m_axi_{{ arg.ident }}_BVALID && m_axi_{{ arg.ident }}_BREADY) begin
+    void'(axi_{{ arg.ident }}_b_q.pop_front());
+  end
   if (axi_{{ arg.ident }}_b_q.size() > 0) begin
     m_axi_{{ arg.ident }}_BVALID <= 1'b1;
     m_axi_{{ arg.ident }}_BID <= axi_{{ arg.ident }}_b_q[0];
     m_axi_{{ arg.ident }}_BRESP <= 2'b00;
-    if (m_axi_{{ arg.ident }}_BREADY) begin
-      void'(axi_{{ arg.ident }}_b_q.pop_front());
-    end
   end else begin
     m_axi_{{ arg.ident }}_BVALID <= 1'b0;
   end
