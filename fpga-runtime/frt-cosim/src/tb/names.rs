@@ -64,20 +64,28 @@ pub fn stream_peek_ports_exist(
     top_name: &str,
     peek_name: &str,
 ) -> bool {
-    let module_decl = format!("module {top_name}");
-    for text in verilog_contents {
-        // The peek ports must be declared on the DUT module itself: a
-        // child's peek ports, connected to the normal stream signals at the
-        // top, do not give the top a peek interface. HLS emits one module
-        // per file, so the top's file is where to look.
-        if !text.contains(&module_decl) {
-            continue;
-        }
-        let top_file = std::slice::from_ref(text);
-        return crate::tb::port_declaration(top_file, &format!("{peek_name}_dout")).is_some()
-            && crate::tb::port_declaration(top_file, &format!("{peek_name}_empty_n")).is_some();
-    }
-    false
+    let top_file = top_module_contents(verilog_contents, top_name);
+    crate::tb::port_declaration(top_file, &format!("{peek_name}_dout")).is_some()
+        && crate::tb::port_declaration(top_file, &format!("{peek_name}_empty_n")).is_some()
+}
+
+/// HLS packages one module per file; probes must inspect the DUT's file.
+pub(super) fn top_module_contents<'a>(
+    verilog_contents: &'a [String],
+    top_name: &str,
+) -> &'a [String] {
+    let module_decl =
+        regex_lite::Regex::new(r"(?ms)^\s*(?:\(\*.*?\*\)\s*)*module\s+([^\s(#;]+)(?:\s|[#(;])")
+            .unwrap();
+    verilog_contents
+        .iter()
+        .find(|text| {
+            let code = crate::tb::verilog_code(text);
+            module_decl
+                .captures_iter(&code)
+                .any(|decl| &decl[1] == top_name)
+        })
+        .map_or(&[], std::slice::from_ref)
 }
 
 fn is_bare_verilog_identifier(name: &str) -> bool {

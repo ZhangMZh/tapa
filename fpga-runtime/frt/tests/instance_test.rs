@@ -156,6 +156,24 @@ fn pack_stream_elem_u32(value: u32, eot: bool) -> [u8; 5] {
     bytes
 }
 
+fn check_manual_stream_output(queue: &mut SharedMemoryQueue) {
+    // u<17> occupies four host bytes, then EOS and three bytes of object padding.
+    let mut token = [0xff; 8];
+    assert!(queue.pop_into(&mut token), "missing 17-bit payload");
+    assert_eq!(
+        token,
+        [0x45, 0x23, 0x01, 0, 0, 0, 0, 0],
+        "17-bit payload must preserve data and zero host padding"
+    );
+    assert!(queue.pop_into(&mut token), "missing 17-bit EoT");
+    assert_eq!(
+        token,
+        [0, 0, 0, 0, 1, 0, 0, 0],
+        "EoT must occupy the host flag byte with zero payload and padding"
+    );
+    assert!(queue.is_empty(), "output stream contains duplicate tokens");
+}
+
 #[test]
 fn open_cosim_verilator_zip_mmap_stream_roundtrip() {
     if !ensure_verilator() {
@@ -188,12 +206,24 @@ fn open_cosim_verilator_zip_mmap_stream_roundtrip() {
         .set_stream_arg_raw(1, &stream_path)
         .expect("set stream shm path");
 
+    let mut end_queue = SharedMemoryQueue::create("manual_end", 2, 2).expect("end queue");
+    end_queue.try_push(&[0, 1]).expect("push 7-bit EoT");
+    instance
+        .set_stream_arg_raw(2, &end_queue.path().to_string_lossy())
+        .expect("bind 7-bit input");
+    let mut output_queue = SharedMemoryQueue::create("manual_result", 4, 8).expect("output queue");
+    instance
+        .set_stream_arg_raw(3, &output_queue.path().to_string_lossy())
+        .expect("bind padded 17-bit output");
+
     instance.write_to_device().expect("write_to_device");
     instance.exec().expect("exec");
     instance.read_from_device().expect("read_from_device");
     instance.finish().expect("finish");
 
     assert_eq!(mmap_word[0], 17);
+    assert!(end_queue.is_empty(), "7-bit EoT was not consumed");
+    check_manual_stream_output(&mut output_queue);
 }
 
 #[cfg(target_os = "linux")]
@@ -221,6 +251,14 @@ fn run_xsim_manual_roundtrip(monitor: &str) {
         .expect("stream")
         .try_push(&pack_stream_elem_u32(7, false))
         .expect("push stream word");
+    ctx.streams
+        .get_mut(&spec.args[2].name)
+        .expect("7-bit stream")
+        .try_push(&[0, 1])
+        .expect("push 7-bit EoT");
+    let mut output_queue = SharedMemoryQueue::create("manual_result", 4, 8).expect("output queue");
+    ctx.bind_stream_path(&spec.args[3].name, &output_queue.path().to_string_lossy())
+        .expect("bind padded 17-bit output");
 
     let scalar_values = HashMap::new();
     let mut tb = XsimTbGenerator::new(
@@ -310,6 +348,11 @@ end
         &17u32.to_le_bytes(),
         "Xsim must finish the mmap/stream work before exiting"
     );
+    assert!(
+        ctx.streams[&spec.args[2].name].is_empty(),
+        "7-bit EoT was not consumed"
+    );
+    check_manual_stream_output(&mut output_queue);
 }
 
 #[test]

@@ -203,15 +203,27 @@ static void service_streams() {
   dut->{{ arg.sig.peek_empty_n }} = stream_in_have_{{ arg.ident }} ? 1 : 0;
 {% endif %}
   if (stream_in_have_{{ arg.ident }}) {
-    std::memcpy(&dut->{{ arg.sig.dout }}, stream_in_data_{{ arg.ident }}.data(), {{ arg.dpi_width_bytes }});
+    std::array<uint8_t, {{ (arg.payload_width_bits + 1).div_ceil(8) }}> packed_{{ arg.ident }}{};
+    std::memcpy(packed_{{ arg.ident }}.data(), stream_in_data_{{ arg.ident }}.data(), {{ arg.payload_width_bits.div_ceil(8) }});
+{% if arg.payload_width_bits % 8 != 0 %}
+    packed_{{ arg.ident }}[{{ arg.payload_width_bits / 8 }}] &= (1u << {{ arg.payload_width_bits % 8 }}) - 1;
+{% endif %}
+    packed_{{ arg.ident }}[{{ arg.payload_width_bits / 8 }}] |= (stream_in_data_{{ arg.ident }}[{{ arg.width_bytes }}] & 1u) << {{ arg.payload_width_bits % 8 }};
+    std::memset(&dut->{{ arg.sig.dout }}, 0, sizeof(dut->{{ arg.sig.dout }}));
+    std::memcpy(&dut->{{ arg.sig.dout }}, packed_{{ arg.ident }}.data(), packed_{{ arg.ident }}.size());
 {% if arg.has_peek %}
-    std::memcpy(&dut->{{ arg.sig.peek_dout }}, stream_in_data_{{ arg.ident }}.data(), {{ arg.dpi_width_bytes }});
+    std::memset(&dut->{{ arg.sig.peek_dout }}, 0, sizeof(dut->{{ arg.sig.peek_dout }}));
+    std::memcpy(&dut->{{ arg.sig.peek_dout }}, packed_{{ arg.ident }}.data(), packed_{{ arg.ident }}.size());
 {% endif %}
   }
 {% endfor %}
 {% for arg in stream_out_args %}
   std::array<uint8_t, {{ arg.dpi_width_bytes }}> stream_out_bytes_{{ arg.ident }}{};
-  std::memcpy(stream_out_bytes_{{ arg.ident }}.data(), &dut->{{ arg.sig.din }}, {{ arg.dpi_width_bytes }});
+  std::memcpy(stream_out_bytes_{{ arg.ident }}.data(), &dut->{{ arg.sig.din }}, {{ arg.payload_width_bits.div_ceil(8) }});
+{% if arg.payload_width_bits % 8 != 0 %}
+  stream_out_bytes_{{ arg.ident }}[{{ arg.payload_width_bits / 8 }}] &= (1u << {{ arg.payload_width_bits % 8 }}) - 1;
+{% endif %}
+  stream_out_bytes_{{ arg.ident }}[{{ arg.width_bytes }}] = (reinterpret_cast<const uint8_t*>(&dut->{{ arg.sig.din }})[{{ arg.payload_width_bits / 8 }}] >> {{ arg.payload_width_bits % 8 }}) & 1u;
   dut->{{ arg.sig.full_n }} = tapa_hls_stream_ostream_step("{{ arg.name }}", dut->{{ arg.sig.write }}, stream_out_bytes_{{ arg.ident }}.data()) ? 1 : 0;
 {% endfor %}
 {% else %}

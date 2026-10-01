@@ -41,9 +41,13 @@ Within the runtime workspace, `frt-shm::config` owns the DPI configuration
 schema shared by the cosimulation writer and live DPI reader. Shared queues
 validate payload geometry and mapped extent on creation and attachment. DPI
 adapters use reusable scratch storage between padded host tokens and compact
-RTL buffers, retaining end-of-stream bytes and zeroing trailing padding. Resume reads
-the JSON once and reopens only buffers; its compatibility reader deliberately
-accepts missing live-stream metadata and reports missing stream bindings
+RTL buffers, retaining end-of-stream bytes and zeroing trailing padding.
+HLS FIFO framing derives its exact payload width from the DUT data ports,
+places EoT immediately above those bits, and keeps the host frame's EoT byte
+after the payload's object storage; missing widths and inconsistent peek
+widths are errors. Output payload storage and token padding are zero-filled.
+Resume reads the JSON once and reopens only buffers; its compatibility reader
+deliberately accepts missing live-stream metadata and reports missing stream bindings
 together. Resume has an explicit pending state with zero compute time;
 polling marks execution complete and `finish` performs scheduled readback.
 Simulation failures belong to the finished state and are reported by `finish`.

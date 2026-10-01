@@ -52,7 +52,19 @@ module manual_hls_top (
 
     input wire [32:0] s_s_dout,
     input wire s_s_empty_n,
-    output reg s_s_read
+    output reg s_s_read,
+
+    // input wire [6:0] end_s_dout;
+    input wire [7:0] end_s_dout,
+    input wire end_s_empty_n,
+    output reg end_s_read,
+    /* input wire [6:0] end_peek_dout; */
+    input wire [7:0] end_peek_dout,
+    input wire end_peek_empty_n,
+
+    output reg [17:0] result_s_din,
+    input wire result_s_full_n,
+    output reg result_s_write
 );
 
   localparam [64:0] READ_ID = 65'h1_23456789_abcdefa5;
@@ -66,8 +78,11 @@ module manual_hls_top (
   localparam ST_B = 5;
   localparam ST_DONE = 6;
   localparam ST_R_ACCEPT = 7;
+  localparam ST_EOT = 8;
+  localparam ST_OUT_DATA = 9;
+  localparam ST_OUT_EOT = 10;
 
-  reg [2:0] state;
+  reg [3:0] state;
   reg [31:0] read_word;
   reg [31:0] stream_word;
   reg aw_sent;
@@ -113,6 +128,9 @@ module manual_hls_top (
       m_axi_a_WSTRB <= 4'hF;
       m_axi_a_WVALID <= 1'b0;
       s_s_read <= 1'b0;
+      end_s_read <= 1'b0;
+      result_s_din <= 18'd0;
+      result_s_write <= 1'b0;
       aw_sent <= 1'b0;
       w_sent <= 1'b0;
       read_pending <= 1'b0;
@@ -121,6 +139,8 @@ module manual_hls_top (
       stream_word <= 32'd0;
     end else begin
       s_s_read <= 1'b0;
+      end_s_read <= 1'b0;
+      result_s_write <= 1'b0;
       if (stalled_response && !m_axi_a_RVALID) begin
         $fatal(1, "read response withdrawn before RID-selected handshake");
       end
@@ -217,8 +237,34 @@ module manual_hls_top (
             if (read_pending) begin
               state <= ST_R_ACCEPT;
             end else begin
-              state <= ST_DONE;
+              state <= ST_EOT;
             end
+          end
+        end
+        ST_EOT: begin
+          if (end_s_empty_n) begin
+            if (end_s_dout != 8'h80 || !end_peek_empty_n || end_peek_dout != end_s_dout) begin
+              $fatal(1, "7-bit stream EoT/peek mismatch: expected 80, got %h/%h",
+                     end_s_dout, end_peek_dout);
+            end
+            end_s_read <= 1'b1;
+            state <= ST_OUT_DATA;
+          end
+        end
+        ST_OUT_DATA: begin
+          result_s_din <= 18'h12345;
+          result_s_write <= 1'b1;
+          if (result_s_write && result_s_full_n) begin
+            result_s_write <= 1'b0;
+            state <= ST_OUT_EOT;
+          end
+        end
+        ST_OUT_EOT: begin
+          result_s_din <= 18'h20000;
+          result_s_write <= 1'b1;
+          if (result_s_write && result_s_full_n) begin
+            result_s_write <= 1'b0;
+            state <= ST_DONE;
           end
         end
         ST_DONE: begin

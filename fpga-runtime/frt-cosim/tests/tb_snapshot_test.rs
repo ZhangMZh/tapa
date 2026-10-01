@@ -2,12 +2,16 @@ use frt_cosim::metadata::{ArgKind, ArgSpec, KernelSpec, Mode, StreamDir};
 use frt_cosim::tb::verilator::VerilatorTbGenerator;
 use std::collections::HashMap;
 
+fn hls_verilog_files() -> Vec<std::path::PathBuf> {
+    vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vadd.v")]
+}
+
 fn hls_spec() -> KernelSpec {
     KernelSpec {
         top_name: "vadd".into(),
         mode: Mode::Hls,
         part_num: None,
-        verilog_files: vec![],
+        verilog_files: hls_verilog_files(),
         tcl_files: vec![],
         xci_files: vec![],
         scalar_register_map: HashMap::from([("n".into(), 0x18u32)]),
@@ -110,11 +114,16 @@ fn two_stream_out_spec(mode: Mode) -> KernelSpec {
         Mode::Hls => frt_cosim::metadata::StreamProtocol::ApFifo,
         Mode::Vitis => frt_cosim::metadata::StreamProtocol::Axis,
     };
+    let verilog_files = if mode == Mode::Hls {
+        hls_verilog_files()
+    } else {
+        vec![]
+    };
     KernelSpec {
         top_name: "vadd".into(),
         mode,
         part_num: Some("xc7a100tcsg324-1".into()),
-        verilog_files: vec![],
+        verilog_files,
         tcl_files: vec![],
         xci_files: vec![],
         scalar_register_map: HashMap::from([("n".into(), 0x10u32)]),
@@ -180,7 +189,7 @@ fn hls_stream_out_spec() -> KernelSpec {
         top_name: "vadd".into(),
         mode: Mode::Hls,
         part_num: None,
-        verilog_files: vec![],
+        verilog_files: hls_verilog_files(),
         tcl_files: vec![],
         xci_files: vec![],
         scalar_register_map: HashMap::from([("n".into(), 0x18u32)]),
@@ -358,7 +367,6 @@ fn xsim_hls_stream_output_is_serviced_on_posedge() {
     assert!(tb.contains("always @(posedge ap_clk) begin"));
     assert!(tb.contains("stream_out_full_n_s_out <= tapa_hls_stream_ostream_step("));
     assert!(tb.contains("stream_out_write_s_out,"));
-    assert!(tb.contains("stream_out_bytes_s_out[i] = stream_out_data_s_out[i*8 +: 8];"));
 }
 
 #[test]

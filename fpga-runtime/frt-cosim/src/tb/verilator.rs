@@ -92,8 +92,8 @@ impl<'a> VerilatorTbGenerator<'a> {
                     bytes,
                 )
             },
-            |arg, width_bytes, peek, axis| {
-                StreamArg::new(NAMING, &arg.name, width_bytes, peek, axis)
+            |arg, width_bytes, bits, peek, axis| {
+                StreamArg::new(NAMING, &arg.name, width_bytes, bits, peek, axis)
             },
         )?;
 

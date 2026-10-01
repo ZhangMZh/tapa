@@ -53,6 +53,22 @@ pub fn read_verilog_contents(spec: &KernelSpec) -> Vec<String> {
         .collect()
 }
 
+/// Mask comments and quoted strings before lexical declaration probes.
+pub(super) fn verilog_code(text: &str) -> std::borrow::Cow<'_, str> {
+    static NON_CODE: std::sync::LazyLock<regex_lite::Regex> = std::sync::LazyLock::new(|| {
+        regex_lite::Regex::new(r#"(?s)"(?:\\.|[^"\\])*"|//[^\r\n]*|/\*.*?\*/"#).unwrap()
+    });
+    NON_CODE.replace_all(text, |token: &regex_lite::Captures<'_>| {
+        token[0]
+            .bytes()
+            .map(|byte| match byte {
+                b'\r' | b'\n' => char::from(byte),
+                _ => ' ',
+            })
+            .collect::<String>()
+    })
+}
+
 /// Direct-offset scalar port on the DUT module.
 ///
 /// Vitis HLS through 2024.2 emits `<name>_offset` for `offset=direct`
@@ -87,11 +103,12 @@ pub fn port_declaration(verilog_contents: &[String], port: &str) -> Option<usize
     let width_re = regex_lite::Regex::new(r"\[\s*(\d+)\s*:\s*0\s*\]").unwrap();
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
     for text in verilog_contents {
+        let code = verilog_code(text);
         // Verilog declarations end at `;` and may span lines or carry
         // several declarators (`output [2:0] a, output b`): the width comes
         // from the port's own direction segment, so `[2:0] a` cannot lend
         // its dimension to the scalar `b`.
-        for decl in text.split(';') {
+        for decl in code.split(';') {
             for (name_pos, _) in decl.match_indices(port) {
                 if decl[..name_pos].chars().next_back().is_some_and(is_word)
                     || decl[name_pos + port.len()..]
@@ -146,10 +163,10 @@ pub fn classify_args(
     verilog_contents: &[String],
     make_mmap: impl Fn(&crate::metadata::ArgSpec, u32) -> MmapArg,
     make_scalar: impl Fn(&crate::metadata::ArgSpec, u32, u32, &[u8]) -> ScalarArg,
-    make_stream: impl Fn(&crate::metadata::ArgSpec, usize, Option<String>, bool) -> StreamArg,
+    make_stream: impl Fn(&crate::metadata::ArgSpec, usize, usize, Option<String>, bool) -> StreamArg,
 ) -> Result<ClassifiedArgs> {
     use crate::metadata::{ArgKind, StreamDir, StreamProtocol};
-    use names::{infer_peek_name, stream_peek_ports_exist};
+    use names::{infer_peek_name, stream_peek_ports_exist, top_module_contents};
 
     let mut mmaps = vec![];
     let mut scalars = vec![];
@@ -183,7 +200,43 @@ pub fn classify_args(
                 } else {
                     None
                 };
-                let s = make_stream(arg, w, peek, axis);
+                let payload_width_bits = if spec.mode == Mode::Hls && !axis {
+                    let top_file = top_module_contents(verilog_contents, &spec.top_name);
+                    let suffix = if *dir == StreamDir::In {
+                        "_dout"
+                    } else {
+                        "_din"
+                    };
+                    let data_port = format!("{}{suffix}", arg.name);
+                    // A scalar or unresolved symbolic range is reported as one
+                    // bit by the declaration probe; neither describes a positive
+                    // payload plus its EoT bit. Host storage width cannot replace
+                    // the missing RTL width (u<7> occupies eight host bits).
+                    let aggregate_width = port_declaration(top_file, &data_port)
+                        .filter(|width| *width >= 2)
+                        .ok_or_else(|| CosimError::Metadata(format!(
+                            "cannot resolve payload/EoT width of HLS stream port '{data_port}' in DUT '{}'",
+                            spec.top_name
+                        )))?;
+                    if aggregate_width - 1 > w * 8 {
+                        return Err(CosimError::Metadata(format!(
+                            "HLS stream port '{data_port}' has {} payload bits, but its host frame holds only {}",
+                            aggregate_width - 1, w * 8
+                        )));
+                    }
+                    if let Some(peek_name) = &peek {
+                        let peek_port = format!("{peek_name}_dout");
+                        if port_declaration(top_file, &peek_port) != Some(aggregate_width) {
+                            return Err(CosimError::Metadata(format!(
+                                "HLS peek port '{peek_port}' must match the {aggregate_width}-bit stream port '{data_port}'"
+                            )));
+                        }
+                    }
+                    aggregate_width - 1
+                } else {
+                    w * 8
+                };
+                let s = make_stream(arg, w, payload_width_bits, peek, axis);
                 match dir {
                     StreamDir::In => streams_in.push(s),
                     StreamDir::Out => streams_out.push(s),
@@ -418,7 +471,10 @@ pub struct StreamArg {
     /// Backend identifier used to name this argument's generated state.
     pub ident: String,
     pub sig: StreamSignals,
+    /// Payload storage bytes in the host frame, before its EoT/TLAST byte.
     pub width_bytes: usize,
+    /// Exact RTL payload bits, excluding the `ApFifo` `EoT` bit.
+    pub payload_width_bits: usize,
     /// Total bytes passed to/from the DPI function. Always `width_bytes + 1`:
     /// the extra byte carries the EOS/TLAST flag. For AXIS streams this maps
     /// to TLAST; for `ApFifo` streams it maps to the MSB of the `dout`/`din`
@@ -435,6 +491,7 @@ impl StreamArg {
         naming: Naming,
         name: &str,
         width_bytes: usize,
+        payload_width_bits: usize,
         peek: Option<String>,
         axis: bool,
     ) -> Self {
@@ -444,6 +501,7 @@ impl StreamArg {
             ident: (naming.ident)(name),
             sig: StreamSignals::new(name, &peek_name, naming),
             width_bytes,
+            payload_width_bits,
             dpi_width_bytes: width_bytes + 1,
             axis,
             has_peek: !peek_name.is_empty(),
@@ -524,7 +582,9 @@ mod tests {
             |arg, _, offset, bytes| {
                 super::ScalarArg::new(naming, &arg.name, String::new(), offset, bytes)
             },
-            |arg, width, peek, axis| super::StreamArg::new(naming, &arg.name, width, peek, axis),
+            |arg, width, bits, peek, axis| {
+                super::StreamArg::new(naming, &arg.name, width, bits, peek, axis)
+            },
         )?;
         Ok(scalars
             .iter()
@@ -608,8 +668,11 @@ mod tests {
     #[test]
     fn port_declaration_scopes_widths_to_the_declarator() {
         let verilog = vec![concat!(
-            "module Top (\n",
+            "// output [7:0] m_axi_mem_ARID;\n",
+            "/* input [15:0] comment_only; */\n",
+            "(* note=\"input [20:0] s_axis_a_TDATA; http://x/*y*/\" *) module Top (\n",
             "    output [2:0] m_axi_mem_ARID,\n",
+            "    /* output [4:0] m_axi_mem_ARLOCK; */\n",
             "    output m_axi_mem_ARLOCK,\n",
             "    input [7:0] s_axis_a_TDATA, s_axis_a_TVALID\n",
             "); endmodule"
@@ -622,6 +685,11 @@ mod tests {
         assert_eq!(port_declaration(&verilog, "s_axis_a_TDATA"), Some(8));
         assert_eq!(port_declaration(&verilog, "s_axis_a_TVALID"), Some(8));
         assert_eq!(port_declaration(&verilog, "no_such_port"), None);
+        assert_eq!(
+            port_declaration(&verilog, "comment_only"),
+            None,
+            "commented declarations must not create ports"
+        );
         // A name that is only a prefix of another port is not a match.
         assert_eq!(port_declaration(&verilog, "m_axi_mem_ARI"), None);
     }

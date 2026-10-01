@@ -119,8 +119,8 @@ impl<'a> XsimTbGenerator<'a> {
             |arg, width, offset, bytes| {
                 ScalarArg::new(NAMING, &arg.name, sv_literal(width, bytes), offset, bytes)
             },
-            |arg, width_bytes, peek, axis| {
-                StreamArg::new(NAMING, &arg.name, width_bytes, peek, axis)
+            |arg, width_bytes, bits, peek, axis| {
+                StreamArg::new(NAMING, &arg.name, width_bytes, bits, peek, axis)
             },
         )
     }

@@ -24,6 +24,18 @@
                         "name": "s",
                         "type": "uint32_t",
                         "width": 32
+                    },
+                    {
+                        "cat": "istream",
+                        "name": "end",
+                        "type": "tapa::u<7>",
+                        "width": 8
+                    },
+                    {
+                        "cat": "ostream",
+                        "name": "result",
+                        "type": "tapa::u<17>",
+                        "width": 32
                     }
                 ],
                 "readable_name": "manual_hls_top",
