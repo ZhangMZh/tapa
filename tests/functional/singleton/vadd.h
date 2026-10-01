@@ -3,4 +3,4 @@
 // RapidStream Contributor License Agreement.
 
 // when array size is 1, it forms a singleton array with no number in naming
-inline constexpr int M = 1;
+constexpr int M = 1;
