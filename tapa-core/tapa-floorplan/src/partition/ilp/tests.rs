@@ -816,10 +816,7 @@ fn multilevel_refinement_preserves_the_selected_parent_row() {
     )
     .expect("multilevel floorplan");
     assert!(
-        result
-            .regions
-            .values()
-            .all(|region| region == &Coor::slot(1, 2).region_name()),
+        result.regions.iter().all(|region| region == &(1, 2)),
         "second-pass candidates must remain within the first-pass row"
     );
 }
@@ -871,10 +868,7 @@ fn multilevel_recovers_when_an_aggregate_parent_has_no_feasible_child() {
     )
     .expect("the globally feasible atomic placement must survive a bad provisional row");
 
-    assert_eq!(
-        result.regions.get("A_0"),
-        Some(&Coor::slot(0, 1).region_name())
-    );
+    assert_eq!(result.regions.first(), Some(&(0, 1)));
     assert_eq!(
         solver.models.lock().expect("lock").len(),
         4,
@@ -1365,10 +1359,7 @@ fn the_usage_ladder_finds_its_lowest_feasible_rung_without_walking() {
             &SolveOpts::default(),
         )
         .expect("some rung of the ladder places");
-        assert_eq!(
-            result.regions.get("A_0"),
-            Some(&Coor::slot(0, 0).region_name()),
-        );
+        assert_eq!(result.regions.first(), Some(&(0, 0)),);
 
         // A linear walk proves every lower rung infeasible, then solves and
         // refines the one that places.
@@ -1478,10 +1469,7 @@ fn area_limited_empty_domain_retries_through_the_usage_ceiling() {
             &SolveOpts::default(),
         )
         .expect("area-only domain failure should retry");
-        assert_eq!(
-            result.regions.get("A_0"),
-            Some(&Coor::slot(0, 0).region_name())
-        );
+        assert_eq!(result.regions.first(), Some(&(0, 0)));
     }
 }
 

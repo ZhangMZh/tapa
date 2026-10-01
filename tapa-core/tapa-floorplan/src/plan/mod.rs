@@ -256,7 +256,7 @@ fn finish_plan(
     options: &PlanOptions,
     solver: &dyn crate::solver::Solver,
     opts: &SolveOpts,
-    mut assignment: crate::partition::Assignment,
+    assignment: crate::partition::Assignment,
     realized_caps: ExactDseResourceCaps,
 ) -> Result<FloorplanResult, PlanError> {
     let routes = plan_routes(
@@ -294,15 +294,24 @@ fn finish_plan(
             realized_caps.logic_utilization_cap,
         )?
     };
-    graph.materialize_co_locations(&mut assignment.regions)?;
-    graph.remove_transient_regions(&mut assignment.regions);
+    let mut regions = graph
+        .vertices()
+        .iter()
+        .zip(assignment.regions)
+        .map(|(vertex, (x, y))| (vertex.name.clone(), tapa_ir::Coor::slot(x, y).region_name()))
+        .collect();
+    graph.materialize_co_locations(&mut regions)?;
+    graph.remove_transient_regions(&mut regions);
 
     Ok(FloorplanResult {
         device: device.key.clone(),
         grid: (device.cols, device.rows),
-        regions: assignment.regions,
-        routes,
-        slot_usage,
+        regions,
+        routes: routes.into_iter().map(Into::into).collect(),
+        slot_usage: slot_usage
+            .into_iter()
+            .map(|((x, y), area)| (tapa_ir::Coor::slot(x, y).region_name(), area))
+            .collect(),
     })
 }
 

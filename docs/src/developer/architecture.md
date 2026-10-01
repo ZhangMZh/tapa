@@ -123,7 +123,9 @@ in `tapa-ir` and `tapa-protocol`, never by sharing implementation.
   body boundaries also come from the CST, preserving original body text
   independently of header and declaration layout.
 - **tapa-floorplan** — turns `(design, device)` into a serialized
-  `FloorplanResult`. It knows nothing about RTL text or the CLI.
+  `FloorplanResult`. Placements, slot usage, and planned routes use typed
+  coordinates; finalization renders region strings for the persisted schema.
+  It knows nothing about RTL text or the CLI.
 - **tapa-codegen** — a pure function
   `(Design, Option<FloorplanResult>, modules) → ArtifactManifest` whose
   manifest is the complete file set: generated RTL, template files, FSM

@@ -26,6 +26,7 @@ use tapa_ir::Area;
 use crate::device::model::{Coor, Device, Resource, DEFAULT_USAGE_LIMIT, VERTICAL_DIST_PENALTY};
 use crate::graph::{FloorGraph, PlacementEdge, Vertex};
 use crate::partition::cut::{find_cuts_for_regions, Cut};
+use crate::route::paths::Cell;
 use crate::solver::assign::{add_one_of_k_row, read_one_of_k, OneOfKError};
 use crate::solver::sparse::SparseRow;
 use crate::solver::{
@@ -104,10 +105,10 @@ impl Default for PlacementConfig {
 /// A completed atomic placement and the resources used in occupied slots.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assignment {
-    /// Vertex name → atomic region tag.
-    pub regions: BTreeMap<String, String>,
-    /// Atomic region tag → summed resource use.
-    pub slot_usage: BTreeMap<String, Area>,
+    /// Atomic slot for each vertex, in graph vertex order.
+    pub regions: Vec<Cell>,
+    /// Atomic slot → summed resource use.
+    pub slot_usage: BTreeMap<Cell, Area>,
 }
 
 /// Why the floorplan ILP produced no placement.
@@ -419,7 +420,7 @@ fn row_regions(device: &Device) -> Vec<Coor> {
 /// A completed partition iteration and the rung of the utilization ladder it
 /// was found on.
 struct SolvedIteration {
-    placements: BTreeMap<String, Coor>,
+    placements: Vec<Coor>,
     /// The utilization limit this placement was found at. Every lower rung was
     /// proven infeasible for this iteration.
     usage_limit: f64,
@@ -482,7 +483,7 @@ fn solve_iteration(
     graph: &FloorGraph,
     device: &Device,
     regions: &[Coor],
-    parents: Option<&BTreeMap<String, Coor>>,
+    parents: Option<&[Coor]>,
     config: &PlacementConfig,
     base_usage_limit: f64,
     solver: &dyn Solver,
@@ -589,7 +590,7 @@ fn attempt_placement(
     device: &Device,
     regions: &[Coor],
     areas: &RegionAreas,
-    parents: Option<&BTreeMap<String, Coor>>,
+    parents: Option<&[Coor]>,
     config: &PlacementConfig,
     cuts: &[Cut],
     usage_limit: f64,
@@ -706,13 +707,13 @@ fn candidate_domains(
     regions: &[Coor],
     areas: &RegionAreas,
     usage_limit: f64,
-    parents: Option<&BTreeMap<String, Coor>>,
+    parents: Option<&[Coor]>,
     constraints: &PlacementConstraints,
 ) -> Result<Vec<Vec<Coor>>, IlpError> {
     let mut domains = Vec::with_capacity(graph.vertices().len());
 
-    for vertex in graph.vertices() {
-        let parent = parents.and_then(|assignments| assignments.get(&vertex.name));
+    for (index, vertex) in graph.vertices().iter().enumerate() {
+        let parent = parents.map(|assignments| &assignments[index]);
         let target = constraints.vertex_regions.get(&vertex.name);
         let mut candidates = Vec::new();
 
@@ -949,16 +950,15 @@ fn describe_area(area: Area) -> String {
     }
 }
 
-fn complete_assignment(
-    graph: &FloorGraph,
-    placements: &BTreeMap<String, Coor>,
-) -> Result<Assignment, IlpError> {
-    let mut regions = BTreeMap::new();
-    let mut slot_usage: BTreeMap<String, Area> = BTreeMap::new();
-    for vertex in graph.vertices() {
-        let slot = placements.get(&vertex.name).ok_or_else(|| {
-            IlpError::InvalidSolution(format!("vertex `{}` is missing", vertex.name))
-        })?;
+fn complete_assignment(graph: &FloorGraph, placements: &[Coor]) -> Result<Assignment, IlpError> {
+    debug_assert_eq!(
+        graph.vertices().len(),
+        placements.len(),
+        "readback assigns every graph vertex"
+    );
+    let mut regions = Vec::with_capacity(placements.len());
+    let mut slot_usage: BTreeMap<Cell, Area> = BTreeMap::new();
+    for (vertex, slot) in graph.vertices().iter().zip(placements) {
         if slot.width() != 1 || slot.height() != 1 {
             return Err(IlpError::InvalidSolution(format!(
                 "vertex `{}` remained in non-atomic region `{}`",
@@ -966,18 +966,10 @@ fn complete_assignment(
                 slot.region_name()
             )));
         }
-        let region = slot.region_name();
-        if regions
-            .insert(vertex.name.clone(), region.clone())
-            .is_some()
-        {
-            return Err(IlpError::InvalidSolution(format!(
-                "duplicate vertex name `{}`",
-                vertex.name
-            )));
-        }
+        let cell = (slot.dl_x, slot.dl_y);
+        regions.push(cell);
         if vertex.materialize {
-            let entry = slot_usage.entry(region).or_default();
+            let entry = slot_usage.entry(cell).or_default();
             *entry = entry.checked_add(vertex.area).ok_or_else(|| {
                 IlpError::InvalidSolution(format!(
                     "resource accounting overflows in `{}`",
@@ -1042,8 +1034,8 @@ impl FloorplanModel {
         graph: &FloorGraph,
         domains: &[Vec<Coor>],
         solution: &crate::solver::LpSolution,
-    ) -> Result<BTreeMap<String, Coor>, IlpError> {
-        let mut assignments = BTreeMap::new();
+    ) -> Result<Vec<Coor>, IlpError> {
+        let mut assignments = Vec::with_capacity(graph.vertices().len());
 
         for (vi, vertex) in graph.vertices().iter().enumerate() {
             let selected = read_one_of_k(solution, &self.x[vi]).map_err(|error| match error {
@@ -1060,15 +1052,7 @@ impl FloorplanModel {
                     vertex.name
                 )),
             })?;
-            if assignments
-                .insert(vertex.name.clone(), domains[vi][selected])
-                .is_some()
-            {
-                return Err(IlpError::InvalidSolution(format!(
-                    "duplicate vertex name `{}`",
-                    vertex.name
-                )));
-            }
+            assignments.push(domains[vi][selected]);
         }
 
         Ok(assignments)

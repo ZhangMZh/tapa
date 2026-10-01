@@ -1,7 +1,7 @@
 //! The pipeline plan.
 //!
 //! From a placement, find the stream channels that cross slot boundaries,
-//! route them, and turn each path into a typed [`PipelineRoute`] with a
+//! route them, and turn each path into a typed [`PlannedRoute`] with a
 //! distribution scheme and exact per-register slot regions.
 //!
 //! `Single` places one Body register per intermediate slot, `Double` two per
@@ -32,8 +32,8 @@ pub enum PipelineError {
     /// Routing the cross-slot nets failed.
     #[error(transparent)]
     Route(#[from] RouteError),
-    /// A region tag could not be parsed back to a slot.
-    #[error("region tag `{0}` is not a slot")]
+    /// A slot is outside the device model.
+    #[error("region `{0}` is outside the device model")]
     BadRegion(String),
     /// Generated pipeline metadata violated an accounting invariant.
     #[error("cannot account for generated pipeline `{link}`: {detail}")]
@@ -92,16 +92,24 @@ fn pipeline_reg_cells(route: &[Cell], scheme: PipelineScheme) -> Vec<Cell> {
     }
 }
 
-/// Parse a single-slot region tag into its grid cell.
-fn region_cell(region: &str) -> Result<Cell, PipelineError> {
-    Coor::from_atomic_region_name(region)
-        .map(|coor| (coor.dl_x, coor.dl_y))
-        .ok_or_else(|| PipelineError::BadRegion(region.to_string()))
+/// Physical route and Body-cell slots before publishing the floorplan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedRoute {
+    pub channel: RoutedChannel,
+    pub route: Vec<Cell>,
+    pub scheme: PipelineScheme,
+    pub reg_regions: Vec<Cell>,
 }
 
-fn canonical_slot_region(region: &str) -> Result<String, PipelineError> {
-    let (x, y) = region_cell(region)?;
-    Ok(Coor::slot(x, y).region_name())
+impl From<PlannedRoute> for PipelineRoute {
+    fn from(route: PlannedRoute) -> Self {
+        Self {
+            channel: route.channel,
+            route: route.route.into_iter().map(slot_tag).collect(),
+            scheme: route.scheme,
+            reg_regions: route.reg_regions.into_iter().map(slot_tag).collect(),
+        }
+    }
 }
 
 /// A cross-slot typed channel awaiting the shared routing solve.
@@ -117,35 +125,18 @@ struct PendingNet {
 
 /// The slot cells an edge's endpoints landed in, or `None` when both landed
 /// in the same slot — co-located, so nothing crosses.
-fn crossing_cells(
-    graph: &FloorGraph,
-    regions: &BTreeMap<String, String>,
-    src: usize,
-    dst: usize,
-) -> Result<Option<(Cell, Cell)>, PipelineError> {
-    let region_of = |vertex: usize| {
-        let name = &graph.vertex(vertex).name;
-        regions
-            .get(name)
-            .ok_or_else(|| PipelineError::BadRegion(name.clone()))
-    };
-    let (src_region, dst_region) = (region_of(src)?, region_of(dst)?);
-    if src_region == dst_region {
-        return Ok(None);
-    }
-    Ok(Some((region_cell(src_region)?, region_cell(dst_region)?)))
+fn crossing_cells(regions: &[Cell], src: usize, dst: usize) -> Option<(Cell, Cell)> {
+    let (src, dst) = (regions[src], regions[dst]);
+    (src != dst).then_some((src, dst))
 }
 
 /// Find every stream and AXI channel whose endpoints landed in different
 /// slots. All channel classes enter one routing MILP so they compete for the
 /// same physical boundary capacities.
-fn cross_slot_nets(
-    graph: &FloorGraph,
-    regions: &BTreeMap<String, String>,
-) -> Result<Vec<PendingNet>, PipelineError> {
+fn cross_slot_nets(graph: &FloorGraph, regions: &[Cell]) -> Result<Vec<PendingNet>, PipelineError> {
     let mut nets = Vec::new();
     for edge in graph.streams() {
-        let Some((src, dst)) = crossing_cells(graph, regions, edge.src, edge.dst)? else {
+        let Some((src, dst)) = crossing_cells(regions, edge.src, edge.dst) else {
             continue;
         };
         nets.push(PendingNet {
@@ -159,7 +150,7 @@ fn cross_slot_nets(
         });
     }
     for edge in graph.axi_nets() {
-        let Some((src, dst)) = crossing_cells(graph, regions, edge.src, edge.dst)? else {
+        let Some((src, dst)) = crossing_cells(regions, edge.src, edge.dst) else {
             continue;
         };
         nets.push(PendingNet {
@@ -178,7 +169,7 @@ fn cross_slot_nets(
         if edge.channel == tapa_ir::ControlChannel::Reset {
             continue; // emitted with the matching Launch route below
         }
-        let Some((src, dst)) = crossing_cells(graph, regions, edge.src, edge.dst)? else {
+        let Some((src, dst)) = crossing_cells(regions, edge.src, edge.dst) else {
             continue;
         };
 
@@ -235,14 +226,20 @@ fn cross_slot_nets(
 )]
 pub fn plan_routes(
     graph: &FloorGraph,
-    regions: &BTreeMap<String, String>,
-    baseline: &BTreeMap<String, Area>,
+    regions: &[Cell],
+    baseline: &BTreeMap<Cell, Area>,
     device: &Device,
     scheme: PipelineScheme,
     logic_capacity_limit: f64,
     solver: &dyn Solver,
     opts: &SolveOpts,
-) -> Result<Vec<PipelineRoute>, PipelineError> {
+) -> Result<Vec<PlannedRoute>, PipelineError> {
+    if regions.len() != graph.vertices().len() {
+        return Err(accounting_error(
+            "placement",
+            "every graph vertex needs exactly one slot",
+        ));
+    }
     let nets = cross_slot_nets(graph, regions)?;
     if nets.is_empty() {
         return Ok(Vec::new());
@@ -265,10 +262,9 @@ pub fn plan_routes(
 
     let mut pipeline_routes = Vec::new();
     for (net, route) in nets.iter().zip(routes) {
-        let reg_regions = pipeline_reg_regions(&route, scheme);
-        let route: Vec<String> = route.iter().map(|&cell| slot_tag(cell)).collect();
+        let reg_regions = pipeline_reg_cells(&route, scheme);
         for channel in std::iter::once(&net.channel).chain(&net.shared_channels) {
-            pipeline_routes.push(PipelineRoute {
+            pipeline_routes.push(PlannedRoute {
                 channel: channel.clone(),
                 route: route.clone(),
                 scheme,
@@ -288,7 +284,7 @@ pub fn plan_routes(
 /// away from slots that are full, and [`realize_slot_usage`] remains the exact
 /// check.
 fn register_budgets(
-    baseline: &BTreeMap<String, Area>,
+    baseline: &BTreeMap<Cell, Area>,
     device: &Device,
     logic_capacity_limit: f64,
 ) -> BTreeMap<Cell, u64> {
@@ -297,9 +293,7 @@ fn register_budgets(
         .iter()
         .map(|slot| {
             let capacity = scaled_area(slot.area, logic_capacity_limit).ff;
-            let placed = baseline
-                .get(&slot.coor().region_name())
-                .map_or(0, |area| area.ff);
+            let placed = baseline.get(&(slot.x, slot.y)).map_or(0, |area| area.ff);
             ((slot.x, slot.y), capacity.saturating_sub(placed))
         })
         .collect()
@@ -309,12 +303,12 @@ fn register_budgets(
 /// Head/Body/Tail pipelines, then enforce the placement retry envelope.
 pub(crate) fn realize_slot_usage(
     graph: &FloorGraph,
-    regions: &BTreeMap<String, String>,
-    baseline: &BTreeMap<String, Area>,
-    routes: &[PipelineRoute],
+    regions: &[Cell],
+    baseline: &BTreeMap<Cell, Area>,
+    routes: &[PlannedRoute],
     device: &Device,
     capacity_limit: f64,
-) -> Result<BTreeMap<String, Area>, PipelineError> {
+) -> Result<BTreeMap<Cell, Area>, PipelineError> {
     realize_slot_usage_with_resource_caps(
         graph,
         regions,
@@ -329,13 +323,13 @@ pub(crate) fn realize_slot_usage(
 /// Realize generated resources with independent logic and block-resource caps.
 pub(crate) fn realize_slot_usage_with_resource_caps(
     graph: &FloorGraph,
-    regions: &BTreeMap<String, String>,
-    baseline: &BTreeMap<String, Area>,
-    routes: &[PipelineRoute],
+    regions: &[Cell],
+    baseline: &BTreeMap<Cell, Area>,
+    routes: &[PlannedRoute],
     device: &Device,
     logic_capacity_limit: f64,
     block_capacity_limit: f64,
-) -> Result<BTreeMap<String, Area>, PipelineError> {
+) -> Result<BTreeMap<Cell, Area>, PipelineError> {
     let streams: BTreeMap<&str, _> = graph
         .streams()
         .iter()
@@ -387,58 +381,54 @@ pub(crate) fn realize_slot_usage_with_resource_caps(
 }
 
 fn account_control_pipeline(
-    usage: &mut BTreeMap<String, Area>,
+    usage: &mut BTreeMap<Cell, Area>,
     graph: &FloorGraph,
-    regions: &BTreeMap<String, String>,
-    route: &PipelineRoute,
+    regions: &[Cell],
+    route: &PlannedRoute,
     net: &crate::graph::ControlNet,
     link: &str,
 ) -> Result<(), PipelineError> {
-    let head_region = route
+    let &head_region = route
         .route
         .first()
         .ok_or_else(|| accounting_error(link, "route has no Head region"))?;
-    let tail_region = route
+    let &tail_region = route
         .route
         .last()
         .ok_or_else(|| accounting_error(link, "route has no Tail region"))?;
-    let head_region = canonical_slot_region(head_region)?;
-    let tail_region = canonical_slot_region(tail_region)?;
-    verify_route_endpoint(graph, regions, net.src, &head_region, link, "Head")?;
-    verify_route_endpoint(graph, regions, net.dst, &tail_region, link, "Tail")?;
+    verify_route_endpoint(graph, regions, net.src, head_region, link, "Head")?;
+    verify_route_endpoint(graph, regions, net.dst, tail_region, link, "Tail")?;
 
     let register_area = Area {
         ff: u64::from(net.width),
         ..Area::default()
     };
-    add_usage(usage, &head_region, register_area, link)?;
-    for region in &route.reg_regions {
-        add_usage(usage, &canonical_slot_region(region)?, register_area, link)?;
+    add_usage(usage, head_region, register_area, link)?;
+    for &region in &route.reg_regions {
+        add_usage(usage, region, register_area, link)?;
     }
-    add_usage(usage, &tail_region, register_area, link)?;
+    add_usage(usage, tail_region, register_area, link)?;
     Ok(())
 }
 
 fn account_axi_pipeline(
-    usage: &mut BTreeMap<String, Area>,
+    usage: &mut BTreeMap<Cell, Area>,
     graph: &FloorGraph,
-    regions: &BTreeMap<String, String>,
-    route: &PipelineRoute,
+    regions: &[Cell],
+    route: &PlannedRoute,
     net: &crate::graph::AxiNet,
     link: &str,
 ) -> Result<(), PipelineError> {
-    let head_region = route
+    let &head_region = route
         .route
         .first()
         .ok_or_else(|| accounting_error(link, "route has no Head region"))?;
-    let tail_region = route
+    let &tail_region = route
         .route
         .last()
         .ok_or_else(|| accounting_error(link, "route has no Tail region"))?;
-    let head_region = canonical_slot_region(head_region)?;
-    let tail_region = canonical_slot_region(tail_region)?;
-    verify_route_endpoint(graph, regions, net.src, &head_region, link, "Head")?;
-    verify_route_endpoint(graph, regions, net.dst, &tail_region, link, "Tail")?;
+    verify_route_endpoint(graph, regions, net.src, head_region, link, "Head")?;
+    verify_route_endpoint(graph, regions, net.dst, tail_region, link, "Tail")?;
 
     let body_level = u32::try_from(route.reg_regions.len())
         .map_err(|_| accounting_error(link, "Body level exceeds u32"))?;
@@ -448,7 +438,7 @@ fn account_axi_pipeline(
         .ok_or_else(|| accounting_error(link, "Tail depth overflows u32"))?;
     add_usage(
         usage,
-        &tail_region,
+        tail_region,
         fifo_area(net.payload_width, real_depth),
         link,
     )?;
@@ -459,45 +449,43 @@ fn account_axi_pipeline(
     };
     add_usage(
         usage,
-        &head_region,
+        head_region,
         Area {
             lut: 1,
             ..register_area
         },
         link,
     )?;
-    for region in &route.reg_regions {
-        add_usage(usage, &canonical_slot_region(region)?, register_area, link)?;
+    for &region in &route.reg_regions {
+        add_usage(usage, region, register_area, link)?;
     }
     Ok(())
 }
 
 fn account_stream_pipeline(
-    usage: &mut BTreeMap<String, Area>,
+    usage: &mut BTreeMap<Cell, Area>,
     graph: &FloorGraph,
-    regions: &BTreeMap<String, String>,
-    route: &PipelineRoute,
+    regions: &[Cell],
+    route: &PlannedRoute,
     stream: &crate::graph::Stream,
     fifo: &str,
 ) -> Result<(), PipelineError> {
-    let head_region = route
+    let &head_region = route
         .route
         .first()
         .ok_or_else(|| accounting_error(fifo, "route has no Head region"))?;
-    let tail_region = route
+    let &tail_region = route
         .route
         .last()
         .ok_or_else(|| accounting_error(fifo, "route has no Tail region"))?;
-    let head_region = canonical_slot_region(head_region)?;
-    let tail_region = canonical_slot_region(tail_region)?;
-    verify_route_endpoint(graph, regions, stream.src, &head_region, fifo, "Head")?;
-    verify_route_endpoint(graph, regions, stream.dst, &tail_region, fifo, "Tail")?;
+    verify_route_endpoint(graph, regions, stream.src, head_region, fifo, "Head")?;
+    verify_route_endpoint(graph, regions, stream.dst, tail_region, fifo, "Tail")?;
 
     let original_fifo = fifo_area(
         stream.data_width,
         floorplanned_fifo_storage_depth(stream.depth),
     );
-    subtract_usage(usage, &tail_region, original_fifo, fifo)?;
+    subtract_usage(usage, tail_region, original_fifo, fifo)?;
 
     let body_level = u32::try_from(route.reg_regions.len())
         .map_err(|_| accounting_error(fifo, "Body level exceeds u32"))?;
@@ -511,7 +499,7 @@ fn account_stream_pipeline(
         .ok_or_else(|| accounting_error(fifo, "Tail depth overflows u32"))?;
     add_usage(
         usage,
-        &tail_region,
+        tail_region,
         fifo_area(stream.data_width, real_depth),
         fifo,
     )?;
@@ -530,36 +518,35 @@ fn account_stream_pipeline(
     };
     add_usage(
         usage,
-        &head_region,
+        head_region,
         Area {
             lut: 1,
             ..register_area
         },
         fifo,
     )?;
-    for region in &route.reg_regions {
-        add_usage(usage, &canonical_slot_region(region)?, register_area, fifo)?;
+    for &region in &route.reg_regions {
+        add_usage(usage, region, register_area, fifo)?;
     }
     Ok(())
 }
 
 fn verify_route_endpoint(
     graph: &FloorGraph,
-    regions: &BTreeMap<String, String>,
+    regions: &[Cell],
     vertex: usize,
-    route_region: &str,
+    route_region: Cell,
     link: &str,
     endpoint: &str,
 ) -> Result<(), PipelineError> {
     let vertex_name = &graph.vertex(vertex).name;
     let placed_region = regions
-        .get(vertex_name)
+        .get(vertex)
         .ok_or_else(|| accounting_error(link, &format!("missing region for `{vertex_name}`")))?;
-    let placed_region = canonical_slot_region(placed_region)?;
-    if placed_region != route_region {
+    if *placed_region != route_region {
         return Err(accounting_error(
             link,
-            &format!("{endpoint} route region `{route_region}` differs from `{placed_region}`"),
+            &format!("{endpoint} route region `{route_region:?}` differs from `{placed_region:?}`"),
         ));
     }
     Ok(())
@@ -573,49 +560,47 @@ fn accounting_error(link: &str, detail: &str) -> PipelineError {
 }
 
 fn subtract_usage(
-    usage: &mut BTreeMap<String, Area>,
-    region: &str,
+    usage: &mut BTreeMap<Cell, Area>,
+    region: Cell,
     area: Area,
     link: &str,
 ) -> Result<(), PipelineError> {
-    let current = usage
-        .get_mut(region)
-        .ok_or_else(|| accounting_error(link, &format!("missing baseline usage for `{region}`")))?;
+    let current = usage.get_mut(&region).ok_or_else(|| {
+        accounting_error(link, &format!("missing baseline usage for `{region:?}`"))
+    })?;
     *current = current.checked_sub(area).ok_or_else(|| {
         accounting_error(
             link,
-            &format!("baseline usage in `{region}` does not contain its FIFO estimate"),
+            &format!("baseline usage in `{region:?}` does not contain its FIFO estimate"),
         )
     })?;
     Ok(())
 }
 
 fn add_usage(
-    usage: &mut BTreeMap<String, Area>,
-    region: &str,
+    usage: &mut BTreeMap<Cell, Area>,
+    region: Cell,
     area: Area,
     link: &str,
 ) -> Result<(), PipelineError> {
-    let current = usage.entry(region.to_string()).or_default();
+    let current = usage.entry(region).or_default();
     *current = current.checked_add(area).ok_or_else(|| {
-        accounting_error(link, &format!("resource count overflows in `{region}`"))
+        accounting_error(link, &format!("resource count overflows in `{region:?}`"))
     })?;
     Ok(())
 }
 
 fn validate_realized_usage(
-    usage: &BTreeMap<String, Area>,
+    usage: &BTreeMap<Cell, Area>,
     device: &Device,
     logic_capacity_limit: f64,
     block_capacity_limit: f64,
 ) -> Result<(), PipelineError> {
-    for (region, used_area) in usage {
-        let coor = Coor::from_region_or_slot_name(region)
-            .filter(|coor| coor.width() == 1 && coor.height() == 1)
-            .ok_or_else(|| PipelineError::BadRegion(region.clone()))?;
+    for (&(x, y), used_area) in usage {
+        let coor = Coor::slot(x, y);
         let capacity = device
             .island_area(&coor)
-            .ok_or_else(|| PipelineError::BadRegion(region.clone()))?;
+            .ok_or_else(|| PipelineError::BadRegion(coor.region_name()))?;
         let logic_limit = scaled_area(capacity, logic_capacity_limit);
         let block_limit = scaled_area(capacity, block_capacity_limit);
         for resource in Resource::ALL {
@@ -627,7 +612,7 @@ fn validate_realized_usage(
             };
             if used > allowed {
                 return Err(PipelineError::RealizedCapacity {
-                    region: region.clone(),
+                    region: coor.region_name(),
                     resource: resource.name(),
                     used,
                     limit: allowed,
@@ -797,43 +782,56 @@ mod tests {
         .expect("floor graph")
     }
 
-    fn baseline_usage(
-        graph: &FloorGraph,
-        regions: &BTreeMap<String, String>,
-    ) -> BTreeMap<String, Area> {
-        let mut usage: BTreeMap<String, Area> = BTreeMap::new();
-        for vertex in graph.vertices() {
-            let region = regions.get(&vertex.name).expect("vertex region").clone();
+    fn placed_regions(graph: &FloorGraph, named: &BTreeMap<String, Cell>) -> Vec<Cell> {
+        graph
+            .vertices()
+            .iter()
+            .map(|vertex| named[&vertex.name])
+            .collect()
+    }
+
+    fn baseline_usage(graph: &FloorGraph, regions: &[Cell]) -> BTreeMap<Cell, Area> {
+        let mut usage: BTreeMap<Cell, Area> = BTreeMap::new();
+        for (vertex, &region) in graph.vertices().iter().zip(regions) {
             let entry = usage.entry(region).or_default();
             *entry = entry.checked_add(vertex.area).expect("test area fits");
         }
         usage
     }
 
-    fn stream_route(route: &[&str], reg_regions: &[&str]) -> PipelineRoute {
-        PipelineRoute {
+    fn stream_route(route: &[Cell], reg_regions: &[Cell]) -> PlannedRoute {
+        PlannedRoute {
             channel: RoutedChannel::Stream {
                 fifo: "q_Top".to_string(),
             },
-            route: route.iter().map(ToString::to_string).collect(),
+            route: route.to_vec(),
             scheme: PipelineScheme::Single,
-            reg_regions: reg_regions.iter().map(ToString::to_string).collect(),
+            reg_regions: reg_regions.to_vec(),
         }
     }
 
     #[test]
     fn routing_retains_parallel_streams_aggregated_by_placement() {
         let graph = two_task_stream_graph();
-        let mut regions = BTreeMap::from([
-            ("Producer_0".to_string(), Coor::slot(0, 0).region_name()),
-            ("Consumer_0".to_string(), Coor::slot(1, 0).region_name()),
-        ]);
+        let regions = placed_regions(
+            &graph,
+            &BTreeMap::from([
+                ("Producer_0".to_string(), (0, 0)),
+                ("Consumer_0".to_string(), (1, 0)),
+            ]),
+        );
+        let mut published = graph
+            .vertices()
+            .iter()
+            .zip(&regions)
+            .map(|(vertex, &(x, y))| (vertex.name.clone(), Coor::slot(x, y).region_name()))
+            .collect();
         graph
-            .materialize_co_locations(&mut regions)
+            .materialize_co_locations(&mut published)
             .expect("FIFO aliases destination");
 
-        assert_eq!(regions["q32_Top"], regions["Consumer_0"]);
-        assert_eq!(regions["q64_Top"], regions["Consumer_0"]);
+        assert_eq!(published["q32_Top"], published["Consumer_0"]);
+        assert_eq!(published["q64_Top"], published["Consumer_0"]);
         assert_eq!(graph.placement_edges().len(), 1);
         assert_eq!(graph.placement_edges()[0].width, 35 + 67);
         let streams = cross_slot_nets(&graph, &regions).expect("cross-slot streams");
@@ -860,13 +858,13 @@ mod tests {
     #[test]
     fn axi_channels_share_the_router_with_protocol_correct_directions() {
         let graph = one_mmap_graph();
-        let regions = BTreeMap::from([
-            ("Reader_0".to_string(), Coor::slot(1, 0).region_name()),
-            (
-                "__tapa_bank_hbm_0".to_string(),
-                Coor::slot(0, 0).region_name(),
-            ),
-        ]);
+        let regions = placed_regions(
+            &graph,
+            &BTreeMap::from([
+                ("Reader_0".to_string(), (1, 0)),
+                ("__tapa_bank_hbm_0".to_string(), (0, 0)),
+            ]),
+        );
         let nets = cross_slot_nets(&graph, &regions).expect("cross-slot AXI nets");
         assert_eq!(nets.len(), 5);
         for net in &nets {
@@ -890,13 +888,13 @@ mod tests {
             .iter()
             .find(|net| net.channel == tapa_ir::AxiChannel::ReadData)
             .expect("read data");
-        let route = PipelineRoute {
+        let route = PlannedRoute {
             channel: RoutedChannel::Axi {
                 endpoint: read_data.endpoint.clone(),
                 bank: read_data.bank,
                 channel: read_data.channel,
             },
-            route: vec!["SLOT_X0Y0".to_string(), "SLOT_X1Y0".to_string()],
+            route: vec![(0, 0), (1, 0)],
             scheme: PipelineScheme::Single,
             reg_regions: Vec::new(),
         };
@@ -904,7 +902,7 @@ mod tests {
             &graph,
             &regions,
             &BTreeMap::from([(
-                Coor::slot(1, 0).region_name(),
+                (1, 0),
                 Area {
                     lut: 10,
                     ff: 20,
@@ -917,7 +915,7 @@ mod tests {
         )
         .expect("account AXI pipeline");
         assert_eq!(
-            realized[&Coor::slot(0, 0).region_name()],
+            realized[&(0, 0)],
             Area {
                 lut: 1,
                 ff: 38,
@@ -926,7 +924,7 @@ mod tests {
             "the bank-side read-data Head is charged at the route source"
         );
         assert_eq!(
-            realized[&Coor::slot(1, 0).region_name()],
+            realized[&(1, 0)],
             Area {
                 lut: 10,
                 ff: 20,
@@ -941,13 +939,13 @@ mod tests {
     #[test]
     fn control_launch_and_reset_share_one_forward_router_net() {
         let graph = one_controlled_task_graph();
-        let regions = BTreeMap::from([
-            (
-                global_controller_instance_name().to_string(),
-                Coor::slot(0, 0).region_name(),
-            ),
-            ("worker#0".to_string(), Coor::slot(0, 2).region_name()),
-        ]);
+        let regions = placed_regions(
+            &graph,
+            &BTreeMap::from([
+                (global_controller_instance_name().to_string(), (0, 0)),
+                ("worker#0".to_string(), (0, 2)),
+            ]),
+        );
         let nets = cross_slot_nets(&graph, &regions).expect("control nets");
         assert_eq!(nets.len(), 2, "one forward bundle and one completion");
         assert_eq!(nets[0].width, 35, "34-bit launch plus one reset bit");
@@ -968,13 +966,13 @@ mod tests {
         assert_eq!((nets[0].src, nets[0].dst), ((0, 0), (0, 2)));
         assert_eq!((nets[1].src, nets[1].dst), ((0, 2), (0, 0)));
 
-        let colocated = BTreeMap::from([
-            (
-                global_controller_instance_name().to_string(),
-                Coor::slot(1, 1).region_name(),
-            ),
-            ("worker#0".to_string(), Coor::slot(1, 1).region_name()),
-        ]);
+        let colocated = placed_regions(
+            &graph,
+            &BTreeMap::from([
+                (global_controller_instance_name().to_string(), (1, 1)),
+                ("worker#0".to_string(), (1, 1)),
+            ]),
+        );
         assert!(
             cross_slot_nets(&graph, &colocated)
                 .expect("co-located controls")
@@ -988,13 +986,13 @@ mod tests {
         use crate::solver::{CbcSolver, SolverError};
 
         let graph = one_controlled_task_graph();
-        let regions = BTreeMap::from([
-            (
-                global_controller_instance_name().to_string(),
-                Coor::slot(0, 0).region_name(),
-            ),
-            ("worker#0".to_string(), Coor::slot(0, 2).region_name()),
-        ]);
+        let regions = placed_regions(
+            &graph,
+            &BTreeMap::from([
+                (global_controller_instance_name().to_string(), (0, 0)),
+                ("worker#0".to_string(), (0, 2)),
+            ]),
+        );
         let routes = match plan_routes(
             &graph,
             &regions,
@@ -1049,7 +1047,7 @@ mod tests {
         let device = select_device("u280").expect("u280");
         let capacity = scaled_area(device.slot(0, 1).expect("slot").area, 0.7).ff;
         let baseline = BTreeMap::from([(
-            Coor::slot(0, 1).region_name(),
+            (0, 1),
             Area {
                 ff: capacity - 100,
                 ..Area::default()
@@ -1071,7 +1069,7 @@ mod tests {
         );
 
         let overfull = BTreeMap::from([(
-            Coor::slot(0, 1).region_name(),
+            (0, 1),
             Area {
                 ff: capacity + 1,
                 ..Area::default()
@@ -1092,13 +1090,16 @@ mod tests {
 
         let graph = one_stream_graph(2, Area::default(), Area::default());
         let device = select_device("u280").expect("u280");
-        let regions = BTreeMap::from([
-            ("Producer_0".to_string(), Coor::slot(0, 0).region_name()),
-            ("Consumer_0".to_string(), Coor::slot(0, 2).region_name()),
-        ]);
+        let regions = placed_regions(
+            &graph,
+            &BTreeMap::from([
+                ("Producer_0".to_string(), (0, 0)),
+                ("Consumer_0".to_string(), (0, 2)),
+            ]),
+        );
         // Fill the only intermediate slot on the direct path.
         let baseline = BTreeMap::from([(
-            Coor::slot(0, 1).region_name(),
+            (0, 1),
             scaled_area(device.slot(0, 1).expect("slot").area, MAX_USAGE_LIMIT),
         )]);
         let opts = SolveOpts {
@@ -1106,7 +1107,7 @@ mod tests {
             ..SolveOpts::default()
         };
 
-        let route = |baseline: &BTreeMap<String, Area>| match plan_routes(
+        let route = |baseline: &BTreeMap<Cell, Area>| match plan_routes(
             &graph,
             &regions,
             baseline,
@@ -1126,61 +1127,45 @@ mod tests {
         let unconstrained = route(&BTreeMap::new());
         assert_eq!(
             unconstrained[0].reg_regions,
-            ["SLOT_X0Y1"],
+            [(0, 1)],
             "with room to spare the straight path is shortest",
         );
 
         let constrained = route(&baseline);
         assert!(
-            !constrained[0]
-                .reg_regions
-                .contains(&"SLOT_X0Y1".to_string()),
+            !constrained[0].reg_regions.contains(&(0, 1)),
             "the full slot must hold no Body registers: {:?}",
             constrained[0],
         );
-        assert_eq!(
-            constrained[0].route.first().map(String::as_str),
-            Some("SLOT_X0Y0"),
-        );
-        assert_eq!(
-            constrained[0].route.last().map(String::as_str),
-            Some("SLOT_X0Y2"),
-        );
+        assert_eq!(constrained[0].route.first().copied(), Some((0, 0)),);
+        assert_eq!(constrained[0].route.last().copied(), Some((0, 2)),);
     }
 
     #[test]
     fn control_pipeline_accounts_head_body_and_tail_flip_flops() {
         let graph = one_controlled_task_graph();
-        let source = Coor::slot(0, 0).region_name();
-        let body = Coor::slot(0, 1).region_name();
-        let destination = Coor::slot(0, 2).region_name();
-        let regions = BTreeMap::from([
-            (
-                global_controller_instance_name().to_string(),
-                source.clone(),
-            ),
-            ("worker#0".to_string(), destination.clone()),
-        ]);
-        let control_route = |channel, reverse: bool| PipelineRoute {
+        let source = (0, 0);
+        let body = (0, 1);
+        let destination = (0, 2);
+        let regions = placed_regions(
+            &graph,
+            &BTreeMap::from([
+                (global_controller_instance_name().to_string(), source),
+                ("worker#0".to_string(), destination),
+            ]),
+        );
+        let control_route = |channel, reverse: bool| PlannedRoute {
             channel: RoutedChannel::Control {
                 instance: "worker#0".to_string(),
                 channel,
             },
             route: if reverse {
-                vec![
-                    "SLOT_X0Y2".to_string(),
-                    "SLOT_X0Y1".to_string(),
-                    "SLOT_X0Y0".to_string(),
-                ]
+                vec![(0, 2), (0, 1), (0, 0)]
             } else {
-                vec![
-                    "SLOT_X0Y0".to_string(),
-                    "SLOT_X0Y1".to_string(),
-                    "SLOT_X0Y2".to_string(),
-                ]
+                vec![(0, 0), (0, 1), (0, 2)]
             },
             scheme: PipelineScheme::Single,
-            reg_regions: vec!["SLOT_X0Y1".to_string()],
+            reg_regions: vec![(0, 1)],
         };
         let routes = [
             control_route(tapa_ir::ControlChannel::Launch, false),
@@ -1190,10 +1175,7 @@ mod tests {
         let realized = realize_slot_usage(
             &graph,
             &regions,
-            &BTreeMap::from([
-                (source.clone(), Area::default()),
-                (destination.clone(), Area::default()),
-            ]),
+            &BTreeMap::from([(source, Area::default()), (destination, Area::default())]),
             &routes,
             &select_device("u280").expect("u280"),
             MAX_USAGE_LIMIT,
@@ -1206,7 +1188,7 @@ mod tests {
                     ff: 36,
                     ..Area::default()
                 },
-                "34 launch + reset + completion registers in {region}"
+                "34 launch + reset + completion registers in {region:?}"
             );
         }
 
@@ -1239,15 +1221,18 @@ mod tests {
                 ..Area::default()
             },
         );
-        let source = Coor::slot(0, 0).region_name();
-        let body = Coor::slot(0, 1).region_name();
-        let destination = Coor::slot(0, 2).region_name();
-        let regions = BTreeMap::from([
-            ("Producer_0".to_string(), source.clone()),
-            ("Consumer_0".to_string(), destination.clone()),
-        ]);
+        let source = (0, 0);
+        let body = (0, 1);
+        let destination = (0, 2);
+        let regions = placed_regions(
+            &graph,
+            &BTreeMap::from([
+                ("Producer_0".to_string(), source),
+                ("Consumer_0".to_string(), destination),
+            ]),
+        );
         let baseline = baseline_usage(&graph, &regions);
-        let route = stream_route(&["SLOT_X0Y0", "SLOT_X0Y1", "SLOT_X0Y2"], &["SLOT_X0Y1"]);
+        let route = stream_route(&[(0, 0), (0, 1), (0, 2)], &[(0, 1)]);
 
         let realized = realize_slot_usage(
             &graph,
@@ -1300,20 +1285,23 @@ mod tests {
     fn realized_usage_fails_above_the_retry_envelope() {
         let graph = one_stream_graph(2, Area::default(), Area::default());
         let device = select_device("u280").expect("u280");
-        let source = Coor::slot(0, 0).region_name();
-        let destination = Coor::slot(1, 0).region_name();
-        let regions = BTreeMap::from([
-            ("Producer_0".to_string(), source.clone()),
-            ("Consumer_0".to_string(), destination),
-        ]);
+        let source = (0, 0);
+        let destination = (1, 0);
+        let regions = placed_regions(
+            &graph,
+            &BTreeMap::from([
+                ("Producer_0".to_string(), source),
+                ("Consumer_0".to_string(), destination),
+            ]),
+        );
         let mut baseline = baseline_usage(&graph, &regions);
         let ff_limit = scaled_area(
             device.slot(0, 0).expect("source slot").area,
             MAX_USAGE_LIMIT,
         )
         .ff;
-        baseline.entry(source.clone()).or_default().ff = ff_limit - 34;
-        let route = stream_route(&["SLOT_X0Y0", "SLOT_X1Y0"], &[]);
+        baseline.entry(source).or_default().ff = ff_limit - 34;
+        let route = stream_route(&[(0, 0), (1, 0)], &[]);
 
         let error = realize_slot_usage(
             &graph,
@@ -1331,7 +1319,7 @@ mod tests {
                 resource: "FF",
                 used,
                 limit,
-            } if region == &source && used == ff_limit + 1 && limit == ff_limit
+            } if region == &Coor::slot(source.0, source.1).region_name() && used == ff_limit + 1 && limit == ff_limit
         ));
         assert!(error.to_string().contains("--usage-limit"));
     }
@@ -1340,7 +1328,7 @@ mod tests {
     fn realized_usage_honors_distinct_logic_and_block_caps() {
         let graph = one_stream_graph(2, Area::default(), Area::default());
         let device = select_device("u280").expect("u280");
-        let region = Coor::slot(0, 0).region_name();
+        let region = (0, 0);
         let capacity = device.slot(0, 0).expect("slot").area;
         let logic_limit = 0.5;
         let block_limit = 0.6;
@@ -1354,8 +1342,8 @@ mod tests {
 
         let realized = realize_slot_usage_with_resource_caps(
             &graph,
-            &BTreeMap::new(),
-            &BTreeMap::from([(region.clone(), block_heavy)]),
+            &[],
+            &BTreeMap::from([(region, block_heavy)]),
             &[],
             &device,
             logic_limit,
@@ -1382,8 +1370,8 @@ mod tests {
         ] {
             let error = realize_slot_usage_with_resource_caps(
                 &graph,
-                &BTreeMap::new(),
-                &BTreeMap::from([(region.clone(), over_limit)]),
+                &[],
+                &BTreeMap::from([(region, over_limit)]),
                 &[],
                 &device,
                 logic_limit,
@@ -1396,7 +1384,7 @@ mod tests {
                     region: ref failed_region,
                     resource: failed_resource,
                     ..
-                } if failed_region == &region && failed_resource == resource.name()
+                } if failed_region == &Coor::slot(region.0, region.1).region_name() && failed_resource == resource.name()
             ));
         }
     }
@@ -1404,11 +1392,14 @@ mod tests {
     #[test]
     fn non_crossing_shallow_fifo_keeps_registered_ready_baseline() {
         let graph = one_stream_graph(16, Area::default(), Area::default());
-        let region = Coor::slot(0, 0).region_name();
-        let regions = BTreeMap::from([
-            ("Producer_0".to_string(), region.clone()),
-            ("Consumer_0".to_string(), region.clone()),
-        ]);
+        let region = (0, 0);
+        let regions = placed_regions(
+            &graph,
+            &BTreeMap::from([
+                ("Producer_0".to_string(), region),
+                ("Consumer_0".to_string(), region),
+            ]),
+        );
         let baseline = baseline_usage(&graph, &regions);
         assert_eq!(
             baseline[&region],
@@ -1430,12 +1421,15 @@ mod tests {
     #[test]
     fn crossing_shallow_fifo_replaces_registered_ready_baseline() {
         let graph = one_stream_graph(16, Area::default(), Area::default());
-        let source = Coor::slot(0, 0).region_name();
-        let destination = Coor::slot(1, 0).region_name();
-        let regions = BTreeMap::from([
-            ("Producer_0".to_string(), source.clone()),
-            ("Consumer_0".to_string(), destination.clone()),
-        ]);
+        let source = (0, 0);
+        let destination = (1, 0);
+        let regions = placed_regions(
+            &graph,
+            &BTreeMap::from([
+                ("Producer_0".to_string(), source),
+                ("Consumer_0".to_string(), destination),
+            ]),
+        );
         let baseline = baseline_usage(&graph, &regions);
         assert_eq!(
             baseline[&destination],
@@ -1446,7 +1440,7 @@ mod tests {
             &graph,
             &regions,
             &baseline,
-            &[stream_route(&["SLOT_X0Y0", "SLOT_X1Y0"], &[])],
+            &[stream_route(&[(0, 0), (1, 0)], &[])],
             &select_device("u280").expect("u280"),
             MAX_USAGE_LIMIT,
         )
