@@ -368,7 +368,7 @@ fn first_issue(root: Node, src: &[u8]) -> Option<ParseIssue> {
 /// declaration. Mirrors the old text-level `starts_with` gate: only
 /// declarations whose text begins with `wire` or `reg` are signals;
 /// `logic`/`integer`/procedural-local declarations are not.
-fn signal_kind_of(node: Node, src: &[u8]) -> Option<SignalKind> {
+pub(super) fn signal_kind_of(node: Node, src: &[u8]) -> Option<SignalKind> {
     if !matches!(node.kind(), "net_declaration" | "data_declaration") {
         return None;
     }
@@ -544,6 +544,14 @@ pub(super) fn find_first_module(root: Node) -> Option<Node> {
     None
 }
 
+pub(super) fn module_header(module: Node) -> Option<Node> {
+    module.child_by_field_name("header").or_else(|| {
+        (0..child_count(module))
+            .map(|i| module.child(i).unwrap())
+            .find(|node| matches!(node.kind(), "module_nonansi_header" | "module_ansi_header"))
+    })
+}
+
 /// Whether a node sitting before the module is trivia the module scan
 /// may skip: comments, attributes, and compiler directives. Mirrors the
 /// old text scan, which refused the parse on any other leading token.
@@ -707,11 +715,7 @@ pub fn parse_module_info(source: &str) -> Result<ModuleParse, ParseError> {
         return Ok(ModuleParse::Issue(issue));
     }
 
-    let Some(header) = mod_node.child_by_field_name("header").or_else(|| {
-        (0..child_count(mod_node))
-            .map(|i| mod_node.child(i).unwrap())
-            .find(|n| n.kind() == "module_nonansi_header" || n.kind() == "module_ansi_header")
-    }) else {
+    let Some(header) = module_header(mod_node) else {
         return Ok(ModuleParse::HeaderFailed);
     };
 

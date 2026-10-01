@@ -20,7 +20,7 @@ use crate::pragma::Pragma;
 mod inspection;
 mod tree_sitter;
 
-pub(crate) use inspection::unconditionally_zero_driven_names;
+pub(crate) use inspection::{original_module_body, unconditionally_zero_driven_names};
 
 // ── Utility parsers ─────────────────────────────────────────────────
 

@@ -91,10 +91,10 @@ pub struct MutableModule {
 impl MutableModule {
     /// Create a mutable module from a parsed `VerilogModule`.
     ///
-    /// Extracts the body text from the source by finding content after
-    /// the last port/signal declaration and before `endmodule`.
+    /// Extracts the original body after the module's declaration prefix using
+    /// parser-derived source boundaries, independently of line formatting.
     pub fn from_parsed(module: VerilogModule) -> Self {
-        let body_text = extract_body_text(&module.source);
+        let body_text = crate::parser::original_module_body(&module.source).to_owned();
         Self {
             inner: module,
             body_text,
@@ -336,73 +336,6 @@ impl MutableModule {
         let _ = writeln!(out, "endmodule //{}", self.inner.name);
         out
     }
-}
-
-/// Extract body text from raw Verilog source.
-///
-/// Everything after the last port/signal/parameter declaration (and
-/// its terminating `);` if present) up to `endmodule`. The `);` line
-/// that closes the ANSI port list is treated as part of the header,
-/// not the body — otherwise re-emitted modules accumulate a stray
-/// closing paren right before the signal declarations, tripping
-/// Vivado's HDL parser.
-fn extract_body_text(source: &str) -> String {
-    let endmodule_pos = source.rfind("endmodule").unwrap_or(source.len());
-
-    // Track byte offset alongside line iteration (O(n), not O(n²)).
-    // Skip exactly the module header plus the contiguous declaration block.
-    // After the first body statement, a bare `);` closes an instance, not
-    // the module header.
-    let mut body_start = 0;
-    let mut byte_offset = 0;
-    let mut header_closed = false;
-    for line in source[..endmodule_pos].lines() {
-        let line_end = byte_offset + line.len() + 1; // +1 for newline
-        let trimmed = line.trim();
-
-        if !header_closed {
-            body_start = line_end.min(endmodule_pos);
-            if trimmed == ");" || (trimmed.starts_with("module ") && trimmed.ends_with(");")) {
-                header_closed = true;
-            }
-            byte_offset = line_end;
-            continue;
-        }
-
-        let is_declaration_line = trimmed.is_empty()
-            || starts_with_decl_keyword(trimmed, "input")
-            || starts_with_decl_keyword(trimmed, "output")
-            || starts_with_decl_keyword(trimmed, "inout")
-            || starts_with_decl_keyword(trimmed, "wire")
-            || starts_with_decl_keyword(trimmed, "reg")
-            || starts_with_decl_keyword(trimmed, "parameter")
-            || starts_with_decl_keyword(trimmed, "localparam")
-            || trimmed.starts_with("(* ")
-            // Line comments between declarations belong to the
-            // header, not the body.
-            || trimmed.starts_with("//");
-        if is_declaration_line {
-            body_start = line_end.min(endmodule_pos);
-        } else {
-            break;
-        }
-        byte_offset = line_end;
-    }
-
-    if body_start >= endmodule_pos {
-        String::new()
-    } else {
-        source[body_start..endmodule_pos].to_owned()
-    }
-}
-
-fn starts_with_decl_keyword(line: &str, keyword: &str) -> bool {
-    let Some(rest) = line.strip_prefix(keyword) else {
-        return false;
-    };
-    rest.chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_whitespace() || c == '[')
 }
 
 /// Helper to create a simple 1-bit port.
@@ -660,6 +593,48 @@ endmodule
             mm.body_text.contains("assign tmp = out;"),
             "non-declaration body statements must still be preserved"
         );
+    }
+
+    #[test]
+    fn body_boundaries_follow_syntax_and_preserve_original_statements() {
+        for (source, expected_body) in [
+            (
+                "module Compact(input i, output o); wire tmp; assign o = i; endmodule",
+                " assign o = i; ",
+            ),
+            (
+                "module Multiline(input i, output o);\n\
+                 wire [\n3:\n0] first,\nsecond;\n\
+                 // endmodule belongs to this comment\n\
+                 (* keep = \"true\" *) assign o = i;\n\
+                 endmodule // endmodule belongs to the trailing comment",
+                "\n// endmodule belongs to this comment\n\
+                 (* keep = \"true\" *) assign o = i;\n",
+            ),
+            (
+                "module Portless;\nwire tmp;\n\
+                 initial $display(\"endmodule\");\n\
+                 endmodule",
+                "\ninitial $display(\"endmodule\");\n",
+            ),
+        ] {
+            let module = VerilogModule::parse(source).unwrap();
+            let mm = MutableModule::from_parsed(module);
+            assert_eq!(
+                mm.body_text, expected_body,
+                "body extraction must preserve source slices:\n{source}"
+            );
+            let emitted = mm.emit();
+            let reparsed = VerilogModule::parse(&emitted).unwrap();
+            assert_eq!(
+                reparsed.ports, mm.inner.ports,
+                "interface survives emission"
+            );
+            assert_eq!(
+                reparsed.signals, mm.inner.signals,
+                "declaration prefixes must not be duplicated in the body"
+            );
+        }
     }
 
     #[test]

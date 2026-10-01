@@ -7,7 +7,8 @@ use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Query, QueryCursor};
 
 use super::tree_sitter::{
-    child_count, find_first_module, has_error_node, sv_language, sv_parser, text_of,
+    child_count, find_first_module, has_error_node, module_header, signal_kind_of, sv_language,
+    sv_parser, text_of,
 };
 
 static Q_DRIVER_USES: LazyLock<Query> = LazyLock::new(|| {
@@ -139,4 +140,64 @@ pub fn unconditionally_zero_driven_names(source: &str) -> BTreeSet<String> {
         .into_iter()
         .filter_map(|(name, proven)| proven.then_some(name))
         .collect()
+}
+
+/// Declarations reconstructed by the mutable interface, plus their attributes
+/// and surrounding comments. Everything after this contiguous prefix remains
+/// original source text, including nested declarations and instance closures.
+fn is_declaration_prefix(node: Node, src: &[u8]) -> bool {
+    match node.kind() {
+        "port_declaration"
+        | "parameter_declaration"
+        | "local_parameter_declaration"
+        | "attribute_instance"
+        | "one_line_comment"
+        | "block_comment" => true,
+        "net_declaration" | "data_declaration" => signal_kind_of(node, src).is_some(),
+        "module_item" => {
+            let mut cursor = node.walk();
+            let is_prefix = node
+                .named_children(&mut cursor)
+                .all(|child| is_declaration_prefix(child, src));
+            is_prefix
+        }
+        _ => false,
+    }
+}
+
+/// Locate the original body with the same CST grammar used for the interface.
+/// No body nodes or rewritten source are retained between inspections.
+pub fn original_module_body(source: &str) -> &str {
+    let src = source.as_bytes();
+    let mut parser = sv_parser();
+    let Some(tree) = parser.parse(src, None) else {
+        return "";
+    };
+    let Some(module) = find_first_module(tree.root_node()) else {
+        return "";
+    };
+    let Some(header) = module_header(module) else {
+        return "";
+    };
+    let body_end = (0..child_count(module))
+        .map(|i| module.child(i).unwrap())
+        .find(|node| node.kind() == "endmodule")
+        .map_or_else(|| module.end_byte(), |node| node.start_byte());
+    let mut body_start = header.end_byte();
+    for i in 0..child_count(module) {
+        let child = module.child(i).unwrap();
+        if child.end_byte() <= header.end_byte() {
+            continue;
+        }
+        if child.kind() == "endmodule" || !is_declaration_prefix(child, src) {
+            break;
+        }
+        if !matches!(
+            child.kind(),
+            "attribute_instance" | "one_line_comment" | "block_comment"
+        ) {
+            body_start = child.end_byte();
+        }
+    }
+    &source[body_start..body_end]
 }
