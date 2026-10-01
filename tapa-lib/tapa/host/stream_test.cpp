@@ -4,6 +4,7 @@
 
 #include "tapa/host/stream.h"
 
+#include <array>
 #include <cstring>
 #include <ostream>
 #include <string>
@@ -143,6 +144,31 @@ TEST(StreamNameTest, StreamsHaveIndexedNames) {
   EXPECT_EQ(data_q[0].get_name(), "data[0]");
   EXPECT_EQ(data_q[1].get_name(), "data[1]");
   EXPECT_EQ(data_q[2].get_name(), "data[2]");
+}
+
+template <typename T>
+void CheckEmptyStreamReads(const T& value) {
+  tapa::stream<T, 1> data_q("empty_reads");
+  EXPECT_EQ(data_q.peek(nullptr), T{});
+  EXPECT_EQ(data_q.read(nullptr), T{});
+
+  data_q.write(value);
+  EXPECT_EQ(data_q.peek(nullptr), value);
+  EXPECT_FALSE(data_q.empty());
+  EXPECT_EQ(data_q.read(nullptr), value);
+  EXPECT_TRUE(data_q.empty());
+  EXPECT_EQ(data_q.peek(nullptr), T{});
+  EXPECT_EQ(data_q.read(nullptr), T{});
+
+  data_q.close();
+  data_q.open();
+  EXPECT_EQ(data_q.peek(nullptr), T{});
+  EXPECT_EQ(data_q.read(nullptr), T{});
+}
+
+TEST(StreamReadTest, EmptyReadsReturnValueInitializedElements) {
+  CheckEmptyStreamReads(2333);
+  CheckEmptyStreamReads(std::array<int, 3>{1, 2, 3});
 }
 
 TEST(LeftoverLogTest, SingleLeftoverIsReported) {

@@ -392,7 +392,7 @@ class istream : virtual public internal::basic_stream<T> {
 
   /// Returns next token value or @c T() if empty (non-blocking, non-EoT).
   T peek(std::nullptr_t) {
-    T val;
+    T val{};
     try_peek(val);
     return val;
   }
@@ -448,7 +448,7 @@ class istream : virtual public internal::basic_stream<T> {
 
   /// Non-blocking read; returns value or @c T() if empty.
   T read(std::nullptr_t) {
-    T val;
+    T val{};
     try_read(val);
     return val;
   }
