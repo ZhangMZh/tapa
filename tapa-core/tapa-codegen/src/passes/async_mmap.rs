@@ -90,7 +90,7 @@ pub fn enabled_axi_directions(
     child_port: &str,
     tags: &BTreeSet<&'static str>,
 ) -> EnabledAxiDirections {
-    let source = strip_verilog_comments(&child_rtl.source);
+    let zero_driven = child_rtl.unconditionally_zero_driven_names();
     let group_enabled = |group: &[(&str, &str)]| {
         for &(tag, activity_suffix) in group {
             if !tags.contains(tag) {
@@ -100,7 +100,7 @@ pub fn enabled_axi_directions(
             let Some(port) = child_rtl.find_port_by_affixes(&prefix, activity_suffix) else {
                 return true;
             };
-            if !has_unconditional_zero_assign(&source, &port.name) {
+            if !zero_driven.contains(&port.name) {
                 return true;
             }
         }
@@ -128,85 +128,6 @@ pub fn has_direct_m_axi_ports(child_rtl: &VerilogModule, child_port: &str) -> bo
                 .find_port(&format!("{M_AXI_PREFIX}{child_port}{suffix}"))
                 .is_some()
         })
-}
-
-fn strip_verilog_comments(source: &str) -> String {
-    let mut result = String::with_capacity(source.len());
-    let mut chars = source.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '/' {
-            result.push(ch);
-            continue;
-        }
-        match chars.peek().copied() {
-            Some('/') => {
-                let _ = chars.next();
-                for comment in chars.by_ref() {
-                    if comment == '\n' {
-                        result.push('\n');
-                        break;
-                    }
-                }
-            }
-            Some('*') => {
-                let _ = chars.next();
-                let mut previous = '\0';
-                for comment in chars.by_ref() {
-                    if previous == '*' && comment == '/' {
-                        break;
-                    }
-                    previous = comment;
-                }
-                result.push(' ');
-            }
-            _ => result.push(ch),
-        }
-    }
-    result
-}
-
-fn has_unconditional_zero_assign(source: &str, port: &str) -> bool {
-    source.split(';').any(|statement| {
-        let statement = statement.trim();
-        let Some(assign) = statement.strip_prefix("assign") else {
-            return false;
-        };
-        let Some((lhs, rhs)) = assign.split_once('=') else {
-            return false;
-        };
-        lhs.trim() == port && is_zero_literal(rhs.trim())
-    })
-}
-
-fn is_zero_literal(literal: &str) -> bool {
-    let mut literal = literal.trim();
-    while let Some(inner) = literal
-        .strip_prefix('(')
-        .and_then(|value| value.strip_suffix(')'))
-    {
-        literal = inner.trim();
-    }
-    let compact = literal.replace('_', "");
-    if compact == "0" || compact == "'0" {
-        return true;
-    }
-    let Some((width, value)) = compact.split_once('\'') else {
-        return false;
-    };
-    if width.is_empty() || !width.chars().all(|ch| ch.is_ascii_digit()) {
-        return false;
-    }
-    let value = value
-        .strip_prefix('s')
-        .or_else(|| value.strip_prefix('S'))
-        .unwrap_or(value);
-    let Some(digits) = value
-        .get(1..)
-        .filter(|_| value.starts_with(['b', 'B', 'o', 'O', 'd', 'D', 'h', 'H']))
-    else {
-        return false;
-    };
-    !digits.is_empty() && digits.chars().all(|ch| ch == '0')
 }
 
 pub fn child_connection_expr(base: &str, tag: &str, suffix: &str) -> Expr {
@@ -471,6 +392,37 @@ mod tests {
         let tags = active_tags(&module, "mem");
 
         assert!(enabled_axi_directions(&module, "mem", &tags).read);
+    }
+
+    #[test]
+    fn conditional_or_procedural_zero_activity_stays_enabled() {
+        for body in [
+            "generate if (ENABLE) begin : conditional\n\
+             assign unused = 1'b0;\n\
+             assign mem_read_addr_s_write = 1'b0;\n\
+             assign mem_read_data_s_read = 1'b0;\n\
+             end endgenerate",
+            "initial begin\n\
+             mem_read_addr_s_write = 1'b0;\n\
+             mem_read_data_s_read = 1'b0;\n\
+             end",
+            "assign mem_read_addr_s_write = 1'b0;\n\
+             assign mem_read_data_s_read = 1'b0;\n\
+             always @(*) mem_read_addr_s_write = live_read;",
+        ] {
+            let source = format!(
+                "module child #(parameter ENABLE = 1)(\n\
+                 output wire mem_read_addr_s_write,\n\
+                 output wire mem_read_data_s_read\n\
+                 );\n{body}\nendmodule"
+            );
+            let module = VerilogModule::parse(&source).unwrap();
+            let tags = active_tags(&module, "mem");
+            assert!(
+                enabled_axi_directions(&module, "mem", &tags).read,
+                "ambiguous activity must keep reads enabled:\n{source}"
+            );
+        }
     }
 
     #[test]

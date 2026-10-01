@@ -15,11 +15,11 @@ use crate::port::{Direction, Port, Width};
 use crate::pragma::Pragma;
 use crate::signal::{Signal, SignalKind};
 
-fn sv_language() -> Language {
+pub(super) fn sv_language() -> Language {
     tree_sitter_systemverilog::LANGUAGE.into()
 }
 
-fn sv_parser() -> Parser {
+pub(super) fn sv_parser() -> Parser {
     let mut p = Parser::new();
     p.set_language(&sv_language())
         .expect("systemverilog grammar loads");
@@ -38,7 +38,7 @@ static Q_PARAMS: LazyLock<Query> = LazyLock::new(|| {
 
 // ── Text helpers ────────────────────────────────────────────────────
 
-fn text_of<'a>(node: Node<'a>, src: &'a [u8]) -> &'a str {
+pub(super) fn text_of<'a>(node: Node<'a>, src: &'a [u8]) -> &'a str {
     std::str::from_utf8(&src[node.byte_range()]).unwrap_or("")
 }
 
@@ -48,7 +48,7 @@ fn text_of<'a>(node: Node<'a>, src: &'a [u8]) -> &'a str {
 /// `u32` index, so every `0..child_count()` loop needs one of the two narrowed.
 /// The underlying C API counts children in a `uint32_t`, so this never
 /// truncates.
-fn child_count(node: Node) -> u32 {
+pub(super) fn child_count(node: Node) -> u32 {
     u32::try_from(node.child_count()).unwrap_or(u32::MAX)
 }
 
@@ -383,7 +383,7 @@ fn signal_kind_of(node: Node, src: &[u8]) -> Option<SignalKind> {
 }
 
 /// True when the node subtree contains an `ERROR` or `MISSING` node.
-fn has_error_node(node: Node) -> bool {
+pub(super) fn has_error_node(node: Node) -> bool {
     node.kind() == "ERROR"
         || node.is_missing()
         || (0..child_count(node)).any(|i| has_error_node(node.child(i).unwrap()))
@@ -532,7 +532,7 @@ fn walk_module_body(
 // ── Module location & pragma preamble ───────────────────────────────
 
 /// First `module_declaration` in document order, anywhere in the tree.
-fn find_first_module(root: Node) -> Option<Node> {
+pub(super) fn find_first_module(root: Node) -> Option<Node> {
     if root.kind() == "module_declaration" {
         return Some(root);
     }

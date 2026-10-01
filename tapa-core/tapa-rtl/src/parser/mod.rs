@@ -17,7 +17,10 @@ use crate::error::ParseError;
 use crate::module::VerilogModule;
 use crate::pragma::Pragma;
 
+mod inspection;
 mod tree_sitter;
+
+pub(crate) use inspection::unconditionally_zero_driven_names;
 
 // ── Utility parsers ─────────────────────────────────────────────────
 

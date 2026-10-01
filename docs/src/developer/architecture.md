@@ -118,7 +118,8 @@ in `tapa-ir` and `tapa-protocol`, never by sharing implementation.
   serialized port schema.
 - **tapa-rtl** — the only place Verilog text is parsed, mutated, or
   emitted (tree-sitter + nom). Other crates never manipulate Verilog
-  source as text.
+  source as text. Activity queries inspect a transient tree-sitter CST and
+  prove only unconditional, full-width literal-zero drivers inactive.
 - **tapa-floorplan** — turns `(design, device)` into a serialized
   `FloorplanResult`. It knows nothing about RTL text or the CLI.
 - **tapa-codegen** — a pure function

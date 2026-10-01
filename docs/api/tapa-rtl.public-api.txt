@@ -703,6 +703,7 @@ pub fn tapa_rtl::module::VerilogModule::find_port(&self, &str) -> core::option::
 pub fn tapa_rtl::module::VerilogModule::find_port_by_affixes(&self, &str, &str) -> core::option::Option<&tapa_rtl::port::Port>
 pub fn tapa_rtl::module::VerilogModule::get_port_of(&self, &str, &str) -> core::option::Option<&tapa_rtl::port::Port>
 pub fn tapa_rtl::module::VerilogModule::parse(&str) -> core::result::Result<Self, tapa_rtl::ParseError>
+pub fn tapa_rtl::module::VerilogModule::unconditionally_zero_driven_names(&self) -> alloc::collections::btree::set::BTreeSet<alloc::string::String>
 impl core::clone::Clone for tapa_rtl::module::VerilogModule
 pub fn tapa_rtl::module::VerilogModule::clone(&self) -> tapa_rtl::module::VerilogModule
 impl core::cmp::Eq for tapa_rtl::module::VerilogModule
@@ -1263,6 +1264,7 @@ pub fn tapa_rtl::module::VerilogModule::find_port(&self, &str) -> core::option::
 pub fn tapa_rtl::module::VerilogModule::find_port_by_affixes(&self, &str, &str) -> core::option::Option<&tapa_rtl::port::Port>
 pub fn tapa_rtl::module::VerilogModule::get_port_of(&self, &str, &str) -> core::option::Option<&tapa_rtl::port::Port>
 pub fn tapa_rtl::module::VerilogModule::parse(&str) -> core::result::Result<Self, tapa_rtl::ParseError>
+pub fn tapa_rtl::module::VerilogModule::unconditionally_zero_driven_names(&self) -> alloc::collections::btree::set::BTreeSet<alloc::string::String>
 impl core::clone::Clone for tapa_rtl::module::VerilogModule
 pub fn tapa_rtl::module::VerilogModule::clone(&self) -> tapa_rtl::module::VerilogModule
 impl core::cmp::Eq for tapa_rtl::module::VerilogModule

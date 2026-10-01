@@ -49,6 +49,14 @@ impl VerilogModule {
         parser::parse_module(source)
     }
 
+    /// Names driven by plain module-scope zero assignments in the original
+    /// source. Conditional, procedural, delayed, or ambiguous drivers and
+    /// malformed bodies are not proof. This performs one transient CST parse;
+    /// the module's serialized interface remains unchanged.
+    pub fn unconditionally_zero_driven_names(&self) -> std::collections::BTreeSet<String> {
+        parser::unconditionally_zero_driven_names(&self.source)
+    }
+
     /// Find a port by exact name.
     pub fn find_port(&self, name: &str) -> Option<&Port> {
         self.ports.iter().find(|p| p.name == name)
@@ -237,5 +245,24 @@ mod tests {
     fn get_port_of_no_match() {
         let m = module(vec![port("other", "input")]);
         assert_eq!(m.get_port_of("missing", "_dout"), None);
+    }
+
+    #[test]
+    fn zero_driver_query_requires_literal_full_width_module_assignments() {
+        let source = "module Drivers(output [1:0] plain, sliced, ambiguous, delayed, connected);\n\
+                      assign plain = (2'b0_0);\n\
+                      assign sliced[0] = 1'b0;\n\
+                      assign ambiguous = '0;\n\
+                      assign ambiguous[0] = live;\n\
+                      assign #1 delayed = 2'b0;\n\
+                      assign connected = 2'b0;\n\
+                      child inst(.activity(connected));\n\
+                      endmodule";
+        let module = VerilogModule::parse(source).unwrap();
+        assert_eq!(
+            module.unconditionally_zero_driven_names(),
+            std::iter::once("plain".to_owned()).collect(),
+            "partial writes and competing or delayed drivers are not proof"
+        );
     }
 }
