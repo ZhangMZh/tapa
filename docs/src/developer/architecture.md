@@ -130,6 +130,8 @@ in `tapa-ir` and `tapa-protocol`, never by sharing implementation.
   and transport (local and remote runners) lives here. Static Tcl, XML, and
   shell templates in the compiler crates use typed Askama contexts, checked
   at compile time; template sources live in each crate’s `templates/` directory.
+  Local runners use duct to feed input and drain both outputs concurrently;
+  a timeout covers process exit and I/O completion and kills the process group.
   No other crate shells out to vendor tools. It also owns remote configuration defaults
   and path normalization. `ToolValue` distinguishes literal command text from
   local paths, including paths within flags and environment values; remote

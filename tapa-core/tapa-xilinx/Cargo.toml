@@ -5,14 +5,13 @@ edition = "2021"
 
 [dependencies]
 hex = { workspace = true }
-wait-timeout = { workspace = true }
+duct = { workspace = true }
 backon = { workspace = true }
 camino = { workspace = true }
 directories = { workspace = true }
 flate2 = { workspace = true }
 fs-err = { workspace = true }
 askama = { workspace = true }
-nix = { workspace = true }
 quick-xml = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
@@ -33,3 +32,6 @@ fs2 = { workspace = true }
 
 [lints]
 workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }
