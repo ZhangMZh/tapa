@@ -388,27 +388,17 @@ fn account_control_pipeline(
     net: &crate::graph::ControlNet,
     link: &str,
 ) -> Result<(), PipelineError> {
-    let &head_region = route
-        .route
-        .first()
-        .ok_or_else(|| accounting_error(link, "route has no Head region"))?;
-    let &tail_region = route
-        .route
-        .last()
-        .ok_or_else(|| accounting_error(link, "route has no Tail region"))?;
-    verify_route_endpoint(graph, regions, net.src, head_region, link, "Head")?;
-    verify_route_endpoint(graph, regions, net.dst, tail_region, link, "Tail")?;
-
-    let register_area = Area {
-        ff: u64::from(net.width),
-        ..Area::default()
-    };
-    add_usage(usage, head_region, register_area, link)?;
-    for &region in &route.reg_regions {
-        add_usage(usage, region, register_area, link)?;
-    }
-    add_usage(usage, tail_region, register_area, link)?;
-    Ok(())
+    let (head, tail) = route_endpoints(graph, regions, route, net.src, net.dst, link)?;
+    account_head_and_body(usage, head, &route.reg_regions, net.width, 0, link)?;
+    add_usage(
+        usage,
+        tail,
+        Area {
+            ff: u64::from(net.width),
+            ..Area::default()
+        },
+        link,
+    )
 }
 
 fn account_axi_pipeline(
@@ -419,16 +409,7 @@ fn account_axi_pipeline(
     net: &crate::graph::AxiNet,
     link: &str,
 ) -> Result<(), PipelineError> {
-    let &head_region = route
-        .route
-        .first()
-        .ok_or_else(|| accounting_error(link, "route has no Head region"))?;
-    let &tail_region = route
-        .route
-        .last()
-        .ok_or_else(|| accounting_error(link, "route has no Tail region"))?;
-    verify_route_endpoint(graph, regions, net.src, head_region, link, "Head")?;
-    verify_route_endpoint(graph, regions, net.dst, tail_region, link, "Tail")?;
+    let (head, tail) = route_endpoints(graph, regions, route, net.src, net.dst, link)?;
 
     let body_level = u32::try_from(route.reg_regions.len())
         .map_err(|_| accounting_error(link, "Body level exceeds u32"))?;
@@ -436,30 +417,9 @@ fn account_axi_pipeline(
         .checked_mul(2)
         .and_then(|level| level.checked_add(8))
         .ok_or_else(|| accounting_error(link, "Tail depth overflows u32"))?;
-    add_usage(
-        usage,
-        tail_region,
-        fifo_area(net.payload_width, real_depth),
-        link,
-    )?;
+    add_usage(usage, tail, fifo_area(net.payload_width, real_depth), link)?;
 
-    let register_area = Area {
-        ff: u64::from(net.width),
-        ..Area::default()
-    };
-    add_usage(
-        usage,
-        head_region,
-        Area {
-            lut: 1,
-            ..register_area
-        },
-        link,
-    )?;
-    for &region in &route.reg_regions {
-        add_usage(usage, region, register_area, link)?;
-    }
-    Ok(())
+    account_head_and_body(usage, head, &route.reg_regions, net.width, 1, link)
 }
 
 fn account_stream_pipeline(
@@ -470,22 +430,13 @@ fn account_stream_pipeline(
     stream: &crate::graph::Stream,
     fifo: &str,
 ) -> Result<(), PipelineError> {
-    let &head_region = route
-        .route
-        .first()
-        .ok_or_else(|| accounting_error(fifo, "route has no Head region"))?;
-    let &tail_region = route
-        .route
-        .last()
-        .ok_or_else(|| accounting_error(fifo, "route has no Tail region"))?;
-    verify_route_endpoint(graph, regions, stream.src, head_region, fifo, "Head")?;
-    verify_route_endpoint(graph, regions, stream.dst, tail_region, fifo, "Tail")?;
+    let (head, tail) = route_endpoints(graph, regions, route, stream.src, stream.dst, fifo)?;
 
     let original_fifo = fifo_area(
         stream.data_width,
         floorplanned_fifo_storage_depth(stream.depth),
     );
-    subtract_usage(usage, tail_region, original_fifo, fifo)?;
+    subtract_usage(usage, tail, original_fifo, fifo)?;
 
     let body_level = u32::try_from(route.reg_regions.len())
         .map_err(|_| accounting_error(fifo, "Body level exceeds u32"))?;
@@ -497,12 +448,7 @@ fn account_stream_pipeline(
         .depth
         .checked_add(extra_depth)
         .ok_or_else(|| accounting_error(fifo, "Tail depth overflows u32"))?;
-    add_usage(
-        usage,
-        tail_region,
-        fifo_area(stream.data_width, real_depth),
-        fifo,
-    )?;
+    add_usage(usage, tail, fifo_area(stream.data_width, real_depth), fifo)?;
 
     // Head and each Body explicitly register ready, valid, and DATA_WIDTH
     // data bits. The Head gate's valid qualification is the only additional
@@ -512,23 +458,55 @@ fn account_stream_pipeline(
         .checked_add(2)
         .filter(|width| *width == stream.width)
         .ok_or_else(|| accounting_error(fifo, "inconsistent stream width metadata"))?;
+    account_head_and_body(usage, head, &route.reg_regions, register_width, 1, fifo)
+}
+
+fn account_head_and_body(
+    usage: &mut BTreeMap<Cell, Area>,
+    head: Cell,
+    bodies: &[Cell],
+    width: u32,
+    head_luts: u64,
+    link: &str,
+) -> Result<(), PipelineError> {
     let register_area = Area {
-        ff: u64::from(register_width),
+        ff: u64::from(width),
         ..Area::default()
     };
     add_usage(
         usage,
-        head_region,
+        head,
         Area {
-            lut: 1,
+            lut: head_luts,
             ..register_area
         },
-        fifo,
+        link,
     )?;
-    for &region in &route.reg_regions {
-        add_usage(usage, region, register_area, fifo)?;
+    for &region in bodies {
+        add_usage(usage, region, register_area, link)?;
     }
     Ok(())
+}
+
+fn route_endpoints(
+    graph: &FloorGraph,
+    regions: &[Cell],
+    route: &PlannedRoute,
+    src: usize,
+    dst: usize,
+    link: &str,
+) -> Result<(Cell, Cell), PipelineError> {
+    let &head = route
+        .route
+        .first()
+        .ok_or_else(|| accounting_error(link, "route has no Head region"))?;
+    let &tail = route
+        .route
+        .last()
+        .ok_or_else(|| accounting_error(link, "route has no Tail region"))?;
+    verify_route_endpoint(graph, regions, src, head, link, "Head")?;
+    verify_route_endpoint(graph, regions, dst, tail, link, "Tail")?;
+    Ok((head, tail))
 }
 
 fn verify_route_endpoint(
