@@ -52,6 +52,9 @@ successful enqueue, and retains its completed event for readback and profiling.
 Kernel XML bodies use quick-xml Serde models for both grouped XO declarations
 and flat xclbin declarations. Argument resolution runs after the complete
 port table is available, independent of XML child order.
+Cosimulation AXI read responses capture each beat once and retain its data
+and ID until the VALID/READY handshake, including across concurrent writes
+to the same memory while a read is stalled.
 
 ## Load-Bearing Contract Guards
 

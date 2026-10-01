@@ -65,12 +65,14 @@ module manual_hls_top (
   localparam ST_AW_W = 4;
   localparam ST_B = 5;
   localparam ST_DONE = 6;
+  localparam ST_R_ACCEPT = 7;
 
   reg [2:0] state;
   reg [31:0] read_word;
   reg [31:0] stream_word;
   reg aw_sent;
   reg w_sent;
+  reg read_pending;
 
   always @(posedge ap_clk) begin
     if (!ap_rst_n) begin
@@ -110,10 +112,18 @@ module manual_hls_top (
       s_s_read <= 1'b0;
       aw_sent <= 1'b0;
       w_sent <= 1'b0;
+      read_pending <= 1'b0;
       read_word <= 32'd0;
       stream_word <= 32'd0;
     end else begin
       s_s_read <= 1'b0;
+      // A write to the same address must not change an offered read response.
+      if (read_pending &&
+          (!m_axi_a_RVALID || m_axi_a_RDATA != read_word ||
+           m_axi_a_RID != READ_ID || !m_axi_a_RLAST || m_axi_a_RRESP != 0)) begin
+        $fatal(1, "AXI read response changed while stalled: expected %0d, got %0d",
+               read_word, m_axi_a_RDATA);
+      end
       case (state)
         ST_IDLE: begin
           ap_done <= 1'b0;
@@ -136,17 +146,26 @@ module manual_hls_top (
             m_axi_a_ARVALID <= 1'b0;
             // The response must retain the accepted ID after this port changes.
             m_axi_a_ARID <= 65'd0;
-            m_axi_a_RREADY <= 1'b1;
             state <= ST_R;
           end
         end
         ST_R: begin
+          if (m_axi_a_RVALID) begin
+            read_word <= m_axi_a_RDATA;
+            read_pending <= 1'b1;
+            state <= ST_AW_W;
+            aw_sent <= 1'b0;
+            w_sent <= 1'b0;
+          end
+        end
+        ST_R_ACCEPT: begin
           if (m_axi_a_RVALID && m_axi_a_RREADY) begin
             if (m_axi_a_RID != READ_ID) begin
               $fatal(1, "AXI read ID mismatch: expected 0x%0h, got 0x%0h",
                      READ_ID, m_axi_a_RID);
             end
             read_word <= m_axi_a_RDATA;
+            read_pending <= 1'b0;
             m_axi_a_RREADY <= 1'b0;
             state <= ST_STREAM;
           end
@@ -158,6 +177,7 @@ module manual_hls_top (
             state <= ST_AW_W;
             aw_sent <= 1'b0;
             w_sent <= 1'b0;
+            m_axi_a_AWID <= WRITE_ID;
           end
         end
         ST_AW_W: begin
@@ -169,7 +189,7 @@ module manual_hls_top (
             m_axi_a_AWID <= 65'd0;
           end
 
-          m_axi_a_WDATA <= read_word + stream_word;
+          m_axi_a_WDATA <= read_pending ? 32'd100 : read_word + stream_word;
           m_axi_a_WVALID <= !w_sent;
           if (m_axi_a_WVALID && m_axi_a_WREADY) begin
             w_sent <= 1'b1;
@@ -188,7 +208,12 @@ module manual_hls_top (
                      WRITE_ID, m_axi_a_BID);
             end
             m_axi_a_BREADY <= 1'b0;
-            state <= ST_DONE;
+            if (read_pending) begin
+              m_axi_a_RREADY <= 1'b1;
+              state <= ST_R_ACCEPT;
+            end else begin
+              state <= ST_DONE;
+            end
           end
         end
         ST_DONE: begin

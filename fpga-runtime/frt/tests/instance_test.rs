@@ -342,6 +342,9 @@ initial begin : stall_write_response
   @(negedge ap_clk);
   if (m_axi_a_BVALID)
     $fatal(1, "write response duplicated after BVALID/BREADY handshake");
+  // Releasing a forced register retains its last value until its next write.
+  // Restore inactive readiness before the DUT starts its second transaction.
+  force dut.m_axi_a_BREADY = 1'b0;
   release dut.m_axi_a_BREADY;
 end
 "#,

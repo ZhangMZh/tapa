@@ -300,7 +300,9 @@ always @(posedge ap_clk) begin
   end
 
   // ---- R channel: serve data from queue head ----
-  if (axi_{{ arg.ident }}_rd_q.size() > 0 || axi_{{ arg.ident }}_rd_active) begin : rd_{{ arg.ident }}_blk
+  // Retain the offered beat while stalled, including across concurrent writes.
+  if ((axi_{{ arg.ident }}_rd_q.size() > 0 || axi_{{ arg.ident }}_rd_active) &&
+      (!m_axi_{{ arg.ident }}_RVALID || m_axi_{{ arg.ident }}_RREADY)) begin : rd_{{ arg.ident }}_blk
     automatic axi_{{ arg.ident }}_rd_req_t req;
     automatic bit rd_done = 1'b0;
     // Activate the head request if not already serving one.
@@ -338,7 +340,7 @@ always @(posedge ap_clk) begin
     end else begin
       m_axi_{{ arg.ident }}_RVALID <= 1'b0;
     end
-  end else begin
+  end else if (!m_axi_{{ arg.ident }}_RVALID || m_axi_{{ arg.ident }}_RREADY) begin
     m_axi_{{ arg.ident }}_RVALID <= 1'b0;
   end
 

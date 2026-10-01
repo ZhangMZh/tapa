@@ -84,6 +84,7 @@ struct AxiWriteReq {
 {% for arg in mmap_args %}
 static MemRegion mem_{{ arg.ident }}(0x{{ "{:016x}"|format(arg.base_addr) }}ULL, {{ arg.data_size }});
 static std::deque<AxiReadReq<std::remove_reference_t<decltype(dut->{{ arg.axi.arid }})>>> rd_q_{{ arg.ident }};
+static bool rd_have_data_{{ arg.ident }} = false;
 static std::deque<AxiWriteReq<std::remove_reference_t<decltype(dut->{{ arg.axi.awid }})>>> wr_q_{{ arg.ident }};
 static std::deque<std::remove_reference_t<decltype(dut->{{ arg.axi.awid }})>> b_q_{{ arg.ident }};
 {% endfor %}
@@ -112,14 +113,19 @@ static void service_all_axi() {
   if (!rd_q_{{ arg.ident }}.empty()) {
     auto& r = rd_q_{{ arg.ident }}.front();
     dut->{{ arg.axi.rvalid }} = 1;
-    mem_{{ arg.ident }}.read(r.addr + (uint64_t)r.beat * {{ arg.data_width_bytes }},
-                             &dut->{{ arg.axi.rdata }}, {{ arg.data_width_bytes }});
-    dut->{{ arg.axi.rlast }} = (r.beat == r.len) ? 1 : 0;
-    dut->{{ arg.axi.rid }} = r.id;
-    dut->{{ arg.axi.rresp }} = 0;
+    // Capture each beat once so a concurrent write cannot change stalled data.
+    if (!rd_have_data_{{ arg.ident }}) {
+      mem_{{ arg.ident }}.read(r.addr + (uint64_t)r.beat * {{ arg.data_width_bytes }},
+                               &dut->{{ arg.axi.rdata }}, {{ arg.data_width_bytes }});
+      dut->{{ arg.axi.rlast }} = (r.beat == r.len) ? 1 : 0;
+      dut->{{ arg.axi.rid }} = r.id;
+      dut->{{ arg.axi.rresp }} = 0;
+      rd_have_data_{{ arg.ident }} = true;
+    }
     if (dut->{{ arg.axi.rready }}) {
       if (r.beat >= r.len) rd_q_{{ arg.ident }}.pop_front();
       else r.beat++;
+      rd_have_data_{{ arg.ident }} = false;
     }
   } else {
     dut->{{ arg.axi.rvalid }} = 0;
