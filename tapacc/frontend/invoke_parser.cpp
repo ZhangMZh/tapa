@@ -8,6 +8,7 @@
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/Mangle.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APSInt.h"
 
 #include "classify.h"
@@ -41,22 +42,25 @@ bool FitsIn64Bits(const clang::Expr::EvalResult& result) {
                             : value.getActiveBits() <= 64;
 }
 
-// Convert `value` to `type` the way the language would, by handing the work
-// to clang's integral conversion rather than masking bits here: extend or
-// truncate to the destination width, then reinterpret with its signedness.
-// This is what the constant evaluator's `HandleIntToIntCast` does for an
-// implicit conversion, so a literal reaches the RTL with the bits the C++
-// program says it has.
-//
-// A non-integral port (a `float` scalar) has no integral conversion to apply;
-// pass the evaluated bits through unchanged, as before.
-uint64_t ConvertToPortType(const clang::ASTContext& ctx, uint64_t value,
-                           clang::QualType type) {
+// Convert `value` to `type` before serializing its bits. Integral ports
+// extend or truncate the value; float and double ports take the numeric
+// conversion using the target's floating semantics. Preserve the source's
+// signedness so unsigned high bits are not mistaken for negative values.
+uint64_t ConvertToPortType(const clang::ASTContext& ctx,
+                           const llvm::APSInt& value, clang::QualType type) {
   // A boolean conversion is not an integral one: every nonzero value becomes
   // `true`, rather than the low bit surviving a truncation.
-  if (type->isBooleanType()) return value != 0 ? 1 : 0;
-  if (!type->isIntegralOrEnumerationType()) return value;
-  llvm::APSInt converted(llvm::APInt(/*numBits=*/64, value),
+  if (type->isBooleanType()) return !value.isZero() ? 1 : 0;
+  if (type->isSpecificBuiltinType(clang::BuiltinType::Float) ||
+      type->isSpecificBuiltinType(clang::BuiltinType::Double)) {
+    llvm::APFloat converted(ctx.getFloatTypeSemantics(type));
+    converted.convertFromAPInt(value, value.isSigned(),
+                               llvm::APFloat::rmNearestTiesToEven);
+    return converted.bitcastToAPInt().getZExtValue();
+  }
+  const uint64_t bits = value.extOrTrunc(64).getZExtValue();
+  if (!type->isIntegralOrEnumerationType()) return bits;
+  llvm::APSInt converted(llvm::APInt(/*numBits=*/64, bits),
                          /*isUnsigned=*/true);
   converted = converted.extOrTrunc(ctx.getIntWidth(type));
   converted.setIsSigned(type->isSignedIntegerOrEnumerationType());
@@ -327,11 +331,11 @@ void ParseInvocations(UpperTaskContext& uc, const clang::Expr* task_obj) {
         clang::Expr::EvalResult int_eval;
         const bool evaluates_to_int = !decl_ref && !op_call && !is_seq &&
                                       arg->EvaluateAsInt(int_eval, uc.ctx);
-        std::optional<uint64_t> as_int;
+        std::optional<llvm::APSInt> as_int;
         bool too_wide = false;
         if (evaluates_to_int) {
           if (FitsIn64Bits(int_eval)) {
-            as_int = int_eval.Val.getInt().extOrTrunc(64).getZExtValue();
+            as_int = int_eval.Val.getInt();
           } else {
             too_wide = true;
           }
@@ -340,7 +344,7 @@ void ParseInvocations(UpperTaskContext& uc, const clang::Expr* task_obj) {
 
         std::string arg_name;
         // Set instead of `arg_name` when the argument is an integer constant.
-        std::optional<uint64_t> arg_value;
+        std::optional<llvm::APSInt> arg_value;
         if (decl_ref != nullptr) {
           arg_name = decl_ref->getNameInfo().getAsString();
         } else if (op_call != nullptr) {
@@ -357,7 +361,7 @@ void ParseInvocations(UpperTaskContext& uc, const clang::Expr* task_obj) {
                            "fit the task graph's 64-bit constant form");
           continue;
         } else if (is_int_literal) {
-          arg_value = static_cast<uint64_t>(*as_int);
+          arg_value = *as_int;
         }
 
         if (decl_ref != nullptr || op_call != nullptr || is_int_literal ||
@@ -396,7 +400,7 @@ void ParseInvocations(UpperTaskContext& uc, const clang::Expr* task_obj) {
           // arguments to `Args&&...`, so the AST never holds an implicit
           // conversion to the child's parameter type -- the frontend has to
           // ask clang for one.
-          auto set_const = [&](uint64_t v, const std::string& p) {
+          auto set_const = [&](const llvm::APSInt& v, const std::string& p) {
             const clang::QualType type = param->getType();
             insts.back().args[p] =
                 Arg::Constant(ConvertToPortType(uc.ctx, v, type),
@@ -434,7 +438,7 @@ void ParseInvocations(UpperTaskContext& uc, const clang::Expr* task_obj) {
               set_arg(a, ArrayNameAt(port, j), TapaKind::kOStream);
             }
           } else if (is_seq) {
-            set_const(seq_pos[arg]++, port);
+            set_const(llvm::APSInt(llvm::APInt(64, seq_pos[arg]++)), port);
           } else if (arg_value) {
             set_const(*arg_value, port);
           } else {

@@ -203,19 +203,25 @@ TEST(InvokeParser, ConstantTakesTheLanguageConversionToThePort) {
     void Flag(bool value) {}
     void Wide(long long value) {}
     void UnsignedWide(unsigned long long value) {}
+    void Float(float value) {}
+    void Double(double value) {}
     void Top() {
       tapa::task()
           .invoke(Narrow, 300)
           .invoke(Signed, 200)
           .invoke(Flag, 2)
           .invoke(Wide, -1)
-          .invoke(UnsignedWide, 0xffffffffffffffffULL);
+          .invoke(UnsignedWide, 0xffffffffffffffffULL)
+          .invoke(Float, 16777217)
+          .invoke(Float, -1)
+          .invoke(Double, -1)
+          .invoke(Double, 0xffffffffU);
     }
   )cpp";
   auto p = ParseCode(kCode, "Top");
   const auto& insts = p.Task("Top").instances;
-  auto value_of = [&](const char* task) {
-    return insts.at(task)[0].args.at("value").value;
+  auto value_of = [&](const char* task, unsigned index = 0) {
+    return insts.at(task)[index].args.at("value").value;
   };
 
   // 300 -> 8 bits keeps the low byte; 200 -> signed char is 0xc8 either way.
@@ -228,6 +234,14 @@ TEST(InvokeParser, ConstantTakesTheLanguageConversionToThePort) {
   // The upper half of an unsigned 64-bit port must survive extraction too.
   EXPECT_EQ(value_of("UnsignedWide"),
             std::optional<uint64_t>(0xffffffffffffffffULL));
+  // Float rounds 2^24 + 1 to 2^24 rather than keeping the integer's bits.
+  EXPECT_EQ(value_of("Float"), std::optional<uint64_t>(0x4b800000));
+  // Signed negative sources must stay negative in either floating format.
+  EXPECT_EQ(value_of("Float", 1), std::optional<uint64_t>(0xbf800000));
+  EXPECT_EQ(value_of("Double"), std::optional<uint64_t>(0xbff0000000000000ULL));
+  // The unsigned source's high bit must stay positive, unlike a signed -1.
+  EXPECT_EQ(value_of("Double", 1),
+            std::optional<uint64_t>(0x41efffffffe00000ULL));
 }
 
 TEST(InvokeParser, InstancesAndArgs) {

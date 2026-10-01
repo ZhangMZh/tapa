@@ -33,12 +33,12 @@ struct Port {
 
 // One argument of a child invocation: what the child port binds to in the
 // parent's scope, plus the category of that child port. A binding is either a
-// name (port / FIFO) or an integer constant. The constant is reported as a
-// width and a value; spelling it as a Verilog literal is the RTL backend's
-// job, not the frontend's.
+// name (port / FIFO) or an integer constant converted to the child port type.
+// The constant's bits are reported as a width and a value; spelling them as a
+// Verilog literal is the RTL backend's job, not the frontend's.
 struct Arg {
   std::string arg;                // empty when `value` is set
-  std::optional<uint64_t> value;  // constant passed at the invoke site
+  std::optional<uint64_t> value;  // converted constant bits
   uint32_t width = 0;             // bit width of `value`
   TapaKind cat;
 

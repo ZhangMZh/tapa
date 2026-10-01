@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::port::ArgCategory;
 
-/// An integer constant bound to a child port, sized to that port's width.
+/// A constant's converted bits, sized to the child port's width.
 ///
 /// The frontend reports the width and the value; how they spell out as a
 /// Verilog literal is the RTL backend's decision, not the frontend's.
@@ -17,7 +17,7 @@ use crate::port::ArgCategory;
 pub struct WireValue {
     /// Bit width of the literal.
     pub width: u32,
-    /// Unsigned value; a negative source constant arrives two's-complement.
+    /// Raw bits after conversion to the child port type.
     pub value: u64,
 }
 

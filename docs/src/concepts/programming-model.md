@@ -129,6 +129,8 @@ The `--bitstream` flag is what controls which backend runs:
 - Scalar arguments (plain C++ types such as `int`, `float`, `uint64_t`) are passed
   by value and are **read-only to the kernel**. The kernel cannot communicate a
   result back to the host through a scalar parameter; use an mmap or stream instead.
+  Integer constants passed through task `.invoke(...)` are converted to the child
+  scalar parameter type, including numeric conversion to `float` and `double`.
 - Software simulation runs automatically when `tapa::invoke` receives an empty
   bitstream path.
 
