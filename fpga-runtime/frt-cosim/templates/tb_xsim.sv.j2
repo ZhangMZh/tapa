@@ -459,7 +459,10 @@ end
 
 initial begin
 {% if mode == "hls" %}
-  wait (ap_done === 1'b1);
+  // Match the task controller's clocked completion handshake.
+  do begin
+    @(posedge ap_clk);
+  end while (ap_done !== 1'b1);
   // Drain all pending output stream writes before finishing.
   begin
     bit idle;

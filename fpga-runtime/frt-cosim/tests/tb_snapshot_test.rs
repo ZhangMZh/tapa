@@ -280,7 +280,6 @@ fn xsim_hls_tb_snapshot() {
     let tb = generator.render_tb().expect("render tb");
     assert!(tb.contains("module tb_vadd"));
     assert!(tb.contains("tapa_axi_read"));
-    assert!(tb.contains("wait (ap_done === 1'b1);"));
     assert!(tb.contains("repeat (2) @(posedge ap_clk);"));
     assert!(!tb.contains("simulation timeout"));
     let tcl = generator

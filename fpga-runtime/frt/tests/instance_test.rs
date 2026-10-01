@@ -196,9 +196,8 @@ fn open_cosim_verilator_zip_mmap_stream_roundtrip() {
     assert_eq!(mmap_word[0], 17);
 }
 
-#[test]
 #[cfg(target_os = "linux")]
-fn xsim_write_response_survives_ready_withdrawal() {
+fn run_xsim_manual_roundtrip(monitor: &str) {
     use frt_cosim::context::CosimContext;
     use frt_cosim::metadata::load_spec;
     use frt_cosim::tb::xsim::{XsimOptions, XsimTbGenerator};
@@ -234,36 +233,13 @@ fn xsim_write_response_survives_ready_withdrawal() {
     )
     .render_tb()
     .expect("render Xsim testbench");
-    // Drive the DUT register so both endpoints see the same readiness. Change
-    // it only on falling edges: the WLAST edge sees BREADY=1 and BVALID=0,
-    // then the response must remain pending while BREADY is withdrawn.
+    tb.insert_str(
+        tb.rfind("endmodule").expect("testbench module end"),
+        monitor,
+    );
     tb.insert_str(
         tb.rfind("endmodule").expect("testbench module end"),
         r#"
-initial begin : stall_write_response
-  logic [64:0] accepted_id;
-  wait (ap_rst_n);
-  @(negedge ap_clk);
-  force dut.m_axi_a_BREADY = 1'b1;
-  do @(negedge ap_clk); while (!(m_axi_a_AWVALID && m_axi_a_AWREADY));
-  accepted_id = m_axi_a_AWID;
-  do @(negedge ap_clk); while (!(m_axi_a_WVALID && m_axi_a_WREADY && m_axi_a_WLAST));
-  if (m_axi_a_BVALID) $fatal(1, "write response arrived before WLAST");
-  @(negedge ap_clk);
-  force dut.m_axi_a_BREADY = 1'b0;
-  if (!m_axi_a_BVALID || m_axi_a_BID != accepted_id)
-    $fatal(1, "write response missing after WLAST");
-  repeat (2) begin
-    @(negedge ap_clk);
-    if (!m_axi_a_BVALID || m_axi_a_BID != accepted_id)
-      $fatal(1, "write response withdrawn before BVALID/BREADY handshake");
-  end
-  force dut.m_axi_a_BREADY = 1'b1;
-  @(negedge ap_clk);
-  if (m_axi_a_BVALID)
-    $fatal(1, "write response duplicated after BVALID/BREADY handshake");
-  release dut.m_axi_a_BREADY;
-end
 initial begin
   repeat (200) @(posedge ap_clk);
   $fatal(1, "mmap/stream roundtrip did not complete");
@@ -325,11 +301,71 @@ end
         .expect("run Xsim testbench");
     assert!(
         run.status.success(),
-        "Xsim write response failed:\n{}\n{}",
+        "Xsim mmap/stream roundtrip failed:\n{}\n{}",
         String::from_utf8_lossy(&run.stdout),
         String::from_utf8_lossy(&run.stderr)
     );
-    assert_eq!(ctx.buffers["a"].as_slice(), &17u32.to_le_bytes());
+    assert_eq!(
+        ctx.buffers["a"].as_slice(),
+        &17u32.to_le_bytes(),
+        "Xsim must finish the mmap/stream work before exiting"
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn xsim_write_response_survives_ready_withdrawal() {
+    // Drive the DUT register so both endpoints see the same readiness. Change
+    // it only on falling edges: the WLAST edge sees BREADY=1 and BVALID=0,
+    // then the response must remain pending while BREADY is withdrawn.
+    run_xsim_manual_roundtrip(
+        r#"
+initial begin : stall_write_response
+  logic [64:0] accepted_id;
+  wait (ap_rst_n);
+  @(negedge ap_clk);
+  force dut.m_axi_a_BREADY = 1'b1;
+  do @(negedge ap_clk); while (!(m_axi_a_AWVALID && m_axi_a_AWREADY));
+  accepted_id = m_axi_a_AWID;
+  do @(negedge ap_clk); while (!(m_axi_a_WVALID && m_axi_a_WREADY && m_axi_a_WLAST));
+  if (m_axi_a_BVALID) $fatal(1, "write response arrived before WLAST");
+  @(negedge ap_clk);
+  force dut.m_axi_a_BREADY = 1'b0;
+  if (!m_axi_a_BVALID || m_axi_a_BID != accepted_id)
+    $fatal(1, "write response missing after WLAST");
+  repeat (2) begin
+    @(negedge ap_clk);
+    if (!m_axi_a_BVALID || m_axi_a_BID != accepted_id)
+      $fatal(1, "write response withdrawn before BVALID/BREADY handshake");
+  end
+  force dut.m_axi_a_BREADY = 1'b1;
+  @(negedge ap_clk);
+  if (m_axi_a_BVALID)
+    $fatal(1, "write response duplicated after BVALID/BREADY handshake");
+  release dut.m_axi_a_BREADY;
+end
+"#,
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn xsim_completion_is_sampled_on_rising_edge() {
+    // Generated child FSMs sample done on rising edges. A combinational pulse
+    // strictly between those edges must leave the mmap/stream work running.
+    run_xsim_manual_roundtrip(
+        "
+initial begin : completion_glitch
+  wait (ap_start);
+  @(negedge ap_clk);
+  force dut.ap_done = 1'b1;
+  #1;
+  force dut.ap_done = 1'b0;
+  @(negedge ap_clk);
+  release dut.ap_done;
+end
+",
+    );
 }
 
 #[test]
