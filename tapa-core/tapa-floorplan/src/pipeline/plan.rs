@@ -54,8 +54,8 @@ pub enum PipelineError {
 ///
 /// - Single uses only the intermediate route slots.
 /// - Double places one cell on each side of every boundary.
-/// - Single-H/Double-V duplicates every route slot incident to a vertical
-///   boundary, then removes the first Head and last Tail entries.
+/// - Single-H/Double-V adds one cell at each endpoint of every vertical
+///   boundary to Single's intermediate cells.
 #[must_use]
 pub fn pipeline_reg_regions(route: &[Cell], scheme: PipelineScheme) -> Vec<String> {
     pipeline_reg_cells(route, scheme)
@@ -78,8 +78,8 @@ fn pipeline_reg_cells(route: &[Cell], scheme: PipelineScheme) -> Vec<Cell> {
             let mut multiplicity = vec![1usize; route.len()];
             for (index, hop) in route.windows(2).enumerate() {
                 if hop[0].1 != hop[1].1 {
-                    multiplicity[index] = 2;
-                    multiplicity[index + 1] = 2;
+                    multiplicity[index] += 1;
+                    multiplicity[index + 1] += 1;
                 }
             }
             let expanded: Vec<Cell> = route
@@ -1496,6 +1496,22 @@ mod tests {
         assert_eq!(
             pipeline_reg_regions(&route, PipelineScheme::SingleHDoubleV),
             ["SLOT_X1Y0", "SLOT_X1Y0", "SLOT_X1Y1", "SLOT_X1Y1"]
+        );
+    }
+
+    #[test]
+    fn hybrid_consecutive_vertical_hops_each_add_endpoint_registers() {
+        let route = [(0, 0), (0, 1), (0, 2)];
+        assert_eq!(
+            pipeline_reg_regions(&route, PipelineScheme::SingleHDoubleV),
+            [
+                "SLOT_X0Y0",
+                "SLOT_X0Y1",
+                "SLOT_X0Y1",
+                "SLOT_X0Y1",
+                "SLOT_X0Y2",
+            ],
+            "the middle slot needs its Single register and one for each vertical hop",
         );
     }
 }

@@ -194,6 +194,14 @@ This applies to every floorplan run, not just the `--run-impl` and `--dse` flows
 | `--pp-scheme {single,double,single_h_double_v}` | How pipeline registers distribute across a crossing's route (default `double`). |
 | `--max-seconds N` | ILP wall-clock limit in seconds (default `600`). |
 
+The schemes distribute Body registers between separate Head and Tail stages.
+`single` places one Body register in each intermediate route slot; `double`
+places one on each side of every boundary. `single_h_double_v` starts with
+`single` and adds one register at each endpoint of every vertical boundary.
+A slot shared by two vertical boundaries receives one extra register for each.
+For example, two consecutive vertical boundaries produce five Body registers,
+three in the middle slot.
+
 ### Connectivity file
 
 A standard Vitis link config, one `sp=` line per direct M-AXI port:
