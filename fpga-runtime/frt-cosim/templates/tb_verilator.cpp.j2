@@ -95,6 +95,40 @@ static std::array<uint8_t, {{ arg.dpi_width_bytes }}> stream_in_data_{{ arg.iden
 {% endfor %}
 
 static void tick() {
+  // Settle every driven input before sampling the edge handshakes.
+  dut->ap_clk = 0;
+  dut->eval();
+  if (dut->ap_rst_n) {
+{% for arg in mmap_args %}
+    if (dut->{{ arg.axi.arvalid }} && dut->{{ arg.axi.arready }}) {
+      rd_q_{{ arg.ident }}.push_back({dut->{{ arg.axi.araddr }}, (uint8_t)dut->{{ arg.axi.arlen }},
+                                      dut->{{ arg.axi.arid }}, 0});
+    }
+    if (dut->{{ arg.axi.rvalid }} && dut->{{ arg.axi.rready }}) {
+      auto& r = rd_q_{{ arg.ident }}.front();
+      if (r.beat >= r.len) rd_q_{{ arg.ident }}.pop_front();
+      else r.beat++;
+      rd_have_data_{{ arg.ident }} = false;
+    }
+    if (dut->{{ arg.axi.awvalid }} && dut->{{ arg.axi.awready }}) {
+      wr_q_{{ arg.ident }}.push_back({dut->{{ arg.axi.awaddr }}, dut->{{ arg.axi.awid }}, 0});
+    }
+    if (dut->{{ arg.axi.wvalid }} && dut->{{ arg.axi.wready }} && !wr_q_{{ arg.ident }}.empty()) {
+      auto& w = wr_q_{{ arg.ident }}.front();
+      mem_{{ arg.ident }}.write(w.addr + (uint64_t)w.beat * {{ arg.data_width_bytes }},
+                                &dut->{{ arg.axi.wdata }}, &dut->{{ arg.axi.wstrb }},
+                                {{ arg.data_width_bytes }});
+      w.beat++;
+      if (dut->{{ arg.axi.wlast }}) {
+        b_q_{{ arg.ident }}.push_back(w.id);
+        wr_q_{{ arg.ident }}.pop_front();
+      }
+    }
+    if (dut->{{ arg.axi.bvalid }} && dut->{{ arg.axi.bready }}) {
+      b_q_{{ arg.ident }}.pop_front();
+    }
+{% endfor %}
+  }
   dut->ap_clk = 1;
   dut->eval();
   dut->ap_clk = 0;
@@ -103,12 +137,8 @@ static void tick() {
 
 static void service_all_axi() {
 {% for arg in mmap_args %}
-  // ---- AR channel: accept into queue (up to kMaxOutstanding) ----
+  // ---- AR channel: advertise available queue capacity ----
   dut->{{ arg.axi.arready }} = (int(rd_q_{{ arg.ident }}.size()) < kMaxOutstanding) ? 1 : 0;
-  if (dut->{{ arg.axi.arvalid }} && dut->{{ arg.axi.arready }}) {
-    rd_q_{{ arg.ident }}.push_back({dut->{{ arg.axi.araddr }}, (uint8_t)dut->{{ arg.axi.arlen }},
-                                    dut->{{ arg.axi.arid }}, 0});
-  }
   // ---- R channel: serve head of read queue ----
   if (!rd_q_{{ arg.ident }}.empty()) {
     auto& r = rd_q_{{ arg.ident }}.front();
@@ -122,39 +152,18 @@ static void service_all_axi() {
       dut->{{ arg.axi.rresp }} = 0;
       rd_have_data_{{ arg.ident }} = true;
     }
-    if (dut->{{ arg.axi.rready }}) {
-      if (r.beat >= r.len) rd_q_{{ arg.ident }}.pop_front();
-      else r.beat++;
-      rd_have_data_{{ arg.ident }} = false;
-    }
   } else {
     dut->{{ arg.axi.rvalid }} = 0;
   }
-  // ---- AW channel: accept into queue ----
+  // ---- AW channel: advertise available queue capacity ----
   dut->{{ arg.axi.awready }} = (int(wr_q_{{ arg.ident }}.size()) < kMaxOutstanding) ? 1 : 0;
-  if (dut->{{ arg.axi.awvalid }} && dut->{{ arg.axi.awready }}) {
-    wr_q_{{ arg.ident }}.push_back({dut->{{ arg.axi.awaddr }}, dut->{{ arg.axi.awid }}, 0});
-  }
-  // ---- W channel: match data with head AW entry ----
+  // ---- W channel: accept data only after an address is queued ----
   dut->{{ arg.axi.wready }} = !wr_q_{{ arg.ident }}.empty() ? 1 : 0;
-  if (dut->{{ arg.axi.wvalid }} && dut->{{ arg.axi.wready }} && !wr_q_{{ arg.ident }}.empty()) {
-    auto& w = wr_q_{{ arg.ident }}.front();
-    mem_{{ arg.ident }}.write(w.addr + (uint64_t)w.beat * {{ arg.data_width_bytes }},
-                              &dut->{{ arg.axi.wdata }}, &dut->{{ arg.axi.wstrb }},
-                              {{ arg.data_width_bytes }});
-    w.beat++;
-    if (dut->{{ arg.axi.wlast }}) {
-      b_q_{{ arg.ident }}.push_back(w.id);
-      wr_q_{{ arg.ident }}.pop_front();
-    }
-  }
   // ---- B channel: respond from completed-write queue ----
   if (!b_q_{{ arg.ident }}.empty()) {
     dut->{{ arg.axi.bvalid }} = 1;
     dut->{{ arg.axi.bid }} = b_q_{{ arg.ident }}.front();
     dut->{{ arg.axi.bresp }} = 0;
-    if (dut->{{ arg.axi.bready }})
-      b_q_{{ arg.ident }}.pop_front();
   } else {
     dut->{{ arg.axi.bvalid }} = 0;
   }
@@ -332,7 +341,7 @@ int main(int argc, char** argv) {
   dut->{{ arg.axi.rdata }} = 0;
 {% endif %}
   dut->{{ arg.axi.rlast }} = 0; dut->{{ arg.axi.rid }} = {}; dut->{{ arg.axi.rresp }} = 0;
-  dut->{{ arg.axi.awready }} = 1; dut->{{ arg.axi.wready }} = 1;
+  dut->{{ arg.axi.awready }} = 0; dut->{{ arg.axi.wready }} = 0;
   dut->{{ arg.axi.bvalid }} = 0; dut->{{ arg.axi.bid }} = {}; dut->{{ arg.axi.bresp }} = 0;
 {% endfor %}
 

@@ -54,7 +54,9 @@ and flat xclbin declarations. Argument resolution runs after the complete
 port table is available, independent of XML child order.
 Cosimulation AXI read responses capture each beat once and retain its data
 and ID until the VALID/READY handshake, including across concurrent writes
-to the same memory while a read is stalled.
+to the same memory while a read is stalled. Verilator settles every driven
+input before accepting AXI handshakes at each rising edge, including when
+response IDs select destinations with different readiness.
 
 ## Load-Bearing Contract Guards
 

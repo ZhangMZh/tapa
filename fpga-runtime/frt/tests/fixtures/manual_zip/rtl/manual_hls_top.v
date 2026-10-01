@@ -40,7 +40,7 @@ module manual_hls_top (
     input wire [31:0] m_axi_a_RDATA,
     input wire [64:0] m_axi_a_RID,
     input wire m_axi_a_RLAST,
-    output reg m_axi_a_RREADY,
+    output wire m_axi_a_RREADY,
     input wire [1:0] m_axi_a_RRESP,
     input wire m_axi_a_RVALID,
 
@@ -73,6 +73,10 @@ module manual_hls_top (
   reg aw_sent;
   reg w_sent;
   reg read_pending;
+  reg stalled_response;
+
+  // Response IDs select destinations with different readiness, as in the AXI crossbar.
+  assign m_axi_a_RREADY = ap_rst_n && (!m_axi_a_RID[64] || state == ST_R_ACCEPT);
 
   always @(posedge ap_clk) begin
     if (!ap_rst_n) begin
@@ -104,7 +108,6 @@ module manual_hls_top (
       m_axi_a_AWVALID <= 1'b0;
 
       m_axi_a_BREADY <= 1'b0;
-      m_axi_a_RREADY <= 1'b0;
       m_axi_a_WDATA <= 32'd0;
       m_axi_a_WLAST <= 1'b1;
       m_axi_a_WSTRB <= 4'hF;
@@ -113,10 +116,15 @@ module manual_hls_top (
       aw_sent <= 1'b0;
       w_sent <= 1'b0;
       read_pending <= 1'b0;
+      stalled_response <= 1'b0;
       read_word <= 32'd0;
       stream_word <= 32'd0;
     end else begin
       s_s_read <= 1'b0;
+      if (stalled_response && !m_axi_a_RVALID) begin
+        $fatal(1, "read response withdrawn before RID-selected handshake");
+      end
+      stalled_response <= m_axi_a_RVALID && !m_axi_a_RREADY;
       // A write to the same address must not change an offered read response.
       if (read_pending &&
           (!m_axi_a_RVALID || m_axi_a_RDATA != read_word ||
@@ -133,7 +141,6 @@ module manual_hls_top (
           m_axi_a_AWVALID <= 1'b0;
           m_axi_a_WVALID <= 1'b0;
           m_axi_a_BREADY <= 1'b0;
-          m_axi_a_RREADY <= 1'b0;
           if (ap_start) begin
             ap_idle <= 1'b0;
             state <= ST_AR;
@@ -166,7 +173,6 @@ module manual_hls_top (
             end
             read_word <= m_axi_a_RDATA;
             read_pending <= 1'b0;
-            m_axi_a_RREADY <= 1'b0;
             state <= ST_STREAM;
           end
         end
@@ -209,7 +215,6 @@ module manual_hls_top (
             end
             m_axi_a_BREADY <= 1'b0;
             if (read_pending) begin
-              m_axi_a_RREADY <= 1'b1;
               state <= ST_R_ACCEPT;
             end else begin
               state <= ST_DONE;
