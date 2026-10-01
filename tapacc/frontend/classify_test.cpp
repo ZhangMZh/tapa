@@ -104,6 +104,9 @@ TEST(Classify, ScalarAndReferencePeeling) {
   // const-ref mmap still classifies as mmap (references/const are peeled).
   EXPECT_EQ(ClassifyFirstParam("void probe(const tapa::mmap<const float>& m);"),
             TapaKind::kMmap);
+  EXPECT_EQ(
+      ClassifyFirstParam("void probe(const tapa::mmap<const float>&& m);"),
+      TapaKind::kMmap);
 }
 
 TEST(Classify, Markers) {

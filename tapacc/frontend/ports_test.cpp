@@ -129,10 +129,15 @@ TEST(Ports, AsyncMmapAndOmmap) {
 TEST(Ports, StreamsAndAsyncMmapRequireReference) {
   const char* bad[] = {
       "void probe(tapa::istream<int> s);",
+      "void probe(tapa::istream<int>&& s);",
       "void probe(tapa::ostream<int> s);",
+      "void probe(tapa::ostream<int>&& s);",
       "void probe(tapa::istreams<int, 2> s);",
+      "void probe(tapa::istreams<int, 2>&& s);",
       "void probe(tapa::ostreams<int, 2> s);",
+      "void probe(tapa::ostreams<int, 2>&& s);",
       "void probe(tapa::async_mmap<int> m);",
+      "void probe(tapa::async_mmap<int>&& m);",
   };
   for (const char* signature : bad) {
     auto b = BuildProbe(signature);
@@ -149,8 +154,10 @@ TEST(Ports, StreamsAndAsyncMmapRequireReference) {
 TEST(Ports, StreamInstanceIsNotAPort) {
   const char* bad[] = {
       "void probe(tapa::stream<int>& s);",
+      "void probe(tapa::stream<int>&& s);",
       "void probe(tapa::stream<int, 8>& s);",
       "void probe(tapa::streams<int, 2>& s);",
+      "void probe(tapa::streams<int, 2>&& s);",
   };
   for (const char* signature : bad) {
     auto b = BuildProbe(signature);
@@ -176,10 +183,15 @@ TEST(Ports, RawPointerIsNotAMemoryPort) {
 TEST(Ports, MmapFamilyRequiresValue) {
   const char* bad[] = {
       "void probe(tapa::mmap<int>& m);",
+      "void probe(tapa::mmap<int>&& m);",
       "void probe(tapa::mmaps<int, 2>& m);",
+      "void probe(tapa::mmaps<int, 2>&& m);",
       "void probe(tapa::immap<int>& m);",
+      "void probe(tapa::immap<int>&& m);",
       "void probe(tapa::ommap<int>& m);",
+      "void probe(tapa::ommap<int>&& m);",
       "void probe(tapa::hmap<int, 4, 8>& m);",
+      "void probe(tapa::hmap<int, 4, 8>&& m);",
   };
   for (const char* signature : bad) {
     auto b = BuildProbe(signature);

@@ -12,8 +12,8 @@
 
 namespace tapa::cc {
 
-// Strip lvalue-references and template-parameter substitutions to a fixpoint,
-// so that `tapa::mmap<T>&`, `const tapa::mmap<T>&`, and a substituted `T` all
+// Strip references and template-parameter substitutions to a fixpoint,
+// so that `tapa::mmap<T>&`, `const tapa::mmap<T>&&`, and a substituted `T` all
 // reduce to the underlying type. This is the one definition of "normalize a
 // QualType before inspecting it"; classification and template-argument lookup
 // must agree on it or they disagree about what a port is.

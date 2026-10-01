@@ -10,7 +10,7 @@ namespace tapa::cc {
 clang::QualType PeelType(clang::QualType type) {
   for (bool changed = true; changed;) {
     changed = false;
-    if (const auto* ref = type->getAs<clang::LValueReferenceType>()) {
+    if (const auto* ref = type->getAs<clang::ReferenceType>()) {
       type = ref->getPointeeType();
       changed = true;
     }
