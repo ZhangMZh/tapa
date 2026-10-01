@@ -29,6 +29,59 @@ struct BufferBinding {
     buffer: Buffer<u8>,
 }
 
+enum ExecutionState {
+    Idle,
+    Running(Event),
+    // Retain the event for readback dependencies and profiling after completion.
+    Finished(Option<Event>),
+}
+
+impl ExecutionState {
+    fn event(&self) -> Option<&Event> {
+        match self {
+            Self::Running(event) | Self::Finished(Some(event)) => Some(event),
+            Self::Idle | Self::Finished(None) => None,
+        }
+    }
+
+    fn launch(&mut self, enqueue: impl FnOnce() -> Result<Event>) -> Result<()> {
+        let event = enqueue()?;
+        *self = Self::Running(event);
+        Ok(())
+    }
+
+    fn finish(&mut self) {
+        let event = match std::mem::replace(self, Self::Finished(None)) {
+            Self::Running(event) | Self::Finished(Some(event)) => Some(event),
+            Self::Idle | Self::Finished(None) => None,
+        };
+        *self = Self::Finished(event);
+    }
+
+    fn poll(&mut self) -> Result<bool> {
+        match self {
+            Self::Idle => Ok(false),
+            Self::Finished(_) => Ok(true),
+            Self::Running(event) => {
+                let status = ocl_result(
+                    event.command_execution_status(),
+                    "query OpenCL event execution status",
+                )?;
+                let done = status.0 <= 0;
+                if done {
+                    self.finish();
+                }
+                Ok(done)
+            }
+        }
+    }
+
+    fn elapsed_ns(&self) -> u64 {
+        self.event()
+            .map_or(0, |event| elapsed_ns(std::slice::from_ref(event)))
+    }
+}
+
 pub struct XrtDevice {
     _meta: KernelXml,
     context: Context,
@@ -37,13 +90,11 @@ pub struct XrtDevice {
     scalars: HashMap<u32, Vec<u8>>,
     buffers: HashMap<u32, BufferBinding>,
     load_events: Vec<Event>,
-    compute_events: Vec<Event>,
+    execution_state: ExecutionState,
     store_events: Vec<Event>,
     load_ns: u64,
     compute_ns: u64,
     store_ns: u64,
-    launched: bool,
-    finished: bool,
 }
 
 // SAFETY: XrtDevice is only accessed from a single thread at a time.
@@ -107,16 +158,11 @@ impl XrtDevice {
             scalars: HashMap::new(),
             buffers: HashMap::new(),
             load_events: Vec::new(),
-            compute_events: Vec::new(),
+            execution_state: ExecutionState::Idle,
             store_events: Vec::new(),
             load_ns: 0,
             compute_ns: 0,
             store_ns: 0,
-            launched: false,
-            // A fresh instance is not finished: `is_finished` must answer
-            // false until `exec` launched something, matching the cosim
-            // backend (`close` decides between wait and kill on this).
-            finished: false,
         })
     }
 }
@@ -144,21 +190,6 @@ fn bootstrap_emulation_env_once(meta: &KernelXml) -> Result<()> {
         })
         .clone()
         .map_err(FrtError::MetadataParse)
-}
-
-/// The part of the `is_finished` contract that needs no `OpenCL` runtime:
-/// a run that was never launched is not finished, and a run already known to
-/// be finished stays finished. `None` means the answer is in the events.
-fn completion_without_events(finished: bool, launched: bool) -> Option<bool> {
-    if finished {
-        return Some(true);
-    }
-    // Not launched yet: not finished — the cosim backend answers the same,
-    // so `close` treats both backends identically.
-    if !launched {
-        return Some(false);
-    }
-    None
 }
 
 /// The `XCL_EMULATION_MODE` value an xclbin of this mode asks for, or `None`
@@ -372,7 +403,12 @@ impl Device for XrtDevice {
 
     fn read_from_device(&mut self) -> Result<()> {
         self.store_events.clear();
-        let waits: Vec<cl_event> = self.compute_events.iter().map(Event::get).collect();
+        let waits: Vec<cl_event> = self
+            .execution_state
+            .event()
+            .map(Event::get)
+            .into_iter()
+            .collect();
         for binding in self.buffers.values() {
             if !binding.access.stores_to_host() {
                 continue;
@@ -401,10 +437,6 @@ impl Device for XrtDevice {
     }
 
     fn exec(&mut self) -> Result<()> {
-        self.launched = true;
-        self.finished = false;
-        self.compute_events.clear();
-
         let mut args = self._meta.args.clone();
         args.sort_by_key(|a| a.id);
 
@@ -455,23 +487,24 @@ impl Device for XrtDevice {
 
         let waits: Vec<cl_event> = self.load_events.iter().map(Event::get).collect();
         let global_work_size: usize = 1;
-        // SAFETY: self.kernel and self.queue are valid OpenCL handles,
-        // global_work_size is a valid 1-element array, and waits contains
-        // only events from prior enqueue operations on the same queue.
-        let evt = unsafe {
-            ocl_result(
-                self.queue.enqueue_nd_range_kernel(
-                    self.kernel.get(),
-                    1,
-                    std::ptr::null(),
-                    (&raw const global_work_size).cast(),
-                    std::ptr::null(),
-                    &waits,
-                ),
-                "enqueue OpenCL kernel",
-            )?
-        };
-        self.compute_events.push(evt);
+        self.execution_state.launch(|| {
+            // SAFETY: self.kernel and self.queue are valid OpenCL handles,
+            // global_work_size is a valid 1-element array, and waits contains
+            // only events from prior enqueue operations on the same queue.
+            unsafe {
+                ocl_result(
+                    self.queue.enqueue_nd_range_kernel(
+                        self.kernel.get(),
+                        1,
+                        std::ptr::null(),
+                        (&raw const global_work_size).cast(),
+                        std::ptr::null(),
+                        &waits,
+                    ),
+                    "enqueue OpenCL kernel",
+                )
+            }
+        })?;
         // compute_ns is read after completion (finish/is_finished): the
         // profiling counters are not populated until the kernel has run,
         // so computing it here would always yield 0.
@@ -480,40 +513,24 @@ impl Device for XrtDevice {
 
     fn finish(&mut self) -> Result<()> {
         ocl_result(self.queue.finish(), "finish OpenCL queue")?;
-        self.finished = true;
-        self.compute_ns = elapsed_ns(&self.compute_events);
+        self.execution_state.finish();
+        self.compute_ns = self.execution_state.elapsed_ns();
         Ok(())
     }
 
     fn kill(&mut self) -> Result<()> {
         // OpenCL kernels do not support forced cancellation in this runtime.
-        self.finished = true;
+        self.execution_state.finish();
         Ok(())
     }
 
     fn is_finished(&mut self) -> Result<bool> {
-        if let Some(answer) = completion_without_events(self.finished, self.launched) {
-            return Ok(answer);
+        let was_running = matches!(self.execution_state, ExecutionState::Running(_));
+        let done = self.execution_state.poll()?;
+        if was_running && done {
+            self.compute_ns = self.execution_state.elapsed_ns();
         }
-        if self.compute_events.is_empty() {
-            return Ok(true);
-        }
-        let mut all_done = true;
-        for evt in &self.compute_events {
-            let status = ocl_result(
-                evt.command_execution_status(),
-                "query OpenCL event execution status",
-            )?;
-            if status.0 > 0 {
-                all_done = false;
-                break;
-            }
-        }
-        if all_done {
-            self.finished = true;
-            self.compute_ns = elapsed_ns(&self.compute_events);
-        }
-        Ok(all_done)
+        Ok(done)
     }
 
     fn load_ns(&self) -> u64 {
@@ -790,31 +807,38 @@ fn elapsed_ns(events: &[Event]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{completion_without_events, emulation_mode_env_value};
+    use super::{emulation_mode_env_value, ExecutionState};
+    use crate::error::FrtError;
     use frt_cosim::metadata::kernel_xml::XclbinTarget;
 
     #[test]
     fn a_device_that_never_launched_is_not_finished() {
-        assert_eq!(
-            completion_without_events(/*finished=*/ false, /*launched=*/ false),
-            Some(false)
-        );
+        assert!(!ExecutionState::Idle.poll().expect("poll unlaunched state"));
     }
 
     #[test]
     fn a_finished_device_stays_finished_without_being_launched_again() {
-        assert_eq!(
-            completion_without_events(/*finished=*/ true, /*launched=*/ false),
-            Some(true)
-        );
+        let mut state = ExecutionState::Idle;
+        state.finish();
+        assert!(state.poll().expect("poll finished state"));
     }
 
     #[test]
-    fn a_launched_device_defers_to_its_events() {
-        assert_eq!(
-            completion_without_events(/*finished=*/ false, /*launched=*/ true),
-            None
-        );
+    fn a_failed_launch_preserves_the_previous_completion_state() {
+        for (mut state, was_finished) in [
+            (ExecutionState::Idle, false),
+            (ExecutionState::Finished(None), true),
+        ] {
+            let err = state
+                .launch(|| Err(FrtError::MetadataParse("enqueue failed".to_owned())))
+                .expect_err("a failed enqueue must not launch compute");
+            assert!(err.to_string().contains("enqueue failed"));
+            assert_eq!(
+                state.poll().expect("poll after failed launch"),
+                was_finished
+            );
+            assert!(state.event().is_none());
+        }
     }
 
     #[test]
