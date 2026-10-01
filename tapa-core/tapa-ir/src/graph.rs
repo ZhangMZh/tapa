@@ -79,8 +79,8 @@ impl TaskGraph {
         self.validate_literals()
     }
 
-    /// Reject invalid invoke-site constants at the boundary, so a malformed
-    /// literal fails here instead of rendering invalid Verilog downstream.
+    /// Reject invalid invoke-site constants and undeclared or non-scalar child
+    /// ports at the boundary, before they render invalid Verilog downstream.
     fn validate_literals(&self) -> Result<(), ParseError> {
         for (task_name, task) in &self.tasks {
             for (child_name, instances) in &task.tasks {
@@ -109,6 +109,28 @@ impl TaskGraph {
                                         "constant {value} bound to a `{}` port; only \
                                          scalar ports take constants",
                                         arg.cat.as_str()
+                                    ),
+                                });
+                            }
+                            let port = self
+                                .tasks
+                                .get(child_name)
+                                .and_then(|child| child.port(port_name))
+                                .filter(|port| port.name == *port_name)
+                                .ok_or_else(|| ParseError::Schema {
+                                    path: path.clone(),
+                                    message: format!(
+                                        "constant {value} has no declared child port \
+                                         `{child_name}.{port_name}`"
+                                    ),
+                                })?;
+                            if !port.cat.is_scalar() {
+                                return Err(ParseError::Schema {
+                                    path,
+                                    message: format!(
+                                        "constant {value} bound to a declared `{}` port; \
+                                         only scalar ports take constants",
+                                        port.cat.as_str()
                                     ),
                                 });
                             }
@@ -157,7 +179,7 @@ mod tests {
                         "n": {"arg": {"width": 8, "value": 300}, "cat": "scalar"}
                     }, "step": 0}]}},
                 "A": {"level": "lower", "srcs": ["A.cpp"], "include_dirs": [], "defines": [], "readable_name": "A", "synth": "hls",
-                    "ports": []}
+                    "ports": [{"cat": "scalar", "name": "n", "type": "uint8_t", "width": 8}]}
             }
         }"#;
         let err = TaskGraph::from_json(payload).expect_err("8'd300 must not parse");
@@ -170,6 +192,100 @@ mod tests {
             .expect_err("archiving a graph must not bypass literal validation");
         assert!(err.to_string().contains("invalid constant"), "{err}");
         assert!(err.to_string().contains("graph.tasks.T"), "{err}");
+    }
+
+    #[test]
+    fn invoke_constant_must_match_declared_scalar_port() {
+        let payload = r#"{
+            "schema_version": 3, "top": "T", "target": "xilinx-hls",
+            "tasks": {
+                "T": {"level": "upper", "srcs": ["T.cpp"], "include_dirs": [], "defines": [], "readable_name": "T", "synth": "hls",
+                    "tasks": {"A": [{"args": {
+                        "n": {"arg": {"width": 32, "value": 1}, "cat": "scalar"}
+                    }}]}},
+                "A": {"level": "lower", "srcs": ["A.cpp"], "include_dirs": [], "defines": [], "readable_name": "A", "synth": "hls",
+                    "ports": [{"cat": "declared_category", "name": "n", "type": "int", "width": 32}]}
+            }
+        }"#;
+        let valid = payload.replace("declared_category", "scalar");
+        let graph = TaskGraph::from_json(&valid).expect("constant binds to an actual scalar port");
+        let state = crate::WorkState::new(graph);
+        assert_eq!(
+            crate::WorkState::from_json(&serde_json::to_string(&state).expect("serialize state"))
+                .expect("archived scalar constant remains valid"),
+            state,
+            "an actual scalar constant must survive archived-state parsing",
+        );
+
+        let mut cases: Vec<_> = ["istream", "ostream", "mmap", "async_mmap"]
+            .into_iter()
+            .map(|category| (category, payload.replace("declared_category", category)))
+            .collect();
+        let mut missing_task = state.graph.clone();
+        missing_task.tasks.remove("A");
+        cases.push((
+            "missing child task",
+            serde_json::to_string(&missing_task).expect("serialize missing child task"),
+        ));
+        let mut missing_port = state.graph.clone();
+        missing_port
+            .tasks
+            .get_mut("A")
+            .expect("child task")
+            .ports
+            .clear();
+        cases.push((
+            "missing child port",
+            serde_json::to_string(&missing_port).expect("serialize missing child port"),
+        ));
+        let mut wrong_port = state.graph.clone();
+        wrong_port.tasks.get_mut("A").expect("child task").ports[0].name = "other".into();
+        cases.push((
+            "wrong child port name",
+            serde_json::to_string(&wrong_port).expect("serialize wrong child port name"),
+        ));
+        for name in ["n[0]", "n[bad]"] {
+            let mut indexed_port = state.graph.clone();
+            let child = &mut indexed_port
+                .tasks
+                .get_mut("T")
+                .expect("parent task")
+                .tasks
+                .get_mut("A")
+                .expect("child instances")[0];
+            let arg = child.args.remove("n").expect("constant binding");
+            child.args.insert(name.into(), arg);
+            cases.push((
+                name,
+                serde_json::to_string(&indexed_port).expect("serialize indexed scalar port"),
+            ));
+        }
+
+        let mut accepted = Vec::new();
+        for (case, malformed) in cases {
+            match TaskGraph::from_json(&malformed) {
+                Ok(_) => accepted.push((case, "graph")),
+                Err(error) => assert!(
+                    error.to_string().contains("tasks.T.tasks.A.args.n"),
+                    "{case}: {error}"
+                ),
+            }
+            let state = format!(
+                r#"{{"version": {}, "graph": {malformed}, "flow": {{}}}}"#,
+                crate::work_state::VERSION
+            );
+            match crate::WorkState::from_json(&state) {
+                Ok(_) => accepted.push((case, "state")),
+                Err(error) => assert!(
+                    error.to_string().contains("graph.tasks.T.tasks.A.args.n"),
+                    "{case}: {error}"
+                ),
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "constants must require declared scalar ports; accepted: {accepted:?}"
+        );
     }
 
     #[test]
