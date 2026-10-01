@@ -350,9 +350,7 @@ fn flatten_hoists_leaf_under_nested_upper() {
     );
 }
 
-#[test]
-fn flatten_uses_explicit_upper_instance_names_in_nested_fifo_paths() {
-    let json = r#"{
+const NESTED_CLUSTERS_GRAPH_JSON: &str = r#"{
         "schema_version": 3,
         "cflags": [],
         "top": "Outer",
@@ -382,7 +380,7 @@ fn flatten_uses_explicit_upper_instance_names_in_nested_fifo_paths() {
                 "srcs": ["Stage.cpp"], "include_dirs": [], "defines": [], "level": "upper", "synth": "hls",
                 "ports": [],
                 "tasks": {
-                    "Source": [{"step": 0, "args": {
+                    "Source": [{"name": "worker", "step": 0, "args": {
                         "out": {"arg": "q", "cat": "ostream"}
                     }}],
                     "Sink": [{"step": 0, "args": {
@@ -407,9 +405,48 @@ fn flatten_uses_explicit_upper_instance_names_in_nested_fifo_paths() {
             }
         }
     }"#;
-    let graph = TaskGraph::from_json(json).expect("parse");
+
+#[test]
+fn flatten_uses_instance_paths_for_nested_fifos_and_named_leaves() {
+    let mut graph = TaskGraph::from_json(NESTED_CLUSTERS_GRAPH_JSON).expect("parse");
+    let mut direct = graph.tasks["Stage"].tasks["Source"][0].clone();
+    direct.args.get_mut("out").expect("output binding").arg =
+        crate::ArgSource::Name("direct_out".into());
+    let mut direct_port = graph.tasks["Source"]
+        .port("out")
+        .expect("output port")
+        .clone();
+    direct_port.name = "direct_out".into();
+    let top = graph.tasks.get_mut("Outer").expect("top task");
+    top.tasks.insert("Source".into(), vec![direct]);
+    top.ports.push(direct_port);
+    top.fifos.insert(
+        "direct_out".into(),
+        crate::InterconnectDefinition {
+            depth: None,
+            consumed_by: None,
+            produced_by: Some(EndpointRef("Source".into(), 0)),
+        },
+    );
+
     let flattened = flatten(&graph).expect("flatten");
     let top = &flattened.tasks["Outer"];
+    assert_eq!(
+        top.tasks["Source"][0].name.as_deref(),
+        Some("worker_compute_stage_west_cluster_Outer")
+    );
+    assert_eq!(
+        top.tasks["Source"][1].name.as_deref(),
+        Some("worker_compute_stage_east_cluster_Outer")
+    );
+    assert_eq!(top.tasks["Source"][2].name.as_deref(), Some("worker"));
+    for instance in &top.tasks["Sink"] {
+        assert_eq!(instance.name, None);
+    }
+    assert_eq!(
+        top.fifos["direct_out"].produced_by,
+        Some(EndpointRef("Source".to_owned(), 2))
+    );
 
     let west_fifo = "q_compute_stage_west_cluster_Outer";
     let east_fifo = "q_compute_stage_east_cluster_Outer";

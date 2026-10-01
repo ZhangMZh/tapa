@@ -98,8 +98,11 @@ Parse C++ source and extract the task graph to `tapa.json` in the work directory
 | `--flatten-hierarchy` | Flatten the task hierarchy so every leaf task sits directly under the top task, preserving kernel stream port names. |
 | `--keep-hierarchy` | Preserve the task hierarchy as written. This is the default; the flag exists to override `--flatten-hierarchy`. |
 
-Flattening rejects FIFO names that collide after scope qualification, because
-merging them would change connectivity.
+Flattening appends ancestor paths to promoted explicitly named leaf instances,
+for example `worker_west_Top` and `worker_east_Top`. Explicit names directly
+under the top task are preserved; unnamed leaves use their task name and index
+in the flattened top. FIFO names that collide after scope qualification are
+rejected because merging them would change connectivity.
 
 ### Example
 

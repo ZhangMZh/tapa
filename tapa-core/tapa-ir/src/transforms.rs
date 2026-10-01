@@ -174,7 +174,16 @@ fn collect_leaves_recursive(
                     .entry(child_def_name.clone())
                     .or_default()
                     .push(TaskInstance {
-                        name: inst.name.clone(),
+                        // Explicit names are local to an upper instance;
+                        // promoted leaves need the ancestor path. Direct top
+                        // names and globally indexed automatic names stay intact.
+                        name: inst.name.as_ref().map(|name| {
+                            if is_top_scope {
+                                name.clone()
+                            } else {
+                                format!("{name}_{scope_path}")
+                            }
+                        }),
                         args: resolved_args,
                         step: inst.step,
                     });
