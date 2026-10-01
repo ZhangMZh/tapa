@@ -10,6 +10,8 @@ pub struct DpiStream {
 
 pub struct DpiStreamInner {
     pub queue: SharedMemoryQueue,
+    /// Host tokens can have trailing object padding beyond the compact DPI bytes.
+    pub bytes: Vec<u8>,
     pub last_istream_valid: bool,
     pub last_ostream_ready: bool,
 }
@@ -34,7 +36,6 @@ impl DpiContext {
         let raw =
             std::env::var(frt_shm::env::TAPA_DPI_CONFIG).map_err(|_e| DpiError::EnvMissing)?;
         let cfg: DpiConfig = serde_json::from_str(&raw)?;
-
         let mut buffers = HashMap::new();
         for (name, entry) in cfg.buffers {
             let seg = MmapSegment::open(&entry.path)?;
@@ -57,6 +58,7 @@ impl DpiContext {
                 name,
                 DpiStream {
                     inner: Mutex::new(DpiStreamInner {
+                        bytes: vec![0; q.width()],
                         queue: q,
                         last_istream_valid: false,
                         last_ostream_ready: false,

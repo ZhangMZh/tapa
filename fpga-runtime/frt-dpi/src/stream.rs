@@ -1,5 +1,37 @@
-use crate::context::DpiContext;
+use crate::context::{DpiContext, DpiStreamInner};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+impl DpiStreamInner {
+    fn pop(&mut self) -> bool {
+        self.queue.pop_into(&mut self.bytes)
+    }
+
+    fn peek(&mut self) -> bool {
+        self.queue.peek_into(&mut self.bytes)
+    }
+
+    fn copy_to_dpi(&self, buf: &mut [u8]) {
+        let n = buf.len().min(self.bytes.len());
+        buf[..n].copy_from_slice(&self.bytes[..n]);
+        // Queues without an explicit EOS/TLAST byte keep that DPI byte zero.
+        buf[n..].fill(0);
+    }
+
+    fn push_from_dpi(
+        &mut self,
+        data: *const u8,
+        dpi_width_bytes: usize,
+    ) -> Result<bool, &'static str> {
+        let n = self.bytes.len().min(dpi_width_bytes);
+        // SAFETY: `data` is a DPI buffer of at least `dpi_width_bytes` bytes;
+        // only its prefix fitting in the host token is accessed.
+        let src = unsafe { std::slice::from_raw_parts(data, n) };
+        self.bytes[..n].copy_from_slice(src);
+        // C++ elem_t can have trailing object padding after its EOS/TLAST byte.
+        self.bytes[n..].fill(0);
+        self.queue.try_push_check_full(&self.bytes)
+    }
+}
 
 fn stream_debug_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -71,15 +103,13 @@ pub fn stream_try_read_impl(ctx: &DpiContext, port: &str, out: *mut u8) -> bool 
     let buf = unsafe { std::slice::from_raw_parts_mut(out, dpi) };
     // pop_into already checks emptiness internally, so calling it directly
     // avoids a redundant pair of atomic loads vs a separate is_empty() check.
-    if !s.queue.pop_into(buf) {
+    if !s.pop() {
         READ_MISS.fetch_add(1, Ordering::Relaxed);
         maybe_report_progress(port, &s.queue);
         maybe_yield();
         return false;
     }
-    // Zero trailing DPI bytes beyond the queue width (e.g. eos/tlast byte).
-    let w = s.queue.width();
-    buf[w..].fill(0);
+    s.copy_to_dpi(buf);
     READ_OK.fetch_add(1, Ordering::Relaxed);
     if stream_debug_enabled() {
         eprintln!(
@@ -101,15 +131,7 @@ pub fn stream_istream_step_impl(ctx: &DpiContext, port: &str, consume: bool, out
 
     if s.last_istream_valid && consume {
         // Consume the previously-peeked front element; the payload is discarded.
-        let w = s.queue.width();
-        let mut discard = [0u8; 256];
-        let popped = if w <= discard.len() {
-            s.queue.pop_into(&mut discard[..w])
-        } else {
-            // Rare oversize width: discard via a sized scratch buffer.
-            s.queue.pop_into(&mut vec![0u8; w])
-        };
-        if popped {
+        if s.pop() {
             READ_OK.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -118,16 +140,14 @@ pub fn stream_istream_step_impl(ctx: &DpiContext, port: &str, consume: bool, out
     // SAFETY: `out` is a DPI-provided buffer of at least `dpi` bytes.
     let buf = unsafe { std::slice::from_raw_parts_mut(out, dpi) };
     // peek_into already checks emptiness internally, avoiding redundant atomic loads.
-    if !s.queue.peek_into(buf) {
+    if !s.peek() {
         s.last_istream_valid = false;
         READ_MISS.fetch_add(1, Ordering::Relaxed);
         maybe_report_progress(port, &s.queue);
         maybe_yield();
         return false;
     }
-    // Zero trailing DPI bytes beyond the queue width (e.g. eos/tlast byte).
-    let w = s.queue.width();
-    buf[w..].fill(0);
+    s.copy_to_dpi(buf);
     s.last_istream_valid = true;
     true
 }
@@ -140,14 +160,14 @@ pub fn stream_try_write_impl(ctx: &DpiContext, port: &str, data: *const u8) -> b
     let Ok(mut s) = stream.inner.lock() else {
         return false;
     };
-    let w = s.queue.width();
-    // SAFETY: `data` is a DPI-provided buffer of at least `w` bytes.
-    let slice = unsafe { std::slice::from_raw_parts(data, w) };
-    let ok = s.queue.try_push(slice).is_ok();
+    let ok = s.push_from_dpi(data, stream.dpi_width_bytes).is_ok();
     if ok {
         WRITE_OK.fetch_add(1, Ordering::Relaxed);
         if stream_debug_enabled() {
-            eprintln!("frt-dpi: stream_try_write '{port}': wrote {w} bytes");
+            eprintln!(
+                "frt-dpi: stream_try_write '{port}': wrote {} bytes",
+                s.queue.width()
+            );
         }
     }
     ok
@@ -169,15 +189,15 @@ pub fn stream_ostream_step_impl(
 
     let mut known_full = false;
     if s.last_ostream_ready && write {
-        let w = s.queue.width();
-        // SAFETY: `data` is a DPI-provided buffer of at least `w` bytes.
-        let slice = unsafe { std::slice::from_raw_parts(data, w) };
-        match s.queue.try_push_check_full(slice) {
+        match s.push_from_dpi(data, stream.dpi_width_bytes) {
             Ok(full_after) => {
                 WRITE_OK.fetch_add(1, Ordering::Relaxed);
                 known_full = full_after;
                 if stream_debug_enabled() {
-                    eprintln!("frt-dpi: stream_ostream_step '{port}': wrote {w} bytes");
+                    eprintln!(
+                        "frt-dpi: stream_ostream_step '{port}': wrote {} bytes",
+                        s.queue.width()
+                    );
                 }
             }
             Err(_) => {
@@ -214,16 +234,14 @@ pub fn stream_hls_ostream_step_impl(
     // unlike AXIS tready which is sampled from the prior cycle in the Vitis path.
     let mut known_full = false;
     if write {
-        let w = s.queue.width();
-        // SAFETY: `data` is a DPI-provided buffer of at least `w` bytes.
-        let slice = unsafe { std::slice::from_raw_parts(data, w) };
-        if let Ok(full_after) = s.queue.try_push_check_full(slice) {
+        if let Ok(full_after) = s.push_from_dpi(data, stream.dpi_width_bytes) {
             WRITE_OK.fetch_add(1, Ordering::Relaxed);
             known_full = full_after;
             if stream_debug_enabled() {
                 let (h, t) = s.queue.head_tail();
                 eprintln!(
-                    "frt-dpi: stream_hls_ostream_step '{port}': wrote {w} bytes (h={h} t={t})"
+                    "frt-dpi: stream_hls_ostream_step '{port}': wrote {} bytes (h={h} t={t})",
+                    s.queue.width()
                 );
             }
         } else {
@@ -283,6 +301,7 @@ mod tests {
                 name.to_owned(),
                 DpiStream {
                     inner: Mutex::new(DpiStreamInner {
+                        bytes: vec![0; q.width()],
                         queue: q,
                         last_istream_valid: false,
                         last_ostream_ready: false,
@@ -351,168 +370,146 @@ mod tests {
 
     #[test]
     fn read_preserves_explicit_eos_or_tlast_byte() {
-        let ctx = make_ctx_with_stream("stream_try_read_preserves_tail", 1, 5, 5);
-        let in_bytes = [1u8, 2, 3, 4, 1];
-        assert!(stream_try_write_impl(
-            &ctx,
-            "stream_try_read_preserves_tail",
-            in_bytes.as_ptr()
-        ));
+        let port = "stream_try_read_preserves_tail";
+        for width in [5, 8] {
+            let ctx = make_ctx_with_stream(port, 1, width, 5);
+            let in_bytes = [1u8, 2, 3, 4, 1];
+            let mut host_bytes = vec![0xee; width as usize];
+            host_bytes[..5].copy_from_slice(&in_bytes);
+            ctx.streams[port]
+                .inner
+                .lock()
+                .expect("stream lock")
+                .queue
+                .try_push(&host_bytes)
+                .expect("host push");
 
-        let mut out = [0u8; 5];
-        assert!(stream_try_read_impl(
-            &ctx,
-            "stream_try_read_preserves_tail",
-            out.as_mut_ptr()
-        ));
-        assert_eq!(out, in_bytes);
+            let mut out = [0xffu8; 7];
+            assert!(stream_try_read_impl(&ctx, port, out[1..6].as_mut_ptr()));
+            assert_eq!(&out[1..6], &in_bytes);
+            assert_eq!(out[0], 0xff);
+            assert_eq!(out[6], 0xff);
+
+            assert!(stream_try_write_impl(&ctx, port, in_bytes.as_ptr()));
+            assert!(ctx.streams[port]
+                .inner
+                .lock()
+                .expect("stream lock")
+                .queue
+                .pop_into(&mut host_bytes));
+            assert_eq!(&host_bytes[..5], &in_bytes);
+            assert!(host_bytes[5..].iter().all(|&byte| byte == 0));
+        }
     }
 
     #[test]
     fn istream_step_holds_front_until_consumed_and_refills_same_cycle() {
-        let ctx = make_ctx_with_stream("stream_istream_step_holds_front", 4, 4, 4);
-        let first = 1u32.to_le_bytes();
-        let second = 2u32.to_le_bytes();
-        assert!(stream_try_write_impl(
-            &ctx,
-            "stream_istream_step_holds_front",
-            first.as_ptr()
-        ));
-        assert!(stream_try_write_impl(
-            &ctx,
-            "stream_istream_step_holds_front",
-            second.as_ptr()
-        ));
+        let port = "stream_istream_step_holds_front";
+        for width in [5, 8] {
+            let ctx = make_ctx_with_stream(port, 4, width, 5);
+            let first = [1, 0, 0, 0, 0];
+            let second = [2, 0, 0, 0, 1];
+            assert!(stream_try_write_impl(&ctx, port, first.as_ptr()));
+            assert!(stream_try_write_impl(&ctx, port, second.as_ptr()));
 
-        let mut out = [0u8; 4];
-        assert!(stream_istream_step_impl(
-            &ctx,
-            "stream_istream_step_holds_front",
-            false,
-            out.as_mut_ptr()
-        ));
-        assert_eq!(u32::from_le_bytes(out), 1);
+            let mut out = [0u8; 5];
+            assert!(stream_istream_step_impl(
+                &ctx,
+                port,
+                false,
+                out.as_mut_ptr()
+            ));
+            assert_eq!(out, first);
 
-        out.fill(0);
-        assert!(stream_istream_step_impl(
-            &ctx,
-            "stream_istream_step_holds_front",
-            false,
-            out.as_mut_ptr()
-        ));
-        assert_eq!(u32::from_le_bytes(out), 1);
+            out.fill(0);
+            assert!(stream_istream_step_impl(
+                &ctx,
+                port,
+                false,
+                out.as_mut_ptr()
+            ));
+            assert_eq!(out, first);
 
-        out.fill(0);
-        assert!(stream_istream_step_impl(
-            &ctx,
-            "stream_istream_step_holds_front",
-            true,
-            out.as_mut_ptr()
-        ));
-        assert_eq!(u32::from_le_bytes(out), 2);
+            out.fill(0);
+            assert!(stream_istream_step_impl(&ctx, port, true, out.as_mut_ptr()));
+            assert_eq!(out, second);
 
-        out.fill(0);
-        assert!(!stream_istream_step_impl(
-            &ctx,
-            "stream_istream_step_holds_front",
-            true,
-            out.as_mut_ptr()
-        ));
+            out.fill(0);
+            assert!(!stream_istream_step_impl(
+                &ctx,
+                port,
+                true,
+                out.as_mut_ptr()
+            ));
+        }
     }
 
     #[test]
     fn ostream_step_only_commits_data_after_prior_ready_cycle() {
-        let ctx = make_ctx_with_stream("stream_ostream_step_prior_ready", 1, 4, 4);
-        let first = 7u32.to_le_bytes();
+        let port = "stream_ostream_step_prior_ready";
+        for width in [5, 8] {
+            let ctx = make_ctx_with_stream(port, 1, width, 5);
+            let first = [7, 0, 0, 0, 1];
 
-        assert!(stream_ostream_step_impl(
-            &ctx,
-            "stream_ostream_step_prior_ready",
-            false,
-            first.as_ptr()
-        ));
-        let mut missing = [0u8; 4];
-        assert!(!stream_try_read_impl(
-            &ctx,
-            "stream_ostream_step_prior_ready",
-            missing.as_mut_ptr()
-        ));
+            assert!(stream_ostream_step_impl(&ctx, port, false, first.as_ptr()));
+            let mut out = [0u8; 5];
+            assert!(!stream_try_read_impl(&ctx, port, out.as_mut_ptr()));
 
-        assert!(!stream_ostream_step_impl(
-            &ctx,
-            "stream_ostream_step_prior_ready",
-            true,
-            first.as_ptr()
-        ));
-        let mut out = [0u8; 4];
-        assert!(stream_try_read_impl(
-            &ctx,
-            "stream_ostream_step_prior_ready",
-            out.as_mut_ptr()
-        ));
-        assert_eq!(u32::from_le_bytes(out), 7);
+            assert!(!stream_ostream_step_impl(&ctx, port, true, first.as_ptr()));
+            assert!(stream_try_read_impl(&ctx, port, out.as_mut_ptr()));
+            assert_eq!(out, first);
+        }
     }
 
     #[test]
     fn hls_ostream_step_commits_immediately_when_queue_is_ready() {
-        let ctx = make_ctx_with_stream("stream_hls_ostream_step_immediate", 1, 4, 4);
-        let first = 11u32.to_le_bytes();
+        let port = "stream_hls_ostream_step_immediate";
+        for width in [5, 8] {
+            let ctx = make_ctx_with_stream(port, 1, width, 5);
+            let first = [11, 0, 0, 0, 1];
+            let mut out = [0u8; 5];
+            assert!(!stream_try_read_impl(&ctx, port, out.as_mut_ptr()));
 
-        assert!(!stream_try_read_impl(
-            &ctx,
-            "stream_hls_ostream_step_immediate",
-            [0u8; 4].as_ptr().cast_mut(),
-        ));
+            assert!(!stream_hls_ostream_step_impl(
+                &ctx,
+                port,
+                true,
+                first.as_ptr()
+            ));
 
-        assert!(!stream_hls_ostream_step_impl(
-            &ctx,
-            "stream_hls_ostream_step_immediate",
-            true,
-            first.as_ptr()
-        ));
-
-        let mut out = [0u8; 4];
-        assert!(stream_try_read_impl(
-            &ctx,
-            "stream_hls_ostream_step_immediate",
-            out.as_mut_ptr()
-        ));
-        assert_eq!(u32::from_le_bytes(out), 11);
+            assert!(stream_try_read_impl(&ctx, port, out.as_mut_ptr()));
+            assert_eq!(out, first);
+        }
     }
 
     #[test]
     fn hls_ostream_step_does_not_drop_first_write_after_queue_recovers() {
-        let ctx = make_ctx_with_stream("stream_hls_ostream_step_recovery", 1, 4, 4);
-        let first = 21u32.to_le_bytes();
-        let second = 22u32.to_le_bytes();
+        let port = "stream_hls_ostream_step_recovery";
+        for width in [5, 8] {
+            let ctx = make_ctx_with_stream(port, 1, width, 5);
+            let first = [21, 0, 0, 0, 0];
+            let second = [22, 0, 0, 0, 1];
 
-        assert!(!stream_hls_ostream_step_impl(
-            &ctx,
-            "stream_hls_ostream_step_recovery",
-            true,
-            first.as_ptr()
-        ));
+            assert!(!stream_hls_ostream_step_impl(
+                &ctx,
+                port,
+                true,
+                first.as_ptr()
+            ));
 
-        let mut out = [0u8; 4];
-        assert!(stream_try_read_impl(
-            &ctx,
-            "stream_hls_ostream_step_recovery",
-            out.as_mut_ptr()
-        ));
-        assert_eq!(u32::from_le_bytes(out), 21);
+            let mut out = [0u8; 5];
+            assert!(stream_try_read_impl(&ctx, port, out.as_mut_ptr()));
+            assert_eq!(out, first);
 
-        assert!(!stream_hls_ostream_step_impl(
-            &ctx,
-            "stream_hls_ostream_step_recovery",
-            true,
-            second.as_ptr()
-        ));
-        out.fill(0);
-        assert!(stream_try_read_impl(
-            &ctx,
-            "stream_hls_ostream_step_recovery",
-            out.as_mut_ptr()
-        ));
-        assert_eq!(u32::from_le_bytes(out), 22);
+            assert!(!stream_hls_ostream_step_impl(
+                &ctx,
+                port,
+                true,
+                second.as_ptr()
+            ));
+            out.fill(0);
+            assert!(stream_try_read_impl(&ctx, port, out.as_mut_ptr()));
+            assert_eq!(out, second);
+        }
     }
 }

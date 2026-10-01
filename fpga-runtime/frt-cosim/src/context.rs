@@ -67,10 +67,10 @@ impl CosimContext {
                     mmap_idx += 1;
                 }
                 ArgKind::Stream { width, depth, .. } => {
-                    // The host enqueues elem_t<T> = { T val; bool eot; } so each
-                    // element is sizeof(T) + 1 bytes regardless of protocol.
-                    // For AXIS the extra byte carries TLAST; for ApFifo it carries
-                    // the EOS bit that maps to the MSB of the dout/din FIFO port.
+                    // Default queues use compact RTL payload bytes plus EOS;
+                    // bound C++ elem_t<T> queues can have trailing object padding.
+                    // AXIS maps the extra EOS byte to TLAST; ApFifo maps it to
+                    // the MSB of the dout/din FIFO port.
                     let width_bytes = (*width).div_ceil(8) + 1;
                     let q = SharedMemoryQueue::create(&arg.name, *depth, width_bytes)?;
                     streams.insert(arg.name.clone(), q);

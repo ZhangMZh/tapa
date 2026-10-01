@@ -1,4 +1,5 @@
 use crate::MmapSegment;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -19,21 +20,50 @@ const _: () = assert!(
 
 pub struct SharedMemoryQueue {
     seg: MmapSegment,
+    layout: QueueLayout,
+}
+
+struct QueueLayout {
+    depth: u64,
+    width: usize,
+    byte_len: usize,
+}
+
+impl QueueLayout {
+    fn new(depth: u32, width: u32) -> std::io::Result<Self> {
+        if depth == 0 || width == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("queue needs depth >= 1 and width >= 1, got depth={depth} width={width}"),
+            ));
+        }
+        let byte_len = (depth as usize)
+            .checked_mul(width as usize)
+            .and_then(|len| len.checked_add(std::mem::size_of::<QueueHeader>()))
+            .filter(|len| isize::try_from(*len).is_ok())
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("queue shape is too large: depth={depth} width={width}"),
+                )
+            })?;
+        Ok(Self {
+            depth: u64::from(depth),
+            width: width as usize,
+            byte_len,
+        })
+    }
+
+    fn slot(&self, index: u64) -> Range<usize> {
+        let start = std::mem::size_of::<QueueHeader>() + (index % self.depth) as usize * self.width;
+        start..start + self.width
+    }
 }
 
 impl SharedMemoryQueue {
     pub fn create(name: &str, depth: u32, width: u32) -> std::io::Result<Self> {
-        // The ring indices are `% depth`-reduced: a zero depth is a
-        // guaranteed panic on first use, and `open` already rejects such
-        // headers, so refuse to write one.
-        if depth == 0 || width == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("queue {name:?} needs depth >= 1 and width >= 1, got depth={depth} width={width}"),
-            ));
-        }
-        let size = 32 + (depth as usize) * (width as usize);
-        let mut seg = MmapSegment::create(name, size)?;
+        let layout = QueueLayout::new(depth, width)?;
+        let mut seg = MmapSegment::create(name, layout.byte_len)?;
         // SAFETY: The segment is at least 32 bytes (the header size) and
         // freshly created with zeroed memory, so the cast is aligned and in-bounds.
         let hdr = unsafe { &mut *seg.as_mut_slice().as_mut_ptr().cast::<QueueHeader>() };
@@ -43,13 +73,13 @@ impl SharedMemoryQueue {
         hdr.width = width;
         hdr.tail.store(0, Ordering::Relaxed);
         hdr.head.store(0, Ordering::Relaxed);
-        Ok(Self { seg })
+        Ok(Self { seg, layout })
     }
 
     pub fn open(path: &str) -> std::io::Result<Self> {
         let seg = MmapSegment::open(path)?;
-        validate_header(seg.as_slice())?;
-        Ok(Self { seg })
+        let layout = validate_header(seg.as_slice())?;
+        Ok(Self { seg, layout })
     }
 
     fn hdr(&self) -> &QueueHeader {
@@ -58,24 +88,12 @@ impl SharedMemoryQueue {
         unsafe { &*self.seg.as_slice().as_ptr().cast::<QueueHeader>() }
     }
 
-    fn data_ptr(&self) -> *const u8 {
-        // SAFETY: The segment is at least header (32 bytes) + data; pointer
-        // arithmetic stays within the allocation.
-        unsafe { self.seg.as_slice().as_ptr().add(32) }
-    }
-
-    fn data_mut_ptr(&mut self) -> *mut u8 {
-        // SAFETY: The segment is at least header (32 bytes) + data; pointer
-        // arithmetic stays within the allocation.
-        unsafe { self.seg.as_mut_slice().as_mut_ptr().add(32) }
-    }
-
     pub fn depth(&self) -> u64 {
-        u64::from(self.hdr().depth)
+        self.layout.depth
     }
 
     pub fn width(&self) -> usize {
-        self.hdr().width as usize
+        self.layout.width
     }
 
     pub fn head_tail(&self) -> (u64, u64) {
@@ -93,7 +111,7 @@ impl SharedMemoryQueue {
 
     pub fn is_full(&self) -> bool {
         let h = self.hdr();
-        h.tail.load(Ordering::Acquire) - h.head.load(Ordering::Acquire) >= h.depth as u64
+        h.tail.load(Ordering::Acquire) - h.head.load(Ordering::Acquire) >= self.layout.depth
     }
 
     pub fn try_push(&mut self, data: &[u8]) -> Result<(), &'static str> {
@@ -104,67 +122,47 @@ impl SharedMemoryQueue {
     /// Returns `Err` if the queue was already full or `data` has wrong length.
     pub fn try_push_check_full(&mut self, data: &[u8]) -> Result<bool, &'static str> {
         let h = self.hdr();
-        let depth = h.depth as u64;
-        let w = h.width as usize;
         let tail = h.tail.load(Ordering::Acquire);
         let head = h.head.load(Ordering::Acquire);
-        if tail - head >= depth {
+        if tail - head >= self.layout.depth {
             return Err("queue full");
         }
-        let slot = (tail % depth) as usize * w;
-        if data.len() != w {
+        if data.len() != self.layout.width {
             return Err("unexpected input size");
         }
-        // SAFETY: `slot` is derived from `tail % depth * width`, which is always
-        // in-bounds of the data region.
-        let dst = unsafe { self.data_mut_ptr().add(slot) };
-        // SAFETY: `data.len() == w` is checked above and `dst` points to a
-        // valid, in-bounds slot in the data region.
-        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), dst, w) };
+        self.seg.as_mut_slice()[self.layout.slot(tail)].copy_from_slice(data);
         let new_tail = tail + 1;
         self.hdr().tail.store(new_tail, Ordering::Release);
-        Ok(new_tail - head >= depth)
+        Ok(new_tail - head >= self.layout.depth)
     }
 
     /// Pop the front element directly into `buf`, returning `true` on success.
-    /// `buf` must be at least `self.width()` bytes; only `width` bytes are written.
+    /// Returns `false` without consuming if empty or `buf` is shorter than
+    /// `self.width()` bytes. Only `width` bytes are written.
     pub fn pop_into(&mut self, buf: &mut [u8]) -> bool {
-        let h = self.hdr();
-        let depth = h.depth as u64;
-        let w = h.width as usize;
-        let head = h.head.load(Ordering::Acquire);
-        if h.tail.load(Ordering::Acquire) == head {
+        let Some(head) = self.read_front(buf) else {
             return false;
-        }
-        let slot = (head % depth) as usize * w;
-        // SAFETY: `slot` is derived from `head % depth * width`, which is always
-        // in-bounds of the data region.
-        let src = unsafe { self.data_ptr().add(slot) };
-        // SAFETY: `src` points to a valid, in-bounds slot and `buf` is at
-        // least `width` bytes.
-        unsafe { std::ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), w) };
+        };
         self.hdr().head.store(head + 1, Ordering::Release);
         true
     }
 
     /// Peek the front element directly into `buf`, returning `true` on success.
-    /// `buf` must be at least `self.width()` bytes; only `width` bytes are written.
+    /// Returns `false` if empty or `buf` is shorter than `self.width()` bytes.
+    /// Only `width` bytes are written.
     pub fn peek_into(&self, buf: &mut [u8]) -> bool {
+        self.read_front(buf).is_some()
+    }
+
+    fn read_front(&self, buf: &mut [u8]) -> Option<u64> {
         let h = self.hdr();
-        let depth = h.depth as u64;
-        let w = h.width as usize;
         let head = h.head.load(Ordering::Acquire);
         if h.tail.load(Ordering::Acquire) == head {
-            return false;
+            return None;
         }
-        let slot = (head % depth) as usize * w;
-        // SAFETY: `slot` is derived from `head % depth * width`, which is always
-        // in-bounds of the data region.
-        let src = unsafe { self.data_ptr().add(slot) };
-        // SAFETY: `src` points to a valid, in-bounds slot and `buf` is at
-        // least `width` bytes.
-        unsafe { std::ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), w) };
-        true
+        let dst = buf.get_mut(..self.layout.width)?;
+        dst.copy_from_slice(&self.seg.as_slice()[self.layout.slot(head)]);
+        Some(head)
     }
 
     pub fn path(&self) -> &Path {
@@ -172,15 +170,15 @@ impl SharedMemoryQueue {
     }
 }
 
-fn validate_header(bytes: &[u8]) -> std::io::Result<()> {
+fn validate_header(bytes: &[u8]) -> std::io::Result<QueueLayout> {
     if bytes.len() < std::mem::size_of::<QueueHeader>() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("shared-memory queue file is too small: {}", bytes.len()),
         ));
     }
-    // SAFETY: We just verified that `bytes` is at least `size_of::<QueueHeader>()` bytes,
-    // so the cast is in-bounds and aligned (QueueHeader is repr(C) starting with [u8; 4]).
+    // SAFETY: `bytes` starts at the page-aligned mapping opened above, and
+    // contains at least `size_of::<QueueHeader>()` bytes.
     let hdr = unsafe { &*bytes.as_ptr().cast::<QueueHeader>() };
     if hdr.magic != *b"tapa" {
         return Err(std::io::Error::new(
@@ -197,16 +195,19 @@ fn validate_header(bytes: &[u8]) -> std::io::Result<()> {
             format!("unexpected version {}; want 1", hdr.version),
         ));
     }
-    if hdr.depth == 0 || hdr.width == 0 {
+    let layout = QueueLayout::new(hdr.depth, hdr.width)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    if bytes.len() < layout.byte_len {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!(
-                "unexpected non-positive queue shape depth={} width={}",
-                hdr.depth, hdr.width
+                "shared-memory queue payload is too small: {} bytes; need {}",
+                bytes.len(),
+                layout.byte_len
             ),
         ));
     }
-    Ok(())
+    Ok(layout)
 }
 
 #[cfg(test)]
@@ -269,6 +270,27 @@ mod tests {
     }
 
     #[test]
+    fn short_reads_preserve_the_token_and_long_reads_preserve_the_suffix() {
+        let mut q = SharedMemoryQueue::create("test_q_read_width", 2, 4).expect("create");
+        q.try_push(b"abcd").expect("push");
+
+        let mut short = [0xee; 3];
+        assert!(!q.peek_into(&mut short));
+        assert!(!q.pop_into(&mut short));
+        assert_eq!(short, [0xee; 3]);
+        assert!(!q.is_empty());
+
+        let mut long = [0xee; 6];
+        assert!(q.peek_into(&mut long));
+        assert_eq!(&long, b"abcd\xee\xee");
+        assert!(!q.is_empty());
+        long.fill(0xee);
+        assert!(q.pop_into(&mut long));
+        assert_eq!(&long, b"abcd\xee\xee");
+        assert!(q.is_empty());
+    }
+
+    #[test]
     fn open_rejects_invalid_header() {
         let seg = MmapSegment::create("test_q_invalid", 32).expect("create");
         let path = seg.path().to_owned();
@@ -280,12 +302,25 @@ mod tests {
         }
     }
 
-    /// Ring indices are `% depth`-reduced; a zero shape must be an
-    /// error at create time, not a panic at first push.
     #[test]
-    fn create_rejects_zero_shapes() {
-        for (depth, width) in [(0, 4), (2, 0)] {
-            match SharedMemoryQueue::create("test_q_zero_shape", depth, width) {
+    fn open_rejects_a_valid_header_with_truncated_payload() {
+        let q = SharedMemoryQueue::create("test_q_payload_source", 2, 4).expect("create");
+        let mut seg = MmapSegment::create("test_q_truncated_payload", q.seg.len() - 1)
+            .expect("create truncated segment");
+        let len = seg.len();
+        seg.as_mut_slice().copy_from_slice(&q.seg.as_slice()[..len]);
+
+        match SharedMemoryQueue::open(seg.path().to_str().expect("utf8")) {
+            Ok(_) => panic!("a queue must contain every slot its header declares"),
+            Err(err) => assert_eq!(err.kind(), std::io::ErrorKind::InvalidData),
+        }
+    }
+
+    /// Reject shapes that cannot address valid slots before creating a mapping.
+    #[test]
+    fn create_rejects_invalid_shapes() {
+        for (depth, width) in [(0, 4), (2, 0), (u32::MAX, u32::MAX)] {
+            match SharedMemoryQueue::create("test_q_invalid_shape", depth, width) {
                 Ok(_) => panic!("depth={depth} width={width} must be rejected"),
                 Err(err) => assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput),
             }

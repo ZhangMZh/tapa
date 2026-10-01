@@ -38,7 +38,10 @@ into a floorplan and into RTL, `tapa-xilinx` drives the vendor tools, and
 `tapa-cli` orchestrates the steps and persists state in `tapa.json`.
 
 Within the runtime workspace, `frt-shm::config` owns the DPI configuration
-schema shared by the cosimulation writer and live DPI reader. Resume reads
+schema shared by the cosimulation writer and live DPI reader. Shared queues
+validate payload geometry and mapped extent on creation and attachment. DPI
+adapters use reusable scratch storage between padded host tokens and compact
+RTL buffers, retaining end-of-stream bytes and zeroing trailing padding. Resume reads
 the JSON once and reopens only buffers; its compatibility reader deliberately
 accepts missing live-stream metadata and reports missing stream bindings
 together. Resume has an explicit pending state with zero compute time;
