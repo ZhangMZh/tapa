@@ -7,6 +7,7 @@
 #include <cstring>
 #include <iostream>
 #include <deque>
+#include <type_traits>
 #include <vector>
 
 extern "C" {
@@ -65,24 +66,26 @@ static V{{ top_name }}* dut;
 
 static constexpr int kMaxOutstanding = 16;
 
+template <typename Id>
 struct AxiReadReq {
   uint64_t addr;
   uint8_t len;
-  uint32_t id;
+  Id id;
   uint8_t beat;
 };
 
+template <typename Id>
 struct AxiWriteReq {
   uint64_t addr;
-  uint32_t id;
+  Id id;
   uint8_t beat;
 };
 
 {% for arg in mmap_args %}
 static MemRegion mem_{{ arg.ident }}(0x{{ "{:016x}"|format(arg.base_addr) }}ULL, {{ arg.data_size }});
-static std::deque<AxiReadReq> rd_q_{{ arg.ident }};
-static std::deque<AxiWriteReq> wr_q_{{ arg.ident }};
-static std::deque<uint32_t> b_q_{{ arg.ident }};
+static std::deque<AxiReadReq<std::remove_reference_t<decltype(dut->{{ arg.axi.arid }})>>> rd_q_{{ arg.ident }};
+static std::deque<AxiWriteReq<std::remove_reference_t<decltype(dut->{{ arg.axi.awid }})>>> wr_q_{{ arg.ident }};
+static std::deque<std::remove_reference_t<decltype(dut->{{ arg.axi.awid }})>> b_q_{{ arg.ident }};
 {% endfor %}
 
 {% for arg in stream_args %}
@@ -103,7 +106,7 @@ static void service_all_axi() {
   dut->{{ arg.axi.arready }} = (int(rd_q_{{ arg.ident }}.size()) < kMaxOutstanding) ? 1 : 0;
   if (dut->{{ arg.axi.arvalid }} && dut->{{ arg.axi.arready }}) {
     rd_q_{{ arg.ident }}.push_back({dut->{{ arg.axi.araddr }}, (uint8_t)dut->{{ arg.axi.arlen }},
-                                    (uint8_t)dut->{{ arg.axi.arid }}, 0});
+                                    dut->{{ arg.axi.arid }}, 0});
   }
   // ---- R channel: serve head of read queue ----
   if (!rd_q_{{ arg.ident }}.empty()) {
@@ -124,7 +127,7 @@ static void service_all_axi() {
   // ---- AW channel: accept into queue ----
   dut->{{ arg.axi.awready }} = (int(wr_q_{{ arg.ident }}.size()) < kMaxOutstanding) ? 1 : 0;
   if (dut->{{ arg.axi.awvalid }} && dut->{{ arg.axi.awready }}) {
-    wr_q_{{ arg.ident }}.push_back({dut->{{ arg.axi.awaddr }}, (uint8_t)dut->{{ arg.axi.awid }}, 0});
+    wr_q_{{ arg.ident }}.push_back({dut->{{ arg.axi.awaddr }}, dut->{{ arg.axi.awid }}, 0});
   }
   // ---- W channel: match data with head AW entry ----
   dut->{{ arg.axi.wready }} = !wr_q_{{ arg.ident }}.empty() ? 1 : 0;
@@ -322,9 +325,9 @@ int main(int argc, char** argv) {
 {% else %}
   dut->{{ arg.axi.rdata }} = 0;
 {% endif %}
-  dut->{{ arg.axi.rlast }} = 0; dut->{{ arg.axi.rid }} = 0; dut->{{ arg.axi.rresp }} = 0;
+  dut->{{ arg.axi.rlast }} = 0; dut->{{ arg.axi.rid }} = {}; dut->{{ arg.axi.rresp }} = 0;
   dut->{{ arg.axi.awready }} = 1; dut->{{ arg.axi.wready }} = 1;
-  dut->{{ arg.axi.bvalid }} = 0; dut->{{ arg.axi.bid }} = 0; dut->{{ arg.axi.bresp }} = 0;
+  dut->{{ arg.axi.bvalid }} = 0; dut->{{ arg.axi.bid }} = {}; dut->{{ arg.axi.bresp }} = 0;
 {% endfor %}
 
   for (int i = 0; i < 10; ++i) tick();

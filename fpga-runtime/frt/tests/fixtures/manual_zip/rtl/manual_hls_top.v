@@ -11,7 +11,7 @@ module manual_hls_top (
     output reg [63:0] m_axi_a_ARADDR,
     output reg [1:0] m_axi_a_ARBURST,
     output reg [3:0] m_axi_a_ARCACHE,
-    output reg [0:0] m_axi_a_ARID,
+    output reg [64:0] m_axi_a_ARID,
     output reg [7:0] m_axi_a_ARLEN,
     output reg [1:0] m_axi_a_ARLOCK,
     output reg [2:0] m_axi_a_ARPROT,
@@ -23,7 +23,7 @@ module manual_hls_top (
     output reg [63:0] m_axi_a_AWADDR,
     output reg [1:0] m_axi_a_AWBURST,
     output reg [3:0] m_axi_a_AWCACHE,
-    output reg [0:0] m_axi_a_AWID,
+    output reg [64:0] m_axi_a_AWID,
     output reg [7:0] m_axi_a_AWLEN,
     output reg [1:0] m_axi_a_AWLOCK,
     output reg [2:0] m_axi_a_AWPROT,
@@ -32,13 +32,13 @@ module manual_hls_top (
     output reg [2:0] m_axi_a_AWSIZE,
     output reg m_axi_a_AWVALID,
 
-    input wire [0:0] m_axi_a_BID,
+    input wire [64:0] m_axi_a_BID,
     output reg m_axi_a_BREADY,
     input wire [1:0] m_axi_a_BRESP,
     input wire m_axi_a_BVALID,
 
     input wire [31:0] m_axi_a_RDATA,
-    input wire [0:0] m_axi_a_RID,
+    input wire [64:0] m_axi_a_RID,
     input wire m_axi_a_RLAST,
     output reg m_axi_a_RREADY,
     input wire [1:0] m_axi_a_RRESP,
@@ -54,6 +54,9 @@ module manual_hls_top (
     input wire s_s_empty_n,
     output reg s_s_read
 );
+
+  localparam [64:0] READ_ID = 65'h1_23456789_abcdefa5;
+  localparam [64:0] WRITE_ID = 65'h1_abcdef12_3456785a;
 
   localparam ST_IDLE = 0;
   localparam ST_AR = 1;
@@ -79,7 +82,7 @@ module manual_hls_top (
       m_axi_a_ARADDR <= 64'd0;
       m_axi_a_ARBURST <= 2'b01;
       m_axi_a_ARCACHE <= 4'b0000;
-      m_axi_a_ARID <= 1'b0;
+      m_axi_a_ARID <= READ_ID;
       m_axi_a_ARLEN <= 8'd0;
       m_axi_a_ARLOCK <= 2'b00;
       m_axi_a_ARPROT <= 3'b000;
@@ -90,7 +93,7 @@ module manual_hls_top (
       m_axi_a_AWADDR <= 64'd0;
       m_axi_a_AWBURST <= 2'b01;
       m_axi_a_AWCACHE <= 4'b0000;
-      m_axi_a_AWID <= 1'b0;
+      m_axi_a_AWID <= WRITE_ID;
       m_axi_a_AWLEN <= 8'd0;
       m_axi_a_AWLOCK <= 2'b00;
       m_axi_a_AWPROT <= 3'b000;
@@ -131,12 +134,18 @@ module manual_hls_top (
           m_axi_a_ARVALID <= 1'b1;
           if (m_axi_a_ARVALID && m_axi_a_ARREADY) begin
             m_axi_a_ARVALID <= 1'b0;
+            // The response must retain the accepted ID after this port changes.
+            m_axi_a_ARID <= 65'd0;
             m_axi_a_RREADY <= 1'b1;
             state <= ST_R;
           end
         end
         ST_R: begin
           if (m_axi_a_RVALID && m_axi_a_RREADY) begin
+            if (m_axi_a_RID != READ_ID) begin
+              $fatal(1, "AXI read ID mismatch: expected 0x%0h, got 0x%0h",
+                     READ_ID, m_axi_a_RID);
+            end
             read_word <= m_axi_a_RDATA;
             m_axi_a_RREADY <= 1'b0;
             state <= ST_STREAM;
@@ -157,6 +166,7 @@ module manual_hls_top (
           if (m_axi_a_AWVALID && m_axi_a_AWREADY) begin
             aw_sent <= 1'b1;
             m_axi_a_AWVALID <= 1'b0;
+            m_axi_a_AWID <= 65'd0;
           end
 
           m_axi_a_WDATA <= read_word + stream_word;
@@ -173,6 +183,10 @@ module manual_hls_top (
         end
         ST_B: begin
           if (m_axi_a_BVALID && m_axi_a_BREADY) begin
+            if (m_axi_a_BID != WRITE_ID) begin
+              $fatal(1, "AXI write ID mismatch: expected 0x%0h, got 0x%0h",
+                     WRITE_ID, m_axi_a_BID);
+            end
             m_axi_a_BREADY <= 1'b0;
             state <= ST_DONE;
           end
