@@ -74,16 +74,17 @@ pub(super) fn top_module_contents<'a>(
     verilog_contents: &'a [String],
     top_name: &str,
 ) -> &'a [String] {
-    let module_decl =
-        regex_lite::Regex::new(r"(?ms)^\s*(?:\(\*.*?\*\)\s*)*module\s+([^\s(#;]+)(?:\s|[#(;])")
-            .unwrap();
+    let module_decl = regex_lite::Regex::new(
+        r"(?ms)^\s*(?:\(\*.*?\*\)\s*)*module\s+(\\[^\s]+|[^\s(#;]+)(?:\s|[#(;])",
+    )
+    .unwrap();
     verilog_contents
         .iter()
         .find(|text| {
             let code = crate::tb::verilog_code(text);
             module_decl
                 .captures_iter(&code)
-                .any(|decl| &decl[1] == top_name)
+                .any(|decl| decl[1].strip_prefix('\\').unwrap_or(&decl[1]) == top_name)
         })
         .map_or(&[], std::slice::from_ref)
 }
@@ -138,5 +139,25 @@ mod tests {
             infer_peek_name("stream_3").as_deref(),
             Some("stream_peek_3")
         );
+    }
+
+    #[test]
+    fn stream_probes_inspect_only_the_named_dut() {
+        for module_name in ["Top", "\\Top"] {
+            let rtl = vec![
+                "module \\Top#Child (input [31:0] stream_dout, stream_peek_dout, input stream_peek_empty_n); endmodule".to_owned(),
+                "module TopChild (input [31:0] stream_dout, stream_peek_dout, input stream_peek_empty_n); endmodule".to_owned(),
+                format!("module {module_name} (input [7:0] stream_dout); endmodule"),
+            ];
+            assert_eq!(
+                crate::tb::port_declaration(top_module_contents(&rtl, "Top"), "stream_dout"),
+                Some(8),
+                "DUT {module_name} must supply its own stream width"
+            );
+            assert!(
+                !stream_peek_ports_exist(&rtl, "Top", "stream_peek"),
+                "DUT {module_name} must not inherit another module's peek ports"
+            );
+        }
     }
 }
