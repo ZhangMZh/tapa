@@ -148,6 +148,37 @@ fn flatten_preserves_external_stream_boundary_names() {
     }
 }
 
+/// A boundary port can have the same spelling as another FIFO's global name;
+/// flattening must report the collision before it overwrites either connection.
+#[test]
+fn flatten_rejects_external_internal_fifo_name_collision() {
+    let mut graph = TaskGraph::from_json(vadd_two_level_graph_json()).expect("parse");
+    let boundary_name = "fifo_VecAdd";
+    let mut external_port = graph.tasks["B"].port("in").expect("consumer port").clone();
+    external_port.name = boundary_name.into();
+    let top = graph.tasks.get_mut("VecAdd").expect("top task");
+    top.ports.push(external_port);
+    let consumers = top.tasks.get_mut("B").expect("consumer task");
+    let mut external_consumer = consumers[0].clone();
+    external_consumer
+        .args
+        .get_mut("in")
+        .expect("input binding")
+        .arg = crate::ArgSource::Name(boundary_name.into());
+    consumers.push(external_consumer);
+    top.fifos.insert(
+        boundary_name.into(),
+        crate::InterconnectDefinition {
+            depth: None,
+            consumed_by: Some(EndpointRef("B".into(), 1)),
+            produced_by: None,
+        },
+    );
+
+    let error = flatten(&graph).expect_err("distinct FIFOs must not merge");
+    assert!(error.to_string().contains(boundary_name), "{error}");
+}
+
 #[test]
 fn flatten_preserves_top_metadata() {
     let g = TaskGraph::from_json(vadd_two_level_graph_json()).expect("parse");

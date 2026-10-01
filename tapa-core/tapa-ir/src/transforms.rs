@@ -24,6 +24,10 @@ pub enum TransformError {
     /// The top task is `lower`; flattening requires an upper top.
     #[error("top task `{0}` is a leaf; cannot transform")]
     TopIsLeaf(String),
+
+    /// Distinct FIFO declarations collapse to one name after flattening.
+    #[error("multiple FIFO declarations flatten to `{0}`")]
+    FifoNameCollision(String),
 }
 
 /// Build a fresh [`TaskGraph`] with all leaf-task instances re-parented
@@ -208,6 +212,9 @@ fn collect_leaves_recursive(
     // (`flatten`) runs a final pass to fill them in.
     for (local_name, global_name) in &fifo_global_map {
         let fifo_def = def.fifos.get(local_name).expect("local fifo present");
+        if fifos.contains_key(global_name) {
+            return Err(TransformError::FifoNameCollision(global_name.clone()));
+        }
         fifos.insert(
             global_name.clone(),
             InterconnectDefinition {
