@@ -198,9 +198,8 @@ fn validate_result(result: &FloorplanResult, device: &Device) -> Result<(), XdcE
             });
         }
         for stage in route.route.iter().chain(&route.reg_regions) {
-            let coor = Coor::from_region_or_slot_name(stage)
-                .filter(|coor| coor.width() == 1 && coor.height() == 1)
-                .ok_or_else(|| XdcError::InvalidRegion {
+            let coor =
+                Coor::from_atomic_region_name(stage).ok_or_else(|| XdcError::InvalidRegion {
                     region: stage.clone(),
                     detail: "route stages must be atomic slots".to_string(),
                 })?;
@@ -236,6 +235,15 @@ fn validate_region_rectangle(device: &Device, region: &str) -> Result<(), XdcErr
         region: region.to_string(),
         detail: "not a region or slot tag".to_string(),
     })?;
+    if coor.ur_x >= device.cols || coor.ur_y >= device.rows {
+        return Err(XdcError::InvalidRegion {
+            region: region.to_string(),
+            detail: format!(
+                "slot ({}, {}) is outside device `{}`",
+                coor.ur_x, coor.ur_y, device.key,
+            ),
+        });
+    }
     for (x, y) in coor.all_slot_coors() {
         if device.slot(x, y).is_none() {
             return Err(XdcError::InvalidRegion {
@@ -1178,8 +1186,10 @@ set_false_path -quiet -through [get_nets -quiet -hier -filter {NAME =~ \"*periph
 
         for bad in [
             "NOT_A_REGION",
-            "SLOT_X9Y9_TO_SLOT_X9Y9", // outside the 2x3 grid
-            "SLOT_X1Y1_TO_SLOT_X0Y1", // reversed rectangle
+            "SLOT_X9Y9_TO_SLOT_X9Y9",          // outside the 2x3 grid
+            "SLOT_X1Y1_TO_SLOT_X0Y1",          // reversed rectangle
+            "SLOT_X0Y0_TO_SLOT_X4294967295Y0", // width overflows a u32
+            "SLOT_X0Y0_TO_SLOT_X0Y4294967295", // height overflows a u32
         ] {
             let result = minimal_result(&[("T", bad)], Vec::new());
             assert!(
@@ -1207,7 +1217,7 @@ set_false_path -quiet -through [get_nets -quiet -hier -filter {NAME =~ \"*periph
             Err(XdcError::EmptyRoute { .. })
         ));
 
-        let bad_stage = minimal_result(
+        let mut bad_stage = minimal_result(
             &[("fifo_0", slot)],
             vec![PipelineRoute {
                 channel: RoutedChannel::Stream {
@@ -1221,13 +1231,20 @@ set_false_path -quiet -through [get_nets -quiet -hier -filter {NAME =~ \"*periph
                 reg_regions: Vec::new(),
             }],
         );
-        assert!(
-            matches!(
-                emit_xdc(&bad_stage, &device),
-                Err(XdcError::InvalidRegion { .. })
-            ),
-            "a multi-slot route stage must fail",
-        );
+        for stage in [
+            "SLOT_X1Y0_TO_SLOT_X1Y1",
+            "SLOT_X0Y0_TO_SLOT_X4294967295Y0",
+            "SLOT_X0Y0_TO_SLOT_X0Y4294967295",
+        ] {
+            bad_stage.routes[0].route[1] = stage.to_string();
+            assert!(
+                matches!(
+                    emit_xdc(&bad_stage, &device),
+                    Err(XdcError::InvalidRegion { .. })
+                ),
+                "a multi-slot route stage must fail: {stage}",
+            );
+        }
 
         let ambiguous = minimal_result(&[("foo", slot), ("foo_fifo", slot)], Vec::new());
         assert!(matches!(
