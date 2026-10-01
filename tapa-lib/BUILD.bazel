@@ -179,6 +179,7 @@ cc_test(
             "tapa/host/stall_test.cpp",
             "tapa/host/stream_alloc_test.cpp",
             "tapa/vendor_parity_test.cpp",
+            "tapa/vendor_stream_test.cpp",
         ],
     ),
     linkopts = ["-lstdc++fs"],
@@ -204,7 +205,10 @@ cc_test(
 cc_test(
     name = "vendor-parity-test",
     size = "small",
-    srcs = ["tapa/vendor_parity_test.cpp"],
+    srcs = [
+        "tapa/vendor_parity_test.cpp",
+        "tapa/vendor_stream_test.cpp",
+    ],
     target_compatible_with = ["@platforms//os:linux"] if VITIS_HLS_AVAILABLE else ["@platforms//:incompatible"],
     visibility = ["//visibility:public"],
     deps = [

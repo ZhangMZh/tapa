@@ -64,7 +64,7 @@ class tapa_stream {
 
   T peek(std::nullptr_t) const {
 #pragma HLS inline
-    T val;
+    T val{};
     try_peek(val);
     return val;
   }
@@ -109,7 +109,7 @@ class tapa_stream {
 
   T read(std::nullptr_t) {
 #pragma HLS inline
-    internal::elem_t<T> elem;
+    internal::elem_t<T> elem{};
     _.read_nb(elem);
     return elem.val;
   }
@@ -164,7 +164,8 @@ class tapa_stream {
     _.write(elem);
   }
 
-  hls::stream<internal::elem_t<T>> _;
+  // The vendor's empty() is non-const even though it observes the queue.
+  mutable hls::stream<internal::elem_t<T>> _;
   mutable hls::stream<internal::elem_t<T>> _peek;
 };
 
