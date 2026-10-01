@@ -60,27 +60,12 @@ pub fn flatten(graph: &TaskGraph) -> Result<TaskGraph, TransformError> {
     // bindings, fill in each FIFO's `consumed_by` / `produced_by`
     // against the flattened leaf set after all globally named arguments have
     // been produced.
-    let fifo_names: Vec<String> = fifos.keys().cloned().collect();
-    for fifo_name in fifo_names {
-        let had_consumer = fifos
-            .get(&fifo_name)
-            .and_then(|f| f.consumed_by.as_ref())
-            .is_some();
-        let had_producer = fifos
-            .get(&fifo_name)
-            .and_then(|f| f.produced_by.as_ref())
-            .is_some();
-        if had_consumer {
-            let consumed = find_endpoint(&leaves, &fifo_name, EndpointRole::Consumer);
-            if let Some(entry) = fifos.get_mut(&fifo_name) {
-                entry.consumed_by = consumed;
-            }
+    for (fifo_name, fifo) in &mut fifos {
+        if fifo.consumed_by.is_some() {
+            fifo.consumed_by = find_endpoint(&leaves, fifo_name, EndpointRole::Consumer);
         }
-        if had_producer {
-            let produced = find_endpoint(&leaves, &fifo_name, EndpointRole::Producer);
-            if let Some(entry) = fifos.get_mut(&fifo_name) {
-                entry.produced_by = produced;
-            }
+        if fifo.produced_by.is_some() {
+            fifo.produced_by = find_endpoint(&leaves, fifo_name, EndpointRole::Producer);
         }
     }
 
