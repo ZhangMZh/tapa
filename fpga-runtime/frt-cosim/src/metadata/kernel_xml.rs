@@ -263,17 +263,17 @@ fn resolve_arg(arg: RawArg, ports: &HashMap<String, PortInfo>) -> Result<ArgSpec
             width: scalar_width(&arg)?,
         },
         1 => ArgKind::Mmap {
-            // The width lives on the port (`m_axi_<name>`) when there is
-            // one; `size` does not help here, being the 8-byte pointer.
+            // Use the port's declared width first; `size` does not help
+            // here, being the 8-byte pointer.
             data_width: port
-                .map(|p| p.data_width.unwrap_or(DEFAULT_DATA_WIDTH))
+                .and_then(|p| p.data_width)
                 .or(arg.data_width)
                 .unwrap_or(DEFAULT_DATA_WIDTH),
             addr_width: arg.addr_width.unwrap_or(DEFAULT_ADDR_WIDTH),
         },
         4 => ArgKind::Stream {
             width: port
-                .map(|p| p.data_width.unwrap_or(DEFAULT_DATA_WIDTH))
+                .and_then(|p| p.data_width)
                 .or(arg.data_width)
                 .unwrap_or(DEFAULT_DATA_WIDTH),
             depth: arg.depth.unwrap_or(DEFAULT_STREAM_DEPTH),
@@ -445,42 +445,57 @@ mod tests {
 <root><kernel name="top">
   <args>
     <arg name="a" addressQualifier="1" id="0" port="m_axi_a" dataWidth="32"/>
-    <arg name="s" addressQualifier="4" id="1" port="s&amp;t" depth="8"/>
+    <arg name="s" addressQualifier="4" id="1" port="s&amp;t" dataWidth="16" depth="8"/>
     <arg name="t" addressQualifier="4" id="2" port="t"/>
+    <arg name="b" addressQualifier="1" id="3" port="m_axi_b" dataWidth="512"/>
+    <arg name="c" addressQualifier="1" id="4" port="m_axi_c"/>
+    <arg name="u" addressQualifier="4" id="5" port="u" dataWidth="128" depth="2"/>
+    <arg name="v" addressQualifier="4" id="6" port="v"/>
   </args>
   <ports>
     <port name="m_axi_a" mode="master" dataWidth="512"/>
     <port name="s&amp;t" mode="read_only" dataWidth="128"/>
     <port name="t" mode="write_only" dataWidth="64"/>
+    <port name="m_axi_b" mode="master"/>
+    <port name="m_axi_c" mode="master"/>
+    <port name="u" mode="read_only"/>
+    <port name="v" mode="write_only"/>
   </ports>
 </kernel></root>"#,
         )
         .expect("parse");
-        assert_eq!(
-            arg(&parsed, "a").kind,
-            ArgKind::Mmap {
-                data_width: 512,
-                addr_width: DEFAULT_ADDR_WIDTH
-            }
-        );
-        assert_eq!(
-            arg(&parsed, "s").kind,
-            ArgKind::Stream {
-                width: 128,
-                depth: 8,
-                dir: StreamDir::In,
-                protocol: StreamProtocol::Axis
-            }
-        );
-        assert_eq!(
-            arg(&parsed, "t").kind,
-            ArgKind::Stream {
-                width: 64,
-                depth: DEFAULT_STREAM_DEPTH,
-                dir: StreamDir::Out,
-                protocol: StreamProtocol::Axis
-            }
-        );
+        for (name, width) in [("a", 512), ("b", 512), ("c", DEFAULT_DATA_WIDTH)] {
+            assert_eq!(
+                arg(&parsed, name).kind,
+                ArgKind::Mmap {
+                    data_width: width,
+                    addr_width: DEFAULT_ADDR_WIDTH
+                },
+                "mmap {name}"
+            );
+        }
+        for (name, width, depth, dir) in [
+            ("s", 128, 8, StreamDir::In),
+            ("t", 64, DEFAULT_STREAM_DEPTH, StreamDir::Out),
+            ("u", 128, 2, StreamDir::In),
+            (
+                "v",
+                DEFAULT_DATA_WIDTH,
+                DEFAULT_STREAM_DEPTH,
+                StreamDir::Out,
+            ),
+        ] {
+            assert_eq!(
+                arg(&parsed, name).kind,
+                ArgKind::Stream {
+                    width,
+                    depth,
+                    dir,
+                    protocol: StreamProtocol::Axis
+                },
+                "stream {name}"
+            );
+        }
     }
 
     #[test]
