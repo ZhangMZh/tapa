@@ -194,20 +194,22 @@ TEST(InvokeParser, ConstantUsesChildPortWidth) {
 }
 
 TEST(InvokeParser, ConstantTakesTheLanguageConversionToThePort) {
-  // Each literal is out of range for its port, so the recorded bits show
-  // which conversion ran. `invoke` binds `Args&&...`, so nothing in the AST
-  // narrows these -- the frontend asks clang to.
+  // The recorded bits exercise conversions to the child port's type.
+  // `invoke` binds `Args&&...`, so nothing in the AST narrows these -- the
+  // frontend asks clang to.
   constexpr char kCode[] = R"cpp(
     void Narrow(unsigned char value) {}
     void Signed(signed char value) {}
     void Flag(bool value) {}
     void Wide(long long value) {}
+    void UnsignedWide(unsigned long long value) {}
     void Top() {
       tapa::task()
           .invoke(Narrow, 300)
           .invoke(Signed, 200)
           .invoke(Flag, 2)
-          .invoke(Wide, -1);
+          .invoke(Wide, -1)
+          .invoke(UnsignedWide, 0xffffffffffffffffULL);
     }
   )cpp";
   auto p = ParseCode(kCode, "Top");
@@ -223,6 +225,9 @@ TEST(InvokeParser, ConstantTakesTheLanguageConversionToThePort) {
   EXPECT_EQ(value_of("Flag"), std::optional<uint64_t>(1));
   // No truncation at 64 bits: the full two's-complement pattern survives.
   EXPECT_EQ(value_of("Wide"), std::optional<uint64_t>(0xffffffffffffffffULL));
+  // The upper half of an unsigned 64-bit port must survive extraction too.
+  EXPECT_EQ(value_of("UnsignedWide"),
+            std::optional<uint64_t>(0xffffffffffffffffULL));
 }
 
 TEST(InvokeParser, InstancesAndArgs) {

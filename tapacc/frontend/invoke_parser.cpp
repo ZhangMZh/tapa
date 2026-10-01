@@ -31,10 +31,9 @@ std::optional<int64_t> EvalInt(const clang::ASTContext& ctx,
 }
 
 // Whether an evaluated value survives the task graph's 64-bit constant
-// form whole. getExtValue() truncates anything wider in release builds
-// (and asserts in debug), so this must be asked before the value is read —
-// a constant would otherwise serialize with a truthful-looking width and
-// the wrong bits.
+// form whole. Check before resizing the evaluated integer; otherwise a
+// wider constant would serialize with a truthful-looking width and the
+// wrong bits.
 bool FitsIn64Bits(const clang::Expr::EvalResult& result) {
   const llvm::APSInt& value = result.Val.getInt();
   // Signed values need their sign bit as well.
@@ -328,11 +327,11 @@ void ParseInvocations(UpperTaskContext& uc, const clang::Expr* task_obj) {
         clang::Expr::EvalResult int_eval;
         const bool evaluates_to_int = !decl_ref && !op_call && !is_seq &&
                                       arg->EvaluateAsInt(int_eval, uc.ctx);
-        std::optional<int64_t> as_int;
+        std::optional<uint64_t> as_int;
         bool too_wide = false;
         if (evaluates_to_int) {
           if (FitsIn64Bits(int_eval)) {
-            as_int = int_eval.Val.getInt().getExtValue();
+            as_int = int_eval.Val.getInt().extOrTrunc(64).getZExtValue();
           } else {
             too_wide = true;
           }
