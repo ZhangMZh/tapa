@@ -1,4 +1,44 @@
 pub mod tapa_protocol
+pub enum tapa_protocol::AxiWidth
+pub tapa_protocol::AxiWidth::Address
+pub tapa_protocol::AxiWidth::Data
+pub tapa_protocol::AxiWidth::Fixed(u32)
+pub tapa_protocol::AxiWidth::Id
+pub tapa_protocol::AxiWidth::Strobe
+impl core::clone::Clone for tapa_protocol::AxiWidth
+pub fn tapa_protocol::AxiWidth::clone(&self) -> tapa_protocol::AxiWidth
+impl core::fmt::Debug for tapa_protocol::AxiWidth
+pub fn tapa_protocol::AxiWidth::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tapa_protocol::AxiWidth
+impl core::marker::Freeze for tapa_protocol::AxiWidth
+impl core::marker::Send for tapa_protocol::AxiWidth
+impl core::marker::Sync for tapa_protocol::AxiWidth
+impl core::marker::Unpin for tapa_protocol::AxiWidth
+impl core::marker::UnsafeUnpin for tapa_protocol::AxiWidth
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_protocol::AxiWidth
+impl core::panic::unwind_safe::UnwindSafe for tapa_protocol::AxiWidth
+impl<T, U> core::convert::Into<U> for tapa_protocol::AxiWidth where U: core::convert::From<T>
+pub fn tapa_protocol::AxiWidth::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_protocol::AxiWidth where U: core::convert::Into<T>
+pub type tapa_protocol::AxiWidth::Error = core::convert::Infallible
+pub fn tapa_protocol::AxiWidth::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_protocol::AxiWidth where U: core::convert::TryFrom<T>
+pub type tapa_protocol::AxiWidth::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_protocol::AxiWidth::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_protocol::AxiWidth where T: core::clone::Clone
+pub type tapa_protocol::AxiWidth::Owned = T
+pub fn tapa_protocol::AxiWidth::clone_into(&self, &mut T)
+pub fn tapa_protocol::AxiWidth::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_protocol::AxiWidth where T: 'static + ?core::marker::Sized
+pub fn tapa_protocol::AxiWidth::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_protocol::AxiWidth where T: ?core::marker::Sized
+pub fn tapa_protocol::AxiWidth::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_protocol::AxiWidth where T: ?core::marker::Sized
+pub fn tapa_protocol::AxiWidth::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_protocol::AxiWidth where T: core::clone::Clone
+pub unsafe fn tapa_protocol::AxiWidth::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_protocol::AxiWidth
+pub fn tapa_protocol::AxiWidth::from(T) -> T
 pub enum tapa_protocol::PortDir
 pub tapa_protocol::PortDir::Input
 pub tapa_protocol::PortDir::Output
@@ -46,6 +86,7 @@ pub tapa_protocol::AxiChannelInfo::ports: &'static [tapa_protocol::AxiPort]
 pub tapa_protocol::AxiChannelInfo::ready: &'static str
 pub tapa_protocol::AxiChannelInfo::valid: &'static str
 impl tapa_protocol::AxiChannelInfo
+pub fn tapa_protocol::AxiChannelInfo::compact_ports(&self) -> impl core::iter::traits::iterator::Iterator<Item = &tapa_protocol::AxiPort>
 pub fn tapa_protocol::AxiChannelInfo::compact_suffixes(&self) -> impl core::iter::traits::iterator::Iterator<Item = &'static str> + '_
 impl core::marker::Freeze for tapa_protocol::AxiChannelInfo
 impl core::marker::Send for tapa_protocol::AxiChannelInfo
@@ -77,6 +118,7 @@ pub tapa_protocol::AxiPort::name: &'static str
 pub tapa_protocol::AxiPort::suffix: &'static str
 impl tapa_protocol::AxiPort
 pub const fn tapa_protocol::AxiPort::width(&self, u32, u32, u32) -> u32
+pub const fn tapa_protocol::AxiPort::width_rule(&self) -> tapa_protocol::AxiWidth
 impl core::clone::Clone for tapa_protocol::AxiPort
 pub fn tapa_protocol::AxiPort::clone(&self) -> tapa_protocol::AxiPort
 impl core::fmt::Debug for tapa_protocol::AxiPort
@@ -140,6 +182,7 @@ pub static tapa_protocol::STREAM_PORT_DIRECTION: phf::map::Map<&'static str, &'s
 pub fn tapa_protocol::axi_subport_from_suffix(&str) -> &str
 pub fn tapa_protocol::axi_subport_width(&str, u32, u32, u32) -> u32
 pub fn tapa_protocol::m_axi_channel(&str) -> core::option::Option<&'static tapa_protocol::AxiChannelInfo>
+pub fn tapa_protocol::m_axi_compact_ports() -> impl core::iter::traits::iterator::Iterator<Item = &'static tapa_protocol::AxiPort>
 pub fn tapa_protocol::m_axi_compact_suffixes() -> impl core::iter::traits::iterator::Iterator<Item = &'static str>
 pub fn tapa_protocol::m_axi_port_direction(&str) -> core::option::Option<tapa_protocol::PortDir>
 pub fn tapa_protocol::m_axi_ports() -> impl core::iter::traits::iterator::Iterator<Item = &'static tapa_protocol::AxiPort>

@@ -1,7 +1,7 @@
 //! M-AXI port generation and parameterized AXI crossbar emission.
 
 use tapa_protocol::{
-    axi_subport_from_suffix, m_axi_compact_suffixes, m_axi_port_direction, m_axi_ports, PortDir,
+    m_axi_compact_ports, m_axi_compact_suffixes, m_axi_ports, AxiPort, AxiWidth, PortDir,
     AXI_ADDR_WIDTH, AXI_ID_WIDTH, HANDSHAKE_CLK, HANDSHAKE_RST, M_AXI_MAX_OUTSTANDING,
     M_AXI_PREFIX,
 };
@@ -274,13 +274,14 @@ pub fn generate_crossbar_rtl(conn: &MMapConnection) -> String {
 
     let mut ports: Vec<String> = vec!["input wire clk".to_string(), "input wire rst".to_string()];
     for ch_idx in 0..channels {
-        for suffix in m_axi_compact_suffixes() {
-            let direction = if matches!(m_axi_port_direction(suffix), Some(PortDir::Output)) {
+        for port in m_axi_compact_ports() {
+            let suffix = port.suffix;
+            let direction = if port.direction == PortDir::Output {
                 "output"
             } else {
                 "input"
             };
-            let width = crossbar_port_width(suffix, true);
+            let width = crossbar_port_width(port, true);
             ports.push(format!(
                 "{direction} wire{width_decl} m{ch_idx:02}{suffix}",
                 width_decl = width_decl(&width)
@@ -288,13 +289,14 @@ pub fn generate_crossbar_rtl(conn: &MMapConnection) -> String {
         }
     }
     for s_idx in 0..slaves {
-        for suffix in m_axi_compact_suffixes() {
-            let direction = if matches!(m_axi_port_direction(suffix), Some(PortDir::Output)) {
+        for port in m_axi_compact_ports() {
+            let suffix = port.suffix;
+            let direction = if port.direction == PortDir::Output {
                 "input"
             } else {
                 "output"
             };
-            let width = crossbar_port_width(suffix, false);
+            let width = crossbar_port_width(port, false);
             ports.push(format!(
                 "{direction} wire{width_decl} s{s_idx:02}{suffix}",
                 width_decl = width_decl(&width)
@@ -414,23 +416,14 @@ fn join_indented(items: &[String]) -> String {
         .join(",\n")
 }
 
-fn crossbar_port_width(suffix: &str, master_side: bool) -> String {
-    let subport = axi_subport_from_suffix(suffix);
-
-    if subport == "ID" {
-        if master_side {
-            "M_ID_WIDTH".to_owned()
-        } else {
-            "S_ID_WIDTH".to_owned()
-        }
-    } else if subport == "STRB" {
-        "DATA_WIDTH/8".to_owned()
-    } else {
-        match resolve_suffix_width(suffix, 0) {
-            0 => "DATA_WIDTH".to_owned(),
-            tapa_protocol::AXI_ADDR_WIDTH if suffix.ends_with("ADDR") => "ADDR_WIDTH".to_owned(),
-            n => n.to_string(),
-        }
+fn crossbar_port_width(port: &AxiPort, master_side: bool) -> String {
+    match port.width_rule() {
+        AxiWidth::Fixed(width) => width.to_string(),
+        AxiWidth::Address => "ADDR_WIDTH".to_owned(),
+        AxiWidth::Data => "DATA_WIDTH".to_owned(),
+        AxiWidth::Id if master_side => "M_ID_WIDTH".to_owned(),
+        AxiWidth::Id => "S_ID_WIDTH".to_owned(),
+        AxiWidth::Strobe => "DATA_WIDTH/8".to_owned(),
     }
 }
 

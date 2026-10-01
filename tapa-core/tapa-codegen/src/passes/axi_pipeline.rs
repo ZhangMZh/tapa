@@ -6,10 +6,7 @@ use tapa_ir::floorplan::Coor;
 use tapa_ir::{
     axi_pipeline_instance_name, AxiChannel, AxiEndpoint, FloorplanResult, MemoryBank, RoutedChannel,
 };
-use tapa_protocol::{
-    axi_subport_from_suffix, axi_subport_width, m_axi_channel, HANDSHAKE_CLK, HANDSHAKE_RST,
-    M_AXI_PREFIX,
-};
+use tapa_protocol::{m_axi_channel, HANDSHAKE_CLK, HANDSHAKE_RST, M_AXI_PREFIX};
 use tapa_rtl::builder::{ContinuousAssign, Expr, ModuleInstance, ParamArg, PortArg};
 use tapa_rtl::module::{sanitize_array_name, sanitize_identifier_name};
 use tapa_rtl::mutation::{wide_wire, wire};
@@ -221,12 +218,12 @@ impl DirectAxiPipelinePlan {
 
             for (channel, _) in interface.channel_widths.enabled_channels() {
                 let channel_name = channel_rtl_name(channel);
-                for suffix in m_axi_channel(channel_name)
+                for port in m_axi_channel(channel_name)
                     .expect("known AXI channel")
-                    .compact_suffixes()
+                    .compact_ports()
                 {
-                    let width = axi_subport_width(
-                        axi_subport_from_suffix(suffix),
+                    let suffix = port.suffix;
+                    let width = port.width(
                         interface.data_width,
                         interface.addr_width,
                         interface.id_width,
@@ -364,15 +361,14 @@ fn build_channel_instance(
 ) -> Result<ModuleInstance, CodegenError> {
     let channel_name = channel_rtl_name(channel);
     let info = m_axi_channel(channel_name).expect("known AXI channel");
-    let payload_suffixes = info
-        .compact_suffixes()
-        .filter(|suffix| *suffix != info.valid && *suffix != info.ready)
+    let payload_ports = info
+        .compact_ports()
+        .filter(|port| port.suffix != info.valid && port.suffix != info.ready)
         .collect::<Vec<_>>();
-    let payload_width = payload_suffixes
+    let payload_width = payload_ports
         .iter()
-        .map(|suffix| {
-            axi_subport_width(
-                axi_subport_from_suffix(suffix),
+        .map(|port| {
+            port.width(
                 interface.data_width,
                 interface.addr_width,
                 interface.id_width,
@@ -406,9 +402,9 @@ fn build_channel_instance(
     };
     let concat_payload = |prefix: &str| {
         Expr::concat(
-            payload_suffixes
+            payload_ports
                 .iter()
-                .map(|suffix| Expr::ident(format!("{prefix}{suffix}")))
+                .map(|port| Expr::ident(format!("{prefix}{}", port.suffix)))
                 .collect(),
         )
     };

@@ -133,7 +133,7 @@ pub enum PortDir {
 
 /// Width rule stored with each emitted port.
 #[derive(Debug, Clone, Copy)]
-enum AxiWidth {
+pub enum AxiWidth {
     Fixed(u32),
     Address,
     Data,
@@ -152,6 +152,11 @@ pub struct AxiPort {
 }
 
 impl AxiPort {
+    /// The catalog's width rule, for symbolic backend expressions.
+    pub const fn width_rule(&self) -> AxiWidth {
+        self.width
+    }
+
     /// Resolve parameterized widths; STRB uses `ceil(data_width / 8)`.
     #[must_use]
     pub const fn width(&self, data_width: u32, addr_width: u32, id_width: u32) -> u32 {
@@ -174,11 +179,12 @@ pub struct AxiChannelInfo {
 }
 
 impl AxiChannelInfo {
+    pub fn compact_ports(&self) -> impl Iterator<Item = &AxiPort> {
+        self.ports.iter().filter(|port| port.is_compact)
+    }
+
     pub fn compact_suffixes(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.ports
-            .iter()
-            .filter(|port| port.is_compact)
-            .map(|port| port.suffix)
+        self.compact_ports().map(|port| port.suffix)
     }
 }
 
@@ -262,10 +268,13 @@ pub fn m_axi_ports() -> impl Iterator<Item = &'static AxiPort> {
 }
 
 /// Compact fabric ports in emission order, excluding optional attributes.
+pub fn m_axi_compact_ports() -> impl Iterator<Item = &'static AxiPort> {
+    m_axi_ports().filter(|port| port.is_compact)
+}
+
+/// Compact fabric suffixes in emission order, excluding optional attributes.
 pub fn m_axi_compact_suffixes() -> impl Iterator<Item = &'static str> {
-    M_AXI_CHANNELS
-        .iter()
-        .flat_map(AxiChannelInfo::compact_suffixes)
+    m_axi_compact_ports().map(|port| port.suffix)
 }
 
 /// Full recognition vocabulary, including attributes the fabric never emits.

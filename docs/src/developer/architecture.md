@@ -100,7 +100,8 @@ in `tapa-ir` and `tapa-protocol`, never by sharing implementation.
 
 - **tapa-protocol** — shared naming and handshake contracts. One ordered M-AXI
   catalog owns emitted ports, widths, directions, and compact membership;
-  channel and suffix views derive from it. Packaging additionally recognizes
+  channel and suffix views derive from it. Codegen retains catalog descriptors
+  when resolving numeric or symbolic widths and port directions. Packaging additionally recognizes
   REGION attributes, which generated fabric never emits or wires.
 - **tapa-ir** — vendor-neutral schema plus pure transforms. No I/O
   adapters, no tool logic. It owns the JSON wire format the C++ frontend

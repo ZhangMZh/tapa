@@ -8,8 +8,7 @@
 use tapa_ir::task::TaskLevel;
 use tapa_ir::{ArgCategory, AxiChannelWidths, AxiEndpoint, Design};
 use tapa_protocol::{
-    axi_subport_from_suffix, axi_subport_width, m_axi_channel, m_axi_compact_suffixes, PortDir,
-    AXI_ADDR_WIDTH, AXI_ID_WIDTH, M_AXI_PREFIX,
+    m_axi_channel, m_axi_compact_ports, PortDir, AXI_ADDR_WIDTH, AXI_ID_WIDTH, M_AXI_PREFIX,
 };
 use tapa_rtl::expression::expression_source;
 use tapa_rtl::module::sanitize_array_name;
@@ -322,15 +321,8 @@ fn direct_m_axi_channel_widths(data_width: u32, id_width: u32) -> AxiChannelWidt
     let physical_width = |channel: &str| {
         m_axi_channel(channel)
             .expect("known AXI channel")
-            .compact_suffixes()
-            .map(|suffix| {
-                axi_subport_width(
-                    axi_subport_from_suffix(suffix),
-                    data_width,
-                    AXI_ADDR_WIDTH,
-                    id_width,
-                )
-            })
+            .compact_ports()
+            .map(|port| port.width(data_width, AXI_ADDR_WIDTH, id_width))
             .sum()
     };
 
@@ -349,7 +341,8 @@ fn validate_compact_m_axi_ports(
     rtl_prefix: &str,
     data_width: u32,
 ) -> Result<u32, CodegenError> {
-    for suffix in m_axi_compact_suffixes() {
+    for entry in m_axi_compact_ports() {
+        let suffix = entry.suffix;
         let port_name = format!("{rtl_prefix}{suffix}");
         let port = module.find_port(&port_name).ok_or_else(|| {
             invalid_direct_mmap(
@@ -360,12 +353,10 @@ fn validate_compact_m_axi_ports(
                 ),
             )
         })?;
-        let expected_direction = m_axi_port_direction(suffix).ok_or_else(|| {
-            invalid_direct_mmap(
-                interface,
-                &format!("has unknown protocol suffix '{suffix}'"),
-            )
-        })?;
+        let expected_direction = match entry.direction {
+            PortDir::Input => Direction::Input,
+            PortDir::Output => Direction::Output,
+        };
         if port.direction != expected_direction {
             return Err(invalid_direct_mmap(
                 interface,
@@ -419,7 +410,8 @@ fn validate_compact_m_axi_ports(
     // Literal or simply parameterized widths are cheap to verify. More complex
     // non-ID expressions remain topology-authoritative; only ID widths must be
     // resolved because they are not represented in the topology.
-    for suffix in m_axi_compact_suffixes() {
+    for entry in m_axi_compact_ports() {
+        let suffix = entry.suffix;
         let port_name = format!("{rtl_prefix}{suffix}");
         let port = module
             .find_port(&port_name)
@@ -427,12 +419,7 @@ fn validate_compact_m_axi_ports(
         let Some(actual_width) = resolve_rtl_port_width(module, port) else {
             continue;
         };
-        let expected_width = axi_subport_width(
-            axi_subport_from_suffix(suffix),
-            data_width,
-            AXI_ADDR_WIDTH,
-            id_width,
-        );
+        let expected_width = entry.width(data_width, AXI_ADDR_WIDTH, id_width);
         if actual_width != expected_width {
             return Err(invalid_direct_mmap(
                 interface,
@@ -446,13 +433,6 @@ fn validate_compact_m_axi_ports(
     }
 
     Ok(id_width)
-}
-
-fn m_axi_port_direction(suffix: &str) -> Option<Direction> {
-    tapa_protocol::m_axi_port_direction(suffix).map(|direction| match direction {
-        PortDir::Input => Direction::Input,
-        PortDir::Output => Direction::Output,
-    })
 }
 
 fn render_port_width(port: &RtlPort) -> String {
@@ -533,20 +513,19 @@ mod tests {
     }
 
     fn compact_m_axi_module(data_width: u32, id_width: u32) -> VerilogModule {
-        let names = m_axi_compact_suffixes()
-            .map(|suffix| format!("  m_axi_data{suffix}"))
+        let names = m_axi_compact_ports()
+            .map(|port| format!("  m_axi_data{}", port.suffix))
             .collect::<Vec<_>>()
             .join(",\n");
-        let declarations = m_axi_compact_suffixes()
-            .map(|suffix| {
-                let direction = match m_axi_port_direction(suffix).expect("known AXI suffix") {
-                    Direction::Input => "input",
-                    Direction::Output => "output",
-                    Direction::Inout => unreachable!("M-AXI ports are never inout"),
+        let declarations = m_axi_compact_ports()
+            .map(|port| {
+                let suffix = port.suffix;
+                let direction = match port.direction {
+                    PortDir::Input => "input",
+                    PortDir::Output => "output",
                 };
-                let subport = axi_subport_from_suffix(suffix);
-                let width = axi_subport_width(subport, data_width, AXI_ADDR_WIDTH, id_width);
-                let width_decl = if subport == "ID" {
+                let width = port.width(data_width, AXI_ADDR_WIDTH, id_width);
+                let width_decl = if matches!(port.width_rule(), tapa_protocol::AxiWidth::Id) {
                     "[C_M_AXI_DATA_ID_WIDTH - 1:0] ".to_owned()
                 } else if width > 1 {
                     format!("[{}:0] ", width - 1)
