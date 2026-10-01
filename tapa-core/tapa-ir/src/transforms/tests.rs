@@ -80,6 +80,74 @@ fn flatten_collapses_two_level_hierarchy() {
     assert_eq!(fifo.depth, Some(2));
 }
 
+/// Kernel stream ports retain their boundary names when hierarchy flattening
+/// promotes their child bindings; only internal FIFOs need a scope suffix.
+#[test]
+fn flatten_preserves_external_stream_boundary_names() {
+    for is_array in [false, true] {
+        let mut graph = TaskGraph::from_json(vadd_two_level_graph_json()).expect("parse");
+        let input_name = if is_array { "input[0]" } else { "input" };
+        let output_name = if is_array { "output[0]" } else { "output" };
+        let top = graph.tasks.get_mut("VecAdd").expect("top task");
+        top.fifos.clear();
+        for (name, consumed_by, produced_by) in [
+            (input_name, Some(EndpointRef("B".into(), 0)), None),
+            (output_name, None, Some(EndpointRef("A".into(), 0))),
+        ] {
+            top.fifos.insert(
+                name.into(),
+                crate::InterconnectDefinition {
+                    depth: None,
+                    consumed_by,
+                    produced_by,
+                },
+            );
+        }
+        top.tasks.get_mut("A").expect("producer")[0]
+            .args
+            .get_mut("out")
+            .expect("output binding")
+            .arg = crate::ArgSource::Name(output_name.into());
+        top.tasks.get_mut("B").expect("consumer")[0]
+            .args
+            .get_mut("in")
+            .expect("input binding")
+            .arg = crate::ArgSource::Name(input_name.into());
+        for (name, category) in [
+            ("input", if is_array { "istreams" } else { "istream" }),
+            ("output", if is_array { "ostreams" } else { "ostream" }),
+        ] {
+            top.ports.push(
+                serde_json::from_str(&format!(
+                    r#"{{"name":"{name}","cat":"{category}","type":"float","width":32}}"#
+                ))
+                .expect("stream port"),
+            );
+        }
+
+        let out = flatten(&graph).expect("flatten");
+        let top = &out.tasks["VecAdd"];
+        assert!(
+            top.fifos.contains_key(input_name),
+            "external input {input_name}"
+        );
+        assert!(
+            top.fifos.contains_key(output_name),
+            "external output {output_name}"
+        );
+        assert_eq!(top.tasks["B"][0].args["in"].name(), Some(input_name));
+        assert_eq!(top.tasks["A"][0].args["out"].name(), Some(output_name));
+        assert_eq!(
+            top.fifos[input_name].consumed_by,
+            Some(EndpointRef("B".into(), 0))
+        );
+        assert_eq!(
+            top.fifos[output_name].produced_by,
+            Some(EndpointRef("A".into(), 0))
+        );
+    }
+}
+
 #[test]
 fn flatten_preserves_top_metadata() {
     let g = TaskGraph::from_json(vadd_two_level_graph_json()).expect("parse");

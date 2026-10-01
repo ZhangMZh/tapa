@@ -95,7 +95,7 @@ Parse C++ source and extract the task graph to `tapa.json` in the work directory
 |------|-------------|
 | `--cflags FLAG` / `-c FLAG` | Compiler flag passed through to the kernel frontend, such as an include path. Repeat the flag for multiple. |
 | `--target {xilinx-vitis,xilinx-hls}` | Output target (default: `xilinx-vitis`). Controls the synthesis flow. |
-| `--flatten-hierarchy` | Flatten the task hierarchy so every leaf task sits directly under the top task. |
+| `--flatten-hierarchy` | Flatten the task hierarchy so every leaf task sits directly under the top task, preserving kernel stream port names. |
 | `--keep-hierarchy` | Preserve the task hierarchy as written. This is the default; the flag exists to override `--flatten-hierarchy`. |
 
 ### Example
