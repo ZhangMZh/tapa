@@ -64,6 +64,8 @@ breaks one of them is a change that breaks the build — keep them green.
   `VERSION` constant (currently `VERSION = 4`), so old state is detected
   instead of silently misparsed. Both frontend and archived graphs pass
   the same schema-version and invoke-literal validation in `tapa-ir`.
+  Graph and state readers require one complete JSON document; trailing
+  whitespace is accepted, while additional JSON values or output are rejected.
 - **Atomic state writes.** All work-directory files are written through a
   tempfile-then-rename dance in `tapa-core/tapa-cli/src/state/json.rs`, so
   readers never observe a partially written state file.

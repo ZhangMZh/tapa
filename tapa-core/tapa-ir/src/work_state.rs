@@ -66,7 +66,7 @@ impl WorkState {
         }
     }
 
-    /// Parse a state payload with field-path error diagnostics.
+    /// Parse one JSON state document with field-path error diagnostics.
     ///
     /// Strict: [`deny_unknown_fields`](WorkState) applies all the way down,
     /// so any key the model does not know is an error rather than something
@@ -85,11 +85,13 @@ impl WorkState {
                 });
             }
         }
-        let de = &mut serde_json::Deserializer::from_str(json);
-        let state: Self = serde_path_to_error::deserialize(de).map_err(|e| ParseError::Schema {
-            path: e.path().to_string(),
-            message: e.inner().to_string(),
-        })?;
+        let mut de = serde_json::Deserializer::from_str(json);
+        let state: Self =
+            serde_path_to_error::deserialize(&mut de).map_err(|e| ParseError::Schema {
+                path: e.path().to_string(),
+                message: e.inner().to_string(),
+            })?;
+        de.end()?;
         state.graph.validate().map_err(|mut error| {
             if let ParseError::Schema { path, .. } = &mut error {
                 *path = format!("graph.{path}");
@@ -248,6 +250,29 @@ mod tests {
             err.to_string().contains("bogus"),
             "error must name the unknown field; got {err}",
         );
+    }
+
+    /// Trailing data used to disable the version probe, after which the
+    /// state parser accepted an incompatible version from the valid prefix.
+    #[test]
+    fn trailing_data_cannot_bypass_state_version_validation() {
+        let mut state = sample_state();
+        let json = serde_json::to_string(&state).expect("serialize");
+        assert_eq!(
+            WorkState::from_json(&format!("{json}\n\t\r ")).expect("trailing whitespace is valid"),
+            state,
+            "JSON whitespace must not change the state",
+        );
+
+        for version in [VERSION - 1, VERSION, VERSION + 1] {
+            state.version = version;
+            let json = serde_json::to_string(&state).expect("serialize");
+            for suffix in [" {}", "\nnot-json"] {
+                WorkState::from_json(&format!("{json}{suffix}")).expect_err(&format!(
+                    "trailing data must not admit state version {version}"
+                ));
+            }
+        }
     }
 
     #[test]

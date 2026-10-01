@@ -218,6 +218,27 @@ fn mmap_ports_round_trip() {
 
 // ── Negative tests ──────────────────────────────────────────────────
 
+/// A frontend payload is one JSON document, including when read from a
+/// file. Trailing output must not be discarded after a valid graph prefix.
+#[test]
+fn graph_parsers_reject_trailing_data() {
+    let json = fixture("vadd.json");
+    let graph = Graph::from_json(&json).expect("parse fixture");
+    let padded = format!("{json}\n\t\r ");
+    assert_eq!(
+        Graph::from_reader(padded.as_bytes()).expect("trailing whitespace is valid"),
+        graph,
+        "JSON whitespace must not change the graph",
+    );
+
+    for suffix in [json.as_str(), "\nnot-json", " []"] {
+        let malformed = format!("{json}{suffix}");
+        Graph::from_json(&malformed).expect_err("a graph must consume the entire JSON payload");
+        Graph::from_reader(malformed.as_bytes())
+            .expect_err("a graph reader must consume the entire JSON payload");
+    }
+}
+
 #[test]
 fn unknown_top_level_field_rejected() {
     let json = r#"{"schema_version": 3, "cflags": [], "top": "T", "target": "xilinx-hls", "tasks": {}, "bogus": true}"#;
