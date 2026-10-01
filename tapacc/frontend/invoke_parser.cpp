@@ -329,8 +329,12 @@ void ParseInvocations(UpperTaskContext& uc, const clang::Expr* task_obj) {
                 : nullptr;
         const bool is_seq = ClassifyTapaType(arg->getType()) == TapaKind::kSeq;
         clang::Expr::EvalResult int_eval;
-        const bool evaluates_to_int = !decl_ref && !op_call && !is_seq &&
-                                      arg->EvaluateAsInt(int_eval, uc.ctx);
+        // Named integers must be language constants; a read-only runtime
+        // parameter cannot be folded from its declaration alone.
+        const bool evaluates_to_int =
+            !op_call && !is_seq &&
+            (!decl_ref || arg->isIntegerConstantExpr(uc.ctx)) &&
+            arg->EvaluateAsInt(int_eval, uc.ctx);
         std::optional<llvm::APSInt> as_int;
         bool too_wide = false;
         if (evaluates_to_int) {
@@ -340,12 +344,20 @@ void ParseInvocations(UpperTaskContext& uc, const clang::Expr* task_obj) {
             too_wide = true;
           }
         }
-        const bool is_int_literal = evaluates_to_int && !too_wide;
+        const bool is_int_constant = evaluates_to_int && !too_wide;
 
         std::string arg_name;
         // Set instead of `arg_name` when the argument is an integer constant.
         std::optional<llvm::APSInt> arg_value;
-        if (decl_ref != nullptr) {
+        if (too_wide) {
+          ReportCustomDiag(uc.ctx, clang::DiagnosticsEngine::Error,
+                           arg->getBeginLoc(),
+                           "integer constant bound to a task port does not "
+                           "fit the task graph's 64-bit constant form");
+          continue;
+        } else if (is_int_constant) {
+          arg_value = *as_int;
+        } else if (decl_ref != nullptr) {
           arg_name = decl_ref->getNameInfo().getAsString();
         } else if (op_call != nullptr) {
           const auto* base = llvm::dyn_cast<clang::DeclRefExpr>(
@@ -354,17 +366,9 @@ void ParseInvocations(UpperTaskContext& uc, const clang::Expr* task_obj) {
           if (base != nullptr) {
             arg_name = ArrayNameAt(base->getNameInfo().getAsString(), idx);
           }
-        } else if (too_wide) {
-          ReportCustomDiag(uc.ctx, clang::DiagnosticsEngine::Error,
-                           arg->getBeginLoc(),
-                           "integer constant bound to a task port does not "
-                           "fit the task graph's 64-bit constant form");
-          continue;
-        } else if (is_int_literal) {
-          arg_value = *as_int;
         }
 
-        if (decl_ref != nullptr || op_call != nullptr || is_int_literal ||
+        if (decl_ref != nullptr || op_call != nullptr || is_int_constant ||
             is_seq) {
           if (i == 0) {
             callee = decl_ref == nullptr

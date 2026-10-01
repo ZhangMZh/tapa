@@ -205,7 +205,10 @@ TEST(InvokeParser, ConstantTakesTheLanguageConversionToThePort) {
     void UnsignedWide(unsigned long long value) {}
     void Float(float value) {}
     void Double(double value) {}
+    constexpr unsigned kHigh = 0xffffffffU;
+    const int kNegative = -1;
     void Top() {
+      constexpr int kRounded = 16777217;
       tapa::task()
           .invoke(Narrow, 300)
           .invoke(Signed, 200)
@@ -215,7 +218,10 @@ TEST(InvokeParser, ConstantTakesTheLanguageConversionToThePort) {
           .invoke(Float, 16777217)
           .invoke(Float, -1)
           .invoke(Double, -1)
-          .invoke(Double, 0xffffffffU);
+          .invoke(Double, 0xffffffffU)
+          .invoke(Float, kRounded)
+          .invoke(Double, kHigh)
+          .invoke(Float, kNegative);
     }
   )cpp";
   auto p = ParseCode(kCode, "Top");
@@ -242,6 +248,11 @@ TEST(InvokeParser, ConstantTakesTheLanguageConversionToThePort) {
   // The unsigned source's high bit must stay positive, unlike a signed -1.
   EXPECT_EQ(value_of("Double", 1),
             std::optional<uint64_t>(0x41efffffffe00000ULL));
+  // Named compile-time constants use the same conversion as literal sources.
+  EXPECT_EQ(value_of("Float", 2), std::optional<uint64_t>(0x4b800000));
+  EXPECT_EQ(value_of("Double", 2),
+            std::optional<uint64_t>(0x41efffffffe00000ULL));
+  EXPECT_EQ(value_of("Float", 3), std::optional<uint64_t>(0xbf800000));
 }
 
 TEST(InvokeParser, InstancesAndArgs) {
