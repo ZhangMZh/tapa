@@ -370,13 +370,13 @@ const NESTED_CLUSTERS_GRAPH_JSON: &str = r#"{
                 "readable_name": "Cluster",
                 "srcs": ["Cluster.cpp"], "include_dirs": [], "defines": [], "level": "upper", "synth": "hls",
                 "ports": [],
-                "tasks": {"Stage": [{
+                "tasks": {"compute_stage_west_cluster_Outer": [{
                     "name": "compute_stage", "step": 0, "args": {}
                 }]},
                 "fifos": {}
             },
-            "Stage": {
-                "readable_name": "Stage",
+            "compute_stage_west_cluster_Outer": {
+                "readable_name": "compute_stage_west_cluster_Outer",
                 "srcs": ["Stage.cpp"], "include_dirs": [], "defines": [], "level": "upper", "synth": "hls",
                 "ports": [],
                 "tasks": {
@@ -408,8 +408,10 @@ const NESTED_CLUSTERS_GRAPH_JSON: &str = r#"{
 
 #[test]
 fn flatten_uses_instance_paths_for_nested_fifos_and_named_leaves() {
+    // The nested definition equals its west instance's full scope path;
+    // only graph.top identifies the root scope.
     let mut graph = TaskGraph::from_json(NESTED_CLUSTERS_GRAPH_JSON).expect("parse");
-    let mut direct = graph.tasks["Stage"].tasks["Source"][0].clone();
+    let mut direct = graph.tasks["compute_stage_west_cluster_Outer"].tasks["Source"][0].clone();
     direct.args.get_mut("out").expect("output binding").arg =
         crate::ArgSource::Name("direct_out".into());
     let mut direct_port = graph.tasks["Source"]

@@ -127,7 +127,7 @@ fn collect_leaves_recursive(
     // instance path (`<name>_<inst_0>_..._<top>`). External top-level FIFOs
     // keep their kernel port names; their declarations are not renamed.
     let mut fifo_global_map: BTreeMap<String, String> = BTreeMap::new();
-    let is_top_scope = scope_path == task_name && arg_bindings.is_empty();
+    let is_top_scope = task_name == graph.top && scope_path == graph.top;
     for (fifo_name, fifo_def) in &def.fifos {
         if !should_materialize_fifo(fifo_def, is_top_scope) {
             continue;
