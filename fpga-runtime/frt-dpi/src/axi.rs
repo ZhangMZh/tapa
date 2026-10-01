@@ -6,12 +6,15 @@ pub fn axi_read_impl(ctx: &DpiContext, port: &str, addr: u64, width: u32, out: *
         return;
     };
 
-    let Some(offset) = addr.checked_sub(*base).map(|v| v as usize) else {
-        eprintln!("frt-dpi: axi_read: addr below base on '{port}'");
+    let Some(offset) = addr
+        .checked_sub(*base)
+        .and_then(|v| usize::try_from(v).ok())
+    else {
+        eprintln!("frt-dpi: axi_read: invalid addr on '{port}'");
         return;
     };
     let len = width as usize;
-    if offset + len > seg.len() {
+    if offset.checked_add(len).is_none_or(|end| end > seg.len()) {
         eprintln!("frt-dpi: axi_read: out of bounds on '{port}' offset={offset} len={len}");
         return;
     }
@@ -28,12 +31,15 @@ pub fn axi_write_impl(ctx: &DpiContext, port: &str, addr: u64, width: u32, data:
         return;
     };
 
-    let Some(offset) = addr.checked_sub(*base).map(|v| v as usize) else {
-        eprintln!("frt-dpi: axi_write: addr below base on '{port}'");
+    let Some(offset) = addr
+        .checked_sub(*base)
+        .and_then(|v| usize::try_from(v).ok())
+    else {
+        eprintln!("frt-dpi: axi_write: invalid addr on '{port}'");
         return;
     };
     let len = width as usize;
-    if offset + len > seg.len() {
+    if offset.checked_add(len).is_none_or(|end| end > seg.len()) {
         eprintln!("frt-dpi: axi_write: out of bounds on '{port}'");
         return;
     }
@@ -74,6 +80,30 @@ mod tests {
         let mut out = [0u8; 4];
         axi_read_impl(&ctx, "axi_wr", 0x1000_0000, 4, out.as_mut_ptr());
         assert_eq!(&out, b"rust");
+    }
+
+    #[test]
+    fn out_of_bounds_transfers_preserve_host_and_device_buffers() {
+        let port = "axi_bounds";
+        let mut ctx = make_ctx_with_buf(port, b"host");
+        ctx.buffers.get_mut(port).expect("buffer").1 = 0;
+
+        for (addr, width) in [(3, 2), (4, 1), (u64::MAX, 2), (u64::MAX - 1, 4)] {
+            let mut out = [0xee; 4];
+            axi_read_impl(&ctx, port, addr, width, out.as_mut_ptr());
+            assert_eq!(out, [0xee; 4], "invalid read must preserve its output");
+            axi_write_impl(&ctx, port, addr, width, b"oops".as_ptr());
+            assert_eq!(
+                ctx.buffers[port].0.as_slice(),
+                b"host",
+                "invalid write must preserve mapped memory"
+            );
+        }
+
+        axi_write_impl(&ctx, port, 2, 2, b"ok".as_ptr());
+        let mut out = [0u8; 4];
+        axi_read_impl(&ctx, port, 0, 4, out.as_mut_ptr());
+        assert_eq!(&out, b"hook", "transfers ending at the boundary are valid");
     }
 
     #[test]
