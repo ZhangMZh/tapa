@@ -1,6 +1,6 @@
 //! Unit tests for `super::flatten`.
 
-use super::flatten;
+use super::{flatten, flatten_with_origins, OccurrenceId};
 use crate::graph::TaskGraph;
 use crate::interconnect::EndpointRef;
 use crate::synth_target::SynthTarget;
@@ -336,8 +336,8 @@ fn flatten_hoists_leaf_under_nested_upper() {
         }
     }"#;
     let g = TaskGraph::from_json(json).expect("parse");
-    let out = flatten(&g).expect("recursive flatten");
-    let top = out.tasks.get("Outer").expect("top");
+    let projection = flatten_with_origins(&g).expect("recursive flatten");
+    let top = projection.flat.tasks.get("Outer").expect("top");
     let leaf_insts = top.tasks.get("Leaf").expect("leaf hoisted under top");
     assert_eq!(leaf_insts.len(), 1);
     // The leaf's `q` arg must resolve to the outermost `n` binding
@@ -348,6 +348,25 @@ fn flatten_hoists_leaf_under_nested_upper() {
         Some("n"),
         "nested scalar arg must promote to Outer's external port"
     );
+    // Control lowering must still see both original forwarding boundaries:
+    // Outer.n -> Inner.p -> Leaf.q, rather than the substituted leaf binding.
+    assert_eq!(
+        projection
+            .source_invocation(&g, OccurrenceId(1))
+            .expect("original Inner invocation")
+            .args["p"]
+            .name(),
+        Some("n")
+    );
+    assert_eq!(
+        projection
+            .source_invocation(&g, OccurrenceId(2))
+            .expect("original Leaf invocation")
+            .args["q"]
+            .name(),
+        Some("p")
+    );
+    assert_eq!(projection.occurrences[2].parent, Some(OccurrenceId(1)));
 }
 
 const NESTED_CLUSTERS_GRAPH_JSON: &str = r#"{
@@ -405,6 +424,112 @@ const NESTED_CLUSTERS_GRAPH_JSON: &str = r#"{
             }
         }
     }"#;
+
+/// Reused upper definitions have separate original owners even though their
+/// local child references are identical. Detach belongs to the immediate
+/// invocation; it must not replace the joined children inside that scope.
+#[test]
+fn flat_projection_preserves_repeated_upper_control_ownership() {
+    let mut graph = TaskGraph::from_json(NESTED_CLUSTERS_GRAPH_JSON).expect("parse");
+    graph
+        .tasks
+        .get_mut("Outer")
+        .expect("top")
+        .tasks
+        .get_mut("Cluster")
+        .expect("clusters")[0]
+        .step = -1;
+    let projection = flatten_with_origins(&graph).expect("projection");
+    assert_eq!(projection.occurrences[0].parent, None);
+    assert_eq!(projection.occurrences[0].source, None);
+    assert_eq!(projection.occurrences[0].global_name, "Outer");
+    assert_eq!(projection.source_invocation(&graph, OccurrenceId(0)), None);
+
+    for (index, cluster_name, step) in [(0, "west_cluster", -1), (1, "east_cluster", 0)] {
+        let cluster = projection
+            .occurrences
+            .iter()
+            .position(|occurrence| occurrence.source == Some(EndpointRef("Cluster".into(), index)))
+            .map(OccurrenceId)
+            .expect("cluster occurrence");
+        assert_eq!(
+            projection.occurrences[cluster.0].parent,
+            Some(OccurrenceId(0))
+        );
+        assert_eq!(
+            projection
+                .source_invocation(&graph, cluster)
+                .expect("cluster invocation")
+                .step,
+            step
+        );
+        let stage = projection
+            .occurrences
+            .iter()
+            .position(|occurrence| occurrence.parent == Some(cluster))
+            .map(OccurrenceId)
+            .expect("stage occurrence");
+        assert_eq!(
+            projection.occurrences[cluster.0].global_name,
+            format!("{cluster_name}_Outer")
+        );
+        assert_eq!(
+            projection.occurrences[stage.0].source,
+            Some(EndpointRef("compute_stage_west_cluster_Outer".into(), 0))
+        );
+        assert_eq!(
+            projection
+                .source_invocation(&graph, stage)
+                .expect("stage invocation")
+                .step,
+            0
+        );
+        assert_eq!(
+            projection
+                .occurrences
+                .iter()
+                .filter(|occurrence| occurrence.parent == Some(stage))
+                .count(),
+            2,
+            "both original leaf occurrences must survive"
+        );
+        for (id, leaf) in projection
+            .occurrences
+            .iter()
+            .enumerate()
+            .filter(|(_, occurrence)| occurrence.parent == Some(stage))
+        {
+            let source = leaf.source.as_ref().expect("original leaf endpoint");
+            assert_eq!(source.1, 0, "original index belongs to the repeated stage");
+            assert_eq!(
+                leaf.flat_endpoint,
+                Some(EndpointRef(source.0.clone(), index))
+            );
+            let invocation = projection
+                .source_invocation(&graph, OccurrenceId(id))
+                .expect("leaf invocation");
+            assert_eq!(
+                invocation.step, 0,
+                "children still join their detached owner"
+            );
+            assert_eq!(
+                invocation
+                    .args
+                    .values()
+                    .next()
+                    .expect("stream binding")
+                    .name(),
+                Some("q")
+            );
+            let expected_name = if source.0 == "Source" {
+                format!("worker_compute_stage_{cluster_name}_Outer")
+            } else {
+                format!("Sink_{index}")
+            };
+            assert_eq!(leaf.global_name, expected_name);
+        }
+    }
+}
 
 #[test]
 fn flatten_uses_instance_paths_for_nested_fifos_and_named_leaves() {

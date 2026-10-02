@@ -426,6 +426,15 @@ pub const fn global_controller_instance_name() -> &'static str {
     "__tapa_global_controller"
 }
 
+/// Deterministic generated instance name for a nested upper scope's controller.
+#[must_use]
+pub fn scope_controller_instance_name(scope: &str) -> String {
+    format!(
+        "__tapa_control_scope_{}",
+        crate::port::sanitize_identifier_name(scope),
+    )
+}
+
 /// Deterministic generated instance name for a flattened task's local
 /// controller.
 #[must_use]
@@ -884,6 +893,10 @@ mod tests {
         assert_eq!(
             local_controller_instance_name("Module1Func#1"),
             "__tapa_local_controller_Module1Func_1",
+        );
+        assert_eq!(
+            scope_controller_instance_name("Module1Func#1_Top"),
+            "__tapa_control_scope_Module1Func_1_Top",
         );
         assert_eq!(
             control_pipeline_instance_name("worker[3]", ControlChannel::Completion),

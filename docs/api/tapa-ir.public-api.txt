@@ -1229,6 +1229,7 @@ pub fn tapa_ir::floorplan::control_pipeline_instance_name(&str, tapa_ir::floorpl
 pub const fn tapa_ir::floorplan::floorplanned_fifo_storage_depth(u32) -> u32
 pub const fn tapa_ir::floorplan::global_controller_instance_name() -> &'static str
 pub fn tapa_ir::floorplan::local_controller_instance_name(&str) -> alloc::string::String
+pub fn tapa_ir::floorplan::scope_controller_instance_name(&str) -> alloc::string::String
 pub mod tapa_ir::graph
 pub struct tapa_ir::graph::TaskGraph
 pub tapa_ir::graph::TaskGraph::cflags: alloc::vec::Vec<alloc::string::String>
@@ -2079,7 +2080,152 @@ impl<T> core::borrow::BorrowMut<T> for tapa_ir::transforms::TransformError where
 pub fn tapa_ir::transforms::TransformError::borrow_mut(&mut self) -> &mut T
 impl<T> core::convert::From<T> for tapa_ir::transforms::TransformError
 pub fn tapa_ir::transforms::TransformError::from(T) -> T
+pub struct tapa_ir::transforms::FlatProjection
+pub tapa_ir::transforms::FlatProjection::flat: tapa_ir::graph::TaskGraph
+pub tapa_ir::transforms::FlatProjection::occurrences: alloc::vec::Vec<tapa_ir::transforms::TaskOccurrence>
+impl tapa_ir::transforms::FlatProjection
+pub fn tapa_ir::transforms::FlatProjection::source_invocation<'g>(&self, &'g tapa_ir::graph::TaskGraph, tapa_ir::transforms::OccurrenceId) -> core::option::Option<&'g tapa_ir::instance::TaskInstance>
+pub fn tapa_ir::transforms::FlatProjection::source_task<'g>(&self, &'g tapa_ir::graph::TaskGraph, tapa_ir::transforms::OccurrenceId) -> core::option::Option<&'g tapa_ir::task::Task>
+impl core::clone::Clone for tapa_ir::transforms::FlatProjection
+pub fn tapa_ir::transforms::FlatProjection::clone(&self) -> tapa_ir::transforms::FlatProjection
+impl core::cmp::Eq for tapa_ir::transforms::FlatProjection
+impl core::cmp::PartialEq for tapa_ir::transforms::FlatProjection
+pub fn tapa_ir::transforms::FlatProjection::eq(&self, &tapa_ir::transforms::FlatProjection) -> bool
+impl core::fmt::Debug for tapa_ir::transforms::FlatProjection
+pub fn tapa_ir::transforms::FlatProjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::transforms::FlatProjection
+impl core::marker::Freeze for tapa_ir::transforms::FlatProjection
+impl core::marker::Send for tapa_ir::transforms::FlatProjection
+impl core::marker::Sync for tapa_ir::transforms::FlatProjection
+impl core::marker::Unpin for tapa_ir::transforms::FlatProjection
+impl core::marker::UnsafeUnpin for tapa_ir::transforms::FlatProjection
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::transforms::FlatProjection
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::transforms::FlatProjection
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::transforms::FlatProjection where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::transforms::FlatProjection::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::transforms::FlatProjection where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::transforms::FlatProjection::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::transforms::FlatProjection where U: core::convert::From<T>
+pub fn tapa_ir::transforms::FlatProjection::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::transforms::FlatProjection where U: core::convert::Into<T>
+pub type tapa_ir::transforms::FlatProjection::Error = core::convert::Infallible
+pub fn tapa_ir::transforms::FlatProjection::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::transforms::FlatProjection where U: core::convert::TryFrom<T>
+pub type tapa_ir::transforms::FlatProjection::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::transforms::FlatProjection::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::transforms::FlatProjection where T: core::clone::Clone
+pub type tapa_ir::transforms::FlatProjection::Owned = T
+pub fn tapa_ir::transforms::FlatProjection::clone_into(&self, &mut T)
+pub fn tapa_ir::transforms::FlatProjection::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::transforms::FlatProjection where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::transforms::FlatProjection::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::transforms::FlatProjection where T: ?core::marker::Sized
+pub fn tapa_ir::transforms::FlatProjection::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::transforms::FlatProjection where T: ?core::marker::Sized
+pub fn tapa_ir::transforms::FlatProjection::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::transforms::FlatProjection where T: core::clone::Clone
+pub unsafe fn tapa_ir::transforms::FlatProjection::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::transforms::FlatProjection
+pub fn tapa_ir::transforms::FlatProjection::from(T) -> T
+pub struct tapa_ir::transforms::OccurrenceId(pub usize)
+impl core::clone::Clone for tapa_ir::transforms::OccurrenceId
+pub fn tapa_ir::transforms::OccurrenceId::clone(&self) -> tapa_ir::transforms::OccurrenceId
+impl core::cmp::Eq for tapa_ir::transforms::OccurrenceId
+impl core::cmp::Ord for tapa_ir::transforms::OccurrenceId
+pub fn tapa_ir::transforms::OccurrenceId::cmp(&self, &tapa_ir::transforms::OccurrenceId) -> core::cmp::Ordering
+impl core::cmp::PartialEq for tapa_ir::transforms::OccurrenceId
+pub fn tapa_ir::transforms::OccurrenceId::eq(&self, &tapa_ir::transforms::OccurrenceId) -> bool
+impl core::cmp::PartialOrd for tapa_ir::transforms::OccurrenceId
+pub fn tapa_ir::transforms::OccurrenceId::partial_cmp(&self, &tapa_ir::transforms::OccurrenceId) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for tapa_ir::transforms::OccurrenceId
+pub fn tapa_ir::transforms::OccurrenceId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for tapa_ir::transforms::OccurrenceId
+pub fn tapa_ir::transforms::OccurrenceId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for tapa_ir::transforms::OccurrenceId
+impl core::marker::StructuralPartialEq for tapa_ir::transforms::OccurrenceId
+impl core::marker::Freeze for tapa_ir::transforms::OccurrenceId
+impl core::marker::Send for tapa_ir::transforms::OccurrenceId
+impl core::marker::Sync for tapa_ir::transforms::OccurrenceId
+impl core::marker::Unpin for tapa_ir::transforms::OccurrenceId
+impl core::marker::UnsafeUnpin for tapa_ir::transforms::OccurrenceId
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::transforms::OccurrenceId
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::transforms::OccurrenceId
+impl<Q, K> equivalent::Comparable<K> for tapa_ir::transforms::OccurrenceId where Q: core::cmp::Ord + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::transforms::OccurrenceId::compare(&self, &K) -> core::cmp::Ordering
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::transforms::OccurrenceId where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::transforms::OccurrenceId::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::transforms::OccurrenceId where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::transforms::OccurrenceId::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::transforms::OccurrenceId where U: core::convert::From<T>
+pub fn tapa_ir::transforms::OccurrenceId::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::transforms::OccurrenceId where U: core::convert::Into<T>
+pub type tapa_ir::transforms::OccurrenceId::Error = core::convert::Infallible
+pub fn tapa_ir::transforms::OccurrenceId::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::transforms::OccurrenceId where U: core::convert::TryFrom<T>
+pub type tapa_ir::transforms::OccurrenceId::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::transforms::OccurrenceId::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::transforms::OccurrenceId where T: core::clone::Clone
+pub type tapa_ir::transforms::OccurrenceId::Owned = T
+pub fn tapa_ir::transforms::OccurrenceId::clone_into(&self, &mut T)
+pub fn tapa_ir::transforms::OccurrenceId::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::transforms::OccurrenceId where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::transforms::OccurrenceId::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::transforms::OccurrenceId where T: ?core::marker::Sized
+pub fn tapa_ir::transforms::OccurrenceId::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::transforms::OccurrenceId where T: ?core::marker::Sized
+pub fn tapa_ir::transforms::OccurrenceId::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::transforms::OccurrenceId where T: core::clone::Clone
+pub unsafe fn tapa_ir::transforms::OccurrenceId::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::transforms::OccurrenceId
+pub fn tapa_ir::transforms::OccurrenceId::from(T) -> T
+pub struct tapa_ir::transforms::TaskOccurrence
+pub tapa_ir::transforms::TaskOccurrence::flat_endpoint: core::option::Option<tapa_ir::interconnect::EndpointRef>
+pub tapa_ir::transforms::TaskOccurrence::global_name: alloc::string::String
+pub tapa_ir::transforms::TaskOccurrence::parent: core::option::Option<tapa_ir::transforms::OccurrenceId>
+pub tapa_ir::transforms::TaskOccurrence::source: core::option::Option<tapa_ir::interconnect::EndpointRef>
+impl core::clone::Clone for tapa_ir::transforms::TaskOccurrence
+pub fn tapa_ir::transforms::TaskOccurrence::clone(&self) -> tapa_ir::transforms::TaskOccurrence
+impl core::cmp::Eq for tapa_ir::transforms::TaskOccurrence
+impl core::cmp::PartialEq for tapa_ir::transforms::TaskOccurrence
+pub fn tapa_ir::transforms::TaskOccurrence::eq(&self, &tapa_ir::transforms::TaskOccurrence) -> bool
+impl core::fmt::Debug for tapa_ir::transforms::TaskOccurrence
+pub fn tapa_ir::transforms::TaskOccurrence::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::transforms::TaskOccurrence
+impl core::marker::Freeze for tapa_ir::transforms::TaskOccurrence
+impl core::marker::Send for tapa_ir::transforms::TaskOccurrence
+impl core::marker::Sync for tapa_ir::transforms::TaskOccurrence
+impl core::marker::Unpin for tapa_ir::transforms::TaskOccurrence
+impl core::marker::UnsafeUnpin for tapa_ir::transforms::TaskOccurrence
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::transforms::TaskOccurrence
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::transforms::TaskOccurrence
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::transforms::TaskOccurrence where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::transforms::TaskOccurrence::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::transforms::TaskOccurrence where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::transforms::TaskOccurrence::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::transforms::TaskOccurrence where U: core::convert::From<T>
+pub fn tapa_ir::transforms::TaskOccurrence::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::transforms::TaskOccurrence where U: core::convert::Into<T>
+pub type tapa_ir::transforms::TaskOccurrence::Error = core::convert::Infallible
+pub fn tapa_ir::transforms::TaskOccurrence::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::transforms::TaskOccurrence where U: core::convert::TryFrom<T>
+pub type tapa_ir::transforms::TaskOccurrence::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::transforms::TaskOccurrence::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::transforms::TaskOccurrence where T: core::clone::Clone
+pub type tapa_ir::transforms::TaskOccurrence::Owned = T
+pub fn tapa_ir::transforms::TaskOccurrence::clone_into(&self, &mut T)
+pub fn tapa_ir::transforms::TaskOccurrence::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::transforms::TaskOccurrence where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::transforms::TaskOccurrence::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::transforms::TaskOccurrence where T: ?core::marker::Sized
+pub fn tapa_ir::transforms::TaskOccurrence::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::transforms::TaskOccurrence where T: ?core::marker::Sized
+pub fn tapa_ir::transforms::TaskOccurrence::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::transforms::TaskOccurrence where T: core::clone::Clone
+pub unsafe fn tapa_ir::transforms::TaskOccurrence::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::transforms::TaskOccurrence
+pub fn tapa_ir::transforms::TaskOccurrence::from(T) -> T
 pub fn tapa_ir::transforms::flatten(&tapa_ir::graph::TaskGraph) -> core::result::Result<tapa_ir::graph::TaskGraph, tapa_ir::transforms::TransformError>
+pub fn tapa_ir::transforms::flatten_with_origins(&tapa_ir::graph::TaskGraph) -> core::result::Result<tapa_ir::transforms::FlatProjection, tapa_ir::transforms::TransformError>
 pub mod tapa_ir::work_state
 pub struct tapa_ir::work_state::FlowSettings
 pub tapa_ir::work_state::FlowSettings::clock_period: core::option::Option<tapa_ir::clock::ClockPeriod>
@@ -4480,3 +4626,4 @@ pub fn tapa_ir::flatten(&tapa_ir::graph::TaskGraph) -> core::result::Result<tapa
 pub const fn tapa_ir::floorplanned_fifo_storage_depth(u32) -> u32
 pub const fn tapa_ir::global_controller_instance_name() -> &'static str
 pub fn tapa_ir::local_controller_instance_name(&str) -> alloc::string::String
+pub fn tapa_ir::scope_controller_instance_name(&str) -> alloc::string::String

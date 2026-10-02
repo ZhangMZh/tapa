@@ -2,6 +2,8 @@
 //!
 //! - [`flatten`] recursively lifts every leaf-task instance under the
 //!   top task while preserving FIFO connectivity and global names.
+//! - [`flatten_with_origins`] also retains original instance ownership as
+//!   typed references for control lowering, without copying invocation policy.
 
 #[cfg(test)]
 mod tests;
@@ -12,7 +14,102 @@ use crate::graph::TaskGraph;
 use crate::instance::{Arg, ArgSource, TaskInstance};
 use crate::interconnect::{EndpointRef, InterconnectDefinition};
 use crate::port::ArgCategory;
-use crate::task::TaskLevel;
+use crate::task::{Task, TaskLevel};
+
+/// Index of one original task occurrence in [`FlatProjection::occurrences`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct OccurrenceId(pub usize);
+
+/// One original task occurrence and its corresponding physical identity.
+///
+/// The original graph owns every invocation's arguments and step. References
+/// here identify that invocation within its original parent occurrence, so
+/// repeated upper-task instances keep separate controller ownership.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskOccurrence {
+    /// Immediate original owner; absent only for the top occurrence.
+    pub parent: Option<OccurrenceId>,
+    /// Original child definition and index within the parent's task list.
+    /// Absent only for the top occurrence, whose definition is `graph.top`.
+    pub source: Option<EndpointRef>,
+    /// Global scope name for an upper task, or canonical flat leaf name.
+    pub global_name: String,
+    /// Endpoint in the flattened top's task list; present only for leaves.
+    pub flat_endpoint: Option<EndpointRef>,
+}
+
+/// A transient flat datapath with references to the original control scopes.
+///
+/// Occurrence zero is the original top. This projection is derived from one
+/// original graph and must be resolved against that graph; it is not persisted
+/// or edited as a second semantic graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatProjection {
+    /// Leaf-task instances and globally named FIFOs for physical planning.
+    pub flat: TaskGraph,
+    /// Original occurrences in preorder, including upper tasks and leaves.
+    pub occurrences: Vec<TaskOccurrence>,
+}
+
+impl FlatProjection {
+    /// Resolve an occurrence's original task definition.
+    pub fn source_task<'g>(
+        &self,
+        graph: &'g TaskGraph,
+        occurrence: OccurrenceId,
+    ) -> Option<&'g Task> {
+        let occurrence = self.occurrences.get(occurrence.0)?;
+        let name = occurrence
+            .source
+            .as_ref()
+            .map_or(&graph.top, |source| &source.0);
+        graph.tasks.get(name)
+    }
+
+    /// Resolve an occurrence's invocation in its original owner's scope.
+    ///
+    /// The top has no invocation. The returned arguments are scope-local;
+    /// flattening's substituted leaf arguments do not replace these bindings.
+    pub fn source_invocation<'g>(
+        &self,
+        graph: &'g TaskGraph,
+        occurrence: OccurrenceId,
+    ) -> Option<&'g TaskInstance> {
+        let occurrence = self.occurrences.get(occurrence.0)?;
+        let source = occurrence.source.as_ref()?;
+        let parent = self.source_task(graph, occurrence.parent?)?;
+        parent
+            .tasks
+            .get(&source.0)?
+            .get(usize::try_from(source.1).ok()?)
+    }
+}
+
+struct FlatInstances {
+    leaves: BTreeMap<String, Vec<TaskInstance>>,
+    fifos: BTreeMap<String, InterconnectDefinition>,
+    occurrences: Vec<TaskOccurrence>,
+}
+
+impl FlatInstances {
+    fn push_leaf(&mut self, owner: OccurrenceId, source: EndpointRef, instance: TaskInstance) {
+        let leaves = self.leaves.entry(source.0.clone()).or_default();
+        let global_name = instance
+            .canonical_name(&source.0, leaves.len())
+            .into_owned();
+        let flat_endpoint = EndpointRef(
+            source.0.clone(),
+            u32::try_from(leaves.len()).expect("instance count fits u32"),
+        );
+        self.occurrences.push(TaskOccurrence {
+            parent: Some(owner),
+            source: Some(source),
+            global_name,
+            flat_endpoint: Some(flat_endpoint),
+        });
+        leaves.push(instance);
+    }
+}
 
 /// Error type for graph transforms.
 #[derive(Debug, thiserror::Error)]
@@ -36,6 +133,15 @@ pub enum TransformError {
 /// Upper-level descendants are traversed recursively; their leaf tasks and
 /// FIFO connections are rewritten into the top task's scope.
 pub fn flatten(graph: &TaskGraph) -> Result<TaskGraph, TransformError> {
+    Ok(flatten_with_origins(graph)?.flat)
+}
+
+/// Flatten the datapath while retaining original per-occurrence ownership.
+///
+/// Original invocation references preserve every ancestor's argument binding
+/// boundary and detach/join policy. Physical leaf endpoints are recorded in
+/// the same traversal that assigns their flat indices and global names.
+pub fn flatten_with_origins(graph: &TaskGraph) -> Result<FlatProjection, TransformError> {
     let top_name = &graph.top;
     let top_def = graph
         .tasks
@@ -49,47 +155,58 @@ pub fn flatten(graph: &TaskGraph) -> Result<TaskGraph, TransformError> {
     // float up to the top, FIFOs that live inside nested upper tasks
     // are rewritten to their global names (`<fifo>_<inst_path>_<top>`)
     // and stitched back together against the collected leaves.
-    let mut leaves: BTreeMap<String, Vec<TaskInstance>> = BTreeMap::new();
-    let mut fifos: BTreeMap<String, InterconnectDefinition> = BTreeMap::new();
+    let mut collected = FlatInstances {
+        leaves: BTreeMap::new(),
+        fifos: BTreeMap::new(),
+        occurrences: vec![TaskOccurrence {
+            parent: None,
+            source: None,
+            global_name: top_name.clone(),
+            flat_endpoint: None,
+        }],
+    };
     collect_leaves_recursive(
         graph,
         top_name,
         top_name,
         &BTreeMap::new(),
-        &mut leaves,
-        &mut fifos,
+        OccurrenceId(0),
+        &mut collected,
     )?;
 
     // Post-pass: now that every instantiation has its final argument
     // bindings, fill in each FIFO's `consumed_by` / `produced_by`
     // against the flattened leaf set after all globally named arguments have
     // been produced.
-    for (fifo_name, fifo) in &mut fifos {
+    for (fifo_name, fifo) in &mut collected.fifos {
         if fifo.consumed_by.is_some() {
-            fifo.consumed_by = find_endpoint(&leaves, fifo_name, EndpointRole::Consumer);
+            fifo.consumed_by = find_endpoint(&collected.leaves, fifo_name, EndpointRole::Consumer);
         }
         if fifo.produced_by.is_some() {
-            fifo.produced_by = find_endpoint(&leaves, fifo_name, EndpointRole::Producer);
+            fifo.produced_by = find_endpoint(&collected.leaves, fifo_name, EndpointRole::Producer);
         }
     }
 
     let mut new_tasks = BTreeMap::new();
-    for child_name in leaves.keys() {
+    for child_name in collected.leaves.keys() {
         if let Some(def) = graph.tasks.get(child_name) {
             new_tasks.insert(child_name.clone(), def.clone());
         }
     }
     let mut new_top_def = top_def.clone();
-    new_top_def.tasks = leaves;
-    new_top_def.fifos = fifos;
+    new_top_def.tasks = collected.leaves;
+    new_top_def.fifos = collected.fifos;
     new_tasks.insert(top_name.clone(), new_top_def);
 
-    Ok(TaskGraph {
-        schema_version: graph.schema_version,
-        top: top_name.clone(),
-        target: graph.target,
-        cflags: graph.cflags.clone(),
-        tasks: new_tasks,
+    Ok(FlatProjection {
+        flat: TaskGraph {
+            schema_version: graph.schema_version,
+            top: top_name.clone(),
+            target: graph.target,
+            cflags: graph.cflags.clone(),
+            tasks: new_tasks,
+        },
+        occurrences: collected.occurrences,
     })
 }
 
@@ -113,8 +230,8 @@ fn collect_leaves_recursive(
     task_name: &str,
     scope_path: &str,
     arg_bindings: &BTreeMap<String, ArgSource>,
-    leaves: &mut BTreeMap<String, Vec<TaskInstance>>,
-    fifos: &mut BTreeMap<String, InterconnectDefinition>,
+    owner: OccurrenceId,
+    collected: &mut FlatInstances,
 ) -> Result<(), TransformError> {
     let def = graph
         .tasks
@@ -169,24 +286,26 @@ fn collect_leaves_recursive(
                 .tasks
                 .get(child_def_name)
                 .ok_or_else(|| TransformError::MissingTop(child_def_name.clone()))?;
+            let source = EndpointRef(
+                child_def_name.clone(),
+                u32::try_from(idx).expect("instance count fits u32"),
+            );
             if child_def.level == TaskLevel::Lower {
-                leaves
-                    .entry(child_def_name.clone())
-                    .or_default()
-                    .push(TaskInstance {
-                        // Explicit names are local to an upper instance;
-                        // promoted leaves need the ancestor path. Direct top
-                        // names and globally indexed automatic names stay intact.
-                        name: inst.name.as_ref().map(|name| {
-                            if is_top_scope {
-                                name.clone()
-                            } else {
-                                format!("{name}_{scope_path}")
-                            }
-                        }),
-                        args: resolved_args,
-                        step: inst.step,
-                    });
+                let instance = TaskInstance {
+                    // Explicit names are local to an upper instance;
+                    // promoted leaves need the ancestor path. Direct top
+                    // names and globally indexed automatic names stay intact.
+                    name: inst.name.as_ref().map(|name| {
+                        if is_top_scope {
+                            name.clone()
+                        } else {
+                            format!("{name}_{scope_path}")
+                        }
+                    }),
+                    args: resolved_args,
+                    step: inst.step,
+                };
+                collected.push_leaf(owner, source, instance);
             } else {
                 // Upper child → descend. Its port bindings become
                 // the `arg_bindings` the recursion uses to resolve
@@ -194,6 +313,13 @@ fn collect_leaves_recursive(
                 // prepended with this instance's name.
                 let inst_name = inst.canonical_name(child_def_name, idx);
                 let child_scope = format!("{inst_name}_{scope_path}");
+                let child_occurrence = OccurrenceId(collected.occurrences.len());
+                collected.occurrences.push(TaskOccurrence {
+                    parent: Some(owner),
+                    source: Some(source),
+                    global_name: child_scope.clone(),
+                    flat_endpoint: None,
+                });
                 // Constants bind too: a leaf below this child may name the
                 // child's port, and the literal is the only value it can
                 // take. Dropping them (name-only bindings) leaves a dangling
@@ -207,8 +333,8 @@ fn collect_leaves_recursive(
                     child_def_name,
                     &child_scope,
                     &child_bindings,
-                    leaves,
-                    fifos,
+                    child_occurrence,
+                    collected,
                 )?;
             }
         }
@@ -221,10 +347,10 @@ fn collect_leaves_recursive(
     // (`flatten`) runs a final pass to fill them in.
     for (local_name, global_name) in &fifo_global_map {
         let fifo_def = def.fifos.get(local_name).expect("local fifo present");
-        if fifos.contains_key(global_name) {
+        if collected.fifos.contains_key(global_name) {
             return Err(TransformError::FifoNameCollision(global_name.clone()));
         }
-        fifos.insert(
+        collected.fifos.insert(
             global_name.clone(),
             InterconnectDefinition {
                 depth: fifo_def.depth,
