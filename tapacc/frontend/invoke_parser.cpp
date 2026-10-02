@@ -460,9 +460,13 @@ void ParseInvocations(
           } else if (arg_value) {
             set_const(*arg_value, port);
           } else {
-            if (decl_ref && arg->getType()->isFloatingType() &&
-                (!llvm::isa<clang::ParmVarDecl>(decl_ref->getDecl()) ||
-                 decl_ref->getDecl()->getDeclContext() != uc.task.def)) {
+            // Names identify parent ports, not arbitrary scalar variables
+            // whose unqualified names might collide with those ports.
+            const bool names_parent_parameter =
+                decl_ref &&
+                llvm::isa<clang::ParmVarDecl>(decl_ref->getDecl()) &&
+                decl_ref->getDecl()->getDeclContext() == uc.task.def;
+            if (arg->getType()->isFloatingType() && !names_parent_parameter) {
               auto diag = ReportCustomDiag(
                   uc.ctx, clang::DiagnosticsEngine::Error, arg->getBeginLoc(),
                   "floating-point argument '%0' for task port '%1' must name "
@@ -480,6 +484,15 @@ void ParseInvocations(
                   "inside a leaf task");
               diag.AddString(arg->getType().getAsString());
               diag.AddString(param->getType().getAsString());
+              diag.AddString(port);
+              continue;
+            }
+            if (!names_parent_parameter) {
+              auto diag = ReportCustomDiag(
+                  uc.ctx, clang::DiagnosticsEngine::Error, arg->getBeginLoc(),
+                  "runtime scalar argument '%0' for task port '%1' must name "
+                  "a parent task parameter");
+              diag.AddString(arg_name);
               diag.AddString(port);
               continue;
             }

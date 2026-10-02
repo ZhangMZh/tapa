@@ -383,6 +383,34 @@ TEST(InvokeParser, FloatingConstantsCannotBecomeRuntimeBindings) {
   EXPECT_EQ(top->instances.at("Double").at(1).args.at("value").arg, "wide");
 }
 
+TEST(InvokeParser, RuntimeScalarsMustReferToParentParameters) {
+  constexpr char kCode[] = R"cpp(
+    namespace cfg {
+    int value = 7;
+    }
+    void Worker(int value) {}
+    void Top(const int value) {
+      const int runtime = value;
+      tapa::task()
+          .invoke(Worker, cfg::value)
+          .invoke(Worker, runtime)
+          .invoke(Worker, value);
+    }
+  )cpp";
+  const auto run = test_support::RunTreePipeline(
+      {test_support::VirtualTu{"/proj/scalar_origin.cpp", kCode}}, "Top",
+      testing::TempDir() + "/scalar_origin", {"-std=c++17"});
+  EXPECT_FALSE(run.ok);
+  ASSERT_EQ(run.diags.size(), 2u);
+  for (const auto& diag : run.diags) {
+    EXPECT_NE(diag.find("must name a parent task parameter"), std::string::npos)
+        << diag;
+  }
+  const TaskModel* top = run.builder.FindTask("Top");
+  ASSERT_NE(top, nullptr);
+  EXPECT_EQ(top->instances.at("Worker").at(2).args.at("value").arg, "value");
+}
+
 TEST(InvokeParser, NestedScopeStreamDeclIsAnErrorNotSilence) {
   // A stream declared inside a scope block was previously invisible to
   // CollectStreamDecls and silently dropped from the task graph.
