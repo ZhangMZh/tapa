@@ -158,6 +158,8 @@ in `tapa-ir` and `tapa-protocol`, never by sharing implementation.
   crossbar bindings carry slave indices and paired child/wire ID widths.
   Flat emission uses the projection for data connections and the source graph
   for scoped control and upper-task argument forwarding.
+  Control payload preparation requires a scalar binding for every declared scalar
+  child port, including original upper scopes, before mutating RTL.
 - **tapa-xilinx** — every external tool invocation, discovery, versioning,
   and transport (local and remote runners) lives here. Static Tcl, XML, and
   shell templates in the compiler crates use typed Askama contexts, checked

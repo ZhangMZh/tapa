@@ -420,10 +420,7 @@ fn distributed_control_survives_reset_and_consecutive_launches() {
 /// original upper scopes, including the scope's scalar binding boundary.
 #[test]
 fn flattened_detached_scope_preserves_its_joined_children() {
-    use common::parse_module;
     use common::run_manifest::{generate_manifest, rtl_file};
-    use tapa_codegen::rtl_state::TopologyWithRtl;
-    use tapa_ir::transforms::flatten_with_origins;
 
     let graph = scope_design();
     for blocked in [true, false] {
@@ -439,26 +436,13 @@ fn flattened_detached_scope_preserves_its_joined_children() {
                     .unwrap()[0]
                     .step = 0;
             }
-            let mut state = TopologyWithRtl::new(source_graph);
-            state.flat_projection = Some(flatten_with_origins(&state.design).unwrap());
             let finite_sibling = SCOPE_FINISH.replace("module Finish", "module Never");
             let sibling = if blocked {
                 SCOPE_NEVER
             } else {
                 &finite_sibling
             };
-            for (name, source) in [
-                ("Top", SCOPE_TOP),
-                ("Background", SCOPE_BACKGROUND),
-                ("Once", SCOPE_ONCE),
-                ("Never", sibling),
-                ("Finish", SCOPE_FINISH),
-            ] {
-                state.attach_module(name, parse_module(source)).unwrap();
-            }
-            if floorplanned {
-                state.floorplan = Some(scope_floorplan());
-            }
+            let mut state = scope_state(source_graph, sibling, floorplanned);
             let manifest = generate_manifest(&mut state);
             let mut sources = vec![("Top.v", rtl_file(&manifest, "Top.v").as_str())];
             if let Some(fsm) = manifest.files().get("rtl/Top_fsm.v") {
@@ -495,6 +479,57 @@ fn flattened_detached_scope_preserves_its_joined_children() {
             );
         }
     }
+}
+
+#[test]
+fn flattened_scope_rejects_missing_scalar_argument_before_mutation() {
+    let mut graph = scope_design();
+    graph
+        .tasks
+        .get_mut("Top")
+        .unwrap()
+        .tasks
+        .get_mut("Background")
+        .unwrap()[0]
+        .args
+        .clear();
+    for floorplanned in [false, true] {
+        let mut state = scope_state(graph.clone(), SCOPE_NEVER, floorplanned);
+        let before = state.module_map["Top"].emit();
+        let error = tapa_codegen::generate_rtl(&mut state)
+            .expect_err("a missing original upper scalar argument must be rejected");
+        assert!(
+            error.to_string().contains("captured") && error.to_string().contains("scalar"),
+            "floorplanned={floorplanned}: {error}"
+        );
+        assert_eq!(state.module_map["Top"].emit(), before);
+        assert!(state.fsm_modules.is_empty());
+        assert!(state.generated_files.is_empty());
+    }
+}
+
+fn scope_state(
+    graph: tapa_ir::Design,
+    sibling: &str,
+    floorplanned: bool,
+) -> tapa_codegen::rtl_state::TopologyWithRtl {
+    let mut state = tapa_codegen::rtl_state::TopologyWithRtl::new(graph);
+    state.flat_projection = Some(tapa_ir::transforms::flatten_with_origins(&state.design).unwrap());
+    for (name, source) in [
+        ("Top", SCOPE_TOP),
+        ("Background", SCOPE_BACKGROUND),
+        ("Once", SCOPE_ONCE),
+        ("Never", sibling),
+        ("Finish", SCOPE_FINISH),
+    ] {
+        state
+            .attach_module(name, common::parse_module(source))
+            .unwrap();
+    }
+    if floorplanned {
+        state.floorplan = Some(scope_floorplan());
+    }
+    state
 }
 
 fn scope_design() -> tapa_ir::Design {

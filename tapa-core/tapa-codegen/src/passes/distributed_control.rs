@@ -895,6 +895,19 @@ fn build_payload_fields(
     args: &BTreeMap<String, tapa_ir::Arg>,
     mmap_connections: &BTreeMap<String, MMapConnection>,
 ) -> Result<(Vec<PayloadField>, u32), CodegenError> {
+    if let Some(child) = state.design.tasks.get(child_name) {
+        for port in child.ports.iter().filter(|port| port.cat.is_scalar()) {
+            if args
+                .get(&port.name)
+                .is_none_or(|argument| !argument.cat.is_scalar())
+            {
+                return Err(invalid_floorplan(format!(
+                    "child '{instance}' scalar port '{}.{}' requires a scalar argument",
+                    child_name, port.name
+                )));
+            }
+        }
+    }
     let control_width = if is_autorun { 1 } else { 2 };
     let mut next_lsb = control_width;
     let mut fields = Vec::new();
