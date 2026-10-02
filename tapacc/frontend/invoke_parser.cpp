@@ -460,6 +460,18 @@ void ParseInvocations(
           } else if (arg_value) {
             set_const(*arg_value, port);
           } else {
+            if (decl_ref && arg->getType()->isFloatingType() &&
+                (!llvm::isa<clang::ParmVarDecl>(decl_ref->getDecl()) ||
+                 decl_ref->getDecl()->getDeclContext() != uc.task.def)) {
+              auto diag = ReportCustomDiag(
+                  uc.ctx, clang::DiagnosticsEngine::Error, arg->getBeginLoc(),
+                  "floating-point argument '%0' for task port '%1' must name "
+                  "a parent task parameter; floating-point constants are "
+                  "unsupported");
+              diag.AddString(arg_name);
+              diag.AddString(port);
+              continue;
+            }
             if (!CanForwardScalar(uc.ctx, arg->getType(), param->getType())) {
               auto diag = ReportCustomDiag(
                   uc.ctx, clang::DiagnosticsEngine::Error, arg->getBeginLoc(),

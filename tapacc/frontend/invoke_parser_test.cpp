@@ -349,6 +349,40 @@ TEST(InvokeParser, RuntimeScalarBindingsRequireBitPreservingTypes) {
   }
 }
 
+TEST(InvokeParser, FloatingConstantsCannotBecomeRuntimeBindings) {
+  constexpr char kCode[] = R"cpp(
+    using Scalar = float;
+    constexpr Scalar kGlobal = 1.5f;
+    const double kDouble = 2.5;
+    void Float(float value) {}
+    void Double(double value) {}
+    void Top(const Scalar runtime, const double wide) {
+      constexpr Scalar kLocal = 3.5f;
+      tapa::task()
+          .invoke(Float, kGlobal)
+          .invoke(Double, kDouble)
+          .invoke(Float, kLocal)
+          .invoke(Float, runtime)
+          .invoke(Double, wide);
+    }
+  )cpp";
+  const auto run = test_support::RunTreePipeline(
+      {test_support::VirtualTu{"/proj/floating_constant.cpp", kCode}}, "Top",
+      testing::TempDir() + "/floating_constant", {"-std=c++17"});
+  EXPECT_FALSE(run.ok);
+  ASSERT_EQ(run.diags.size(), 3u);
+  for (const auto& diag : run.diags) {
+    EXPECT_NE(diag.find("floating-point constants are unsupported"),
+              std::string::npos)
+        << diag;
+  }
+  // Read-only parent formals still have real RTL ports and remain forwardable.
+  const TaskModel* top = run.builder.FindTask("Top");
+  ASSERT_NE(top, nullptr);
+  EXPECT_EQ(top->instances.at("Float").at(2).args.at("value").arg, "runtime");
+  EXPECT_EQ(top->instances.at("Double").at(1).args.at("value").arg, "wide");
+}
+
 TEST(InvokeParser, NestedScopeStreamDeclIsAnErrorNotSilence) {
   // A stream declared inside a scope block was previously invisible to
   // CollectStreamDecls and silently dropped from the task graph.

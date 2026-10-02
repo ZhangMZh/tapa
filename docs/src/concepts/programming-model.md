@@ -133,6 +133,9 @@ The `--bitstream` flag is what controls which backend runs:
   named `constexpr` and constant-initialized `const` integers, are converted to
   the child scalar parameter type, including numeric conversion to `float` and
   `double`.
+  Floating-point constants, including named `constexpr` and `const` values, are
+  rejected as invocation arguments. A named floating-point binding must refer to
+  a parent-task parameter.
   Runtime scalar bindings must use the same type (ignoring aliases and cv
   qualifiers) or equal-width non-boolean integer types. Other conversions are
   rejected; pass matching scalar types and convert inside a leaf task instead.
