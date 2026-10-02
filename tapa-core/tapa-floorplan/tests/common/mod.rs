@@ -62,6 +62,7 @@ pub fn case_plan_inputs() -> PlanInputs {
         control: Some(ControlInterface {
             has_s_axi_control: true,
         }),
+        projection: None,
     }
 }
 

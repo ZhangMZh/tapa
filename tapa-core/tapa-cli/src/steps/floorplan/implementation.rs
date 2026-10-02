@@ -7,7 +7,8 @@ use rayon::prelude::*;
 use serde::Serialize;
 use tapa_floorplan::device::select::select_device;
 use tapa_floorplan::ExactDseResourceCaps;
-use tapa_ir::{Design, FloorplanResult, Target, WorkState};
+use tapa_ir::transforms::FlatProjection;
+use tapa_ir::{FloorplanResult, Target, WorkState};
 use tapa_xilinx::{
     run_vitis_link, target_frequency_mhz, ToolRunner, VitisLinkJob, VitisLinkOutput,
 };
@@ -206,7 +207,7 @@ pub(super) fn implement_and_publish(
     runner: &dyn ToolRunner,
     work_dir: &Path,
     state: &WorkState,
-    flat: &Design,
+    projection: &FlatProjection,
     hdl_inputs: &TaskHdlInputs,
     connectivity: Option<&[u8]>,
     target: &ImplementationTarget,
@@ -233,7 +234,7 @@ pub(super) fn implement_and_publish(
                     runner,
                     work_dir,
                     state,
-                    flat,
+                    projection,
                     hdl_inputs,
                     connectivity,
                     target,
@@ -253,7 +254,7 @@ pub(super) fn implement_and_publish(
                             runner,
                             work_dir,
                             state,
-                            flat,
+                            projection,
                             hdl_inputs,
                             connectivity,
                             target,
@@ -286,7 +287,7 @@ fn implement_one(
     runner: &dyn ToolRunner,
     work_dir: &Path,
     state: &WorkState,
-    flat: &Design,
+    projection: &FlatProjection,
     hdl_inputs: &TaskHdlInputs,
     connectivity: Option<&[u8]>,
     target: &ImplementationTarget,
@@ -296,7 +297,7 @@ fn implement_one(
         runner,
         work_dir,
         state,
-        flat,
+        projection,
         hdl_inputs,
         connectivity,
         target,
@@ -340,13 +341,13 @@ fn try_implement_one(
     runner: &dyn ToolRunner,
     work_dir: &Path,
     state: &WorkState,
-    flat: &Design,
+    projection: &FlatProjection,
     hdl_inputs: &TaskHdlInputs,
     connectivity: Option<&[u8]>,
     target: &ImplementationTarget,
     candidate: &PlannedCandidate,
 ) -> Result<VitisLinkOutput> {
-    let paths = CandidatePaths::new(work_dir, candidate.index, &flat.top);
+    let paths = CandidatePaths::new(work_dir, candidate.index, &projection.flat.top);
     paths.recreate()?;
 
     log::info!(
@@ -355,7 +356,7 @@ fn try_implement_one(
         candidate.caps.summary(3),
         candidate.realized_max_utilization,
     );
-    let mut rtl_state = prepare_rtl_state(flat, hdl_inputs)?;
+    let mut rtl_state = prepare_rtl_state(&state.graph, hdl_inputs, Some(projection))?;
     rtl_state.floorplan = Some(candidate.floorplan.clone());
     emit_prepared_rtl_tree(&paths.root, &mut rtl_state, hdl_inputs)?;
 
@@ -367,7 +368,6 @@ fn try_implement_one(
     }
 
     let mut candidate_state = state.clone();
-    candidate_state.graph = flat.clone();
     candidate_state.floorplan = Some(candidate.floorplan.clone());
     log::info!(
         "floorplan candidate_{:03} [2/3]: packaging XO with Vivado",
@@ -380,7 +380,7 @@ fn try_implement_one(
         candidate.index,
     );
     let job = VitisLinkJob::builder()
-        .kernel_name(flat.top.clone())
+        .kernel_name(projection.flat.top.clone())
         .xo(xo)
         .platform(target.platform.clone())
         .target_mhz(target.target_mhz)

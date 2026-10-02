@@ -75,7 +75,19 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
             apply_hls_metrics(task_name, task, &out.csynth)?;
         }
     }
-    generate_rtl_tree(&ctx.work_dir, &state.graph, &hdl_inputs, None)?;
+    let projection = state
+        .flow
+        .flatten_hierarchy
+        .then(|| tapa_ir::transforms::flatten_with_origins(&state.graph))
+        .transpose()
+        .map_err(|error| CliError::Codegen(format!("flatten failed: {error}")))?;
+    generate_rtl_tree(
+        &ctx.work_dir,
+        &state.graph,
+        &hdl_inputs,
+        None,
+        projection.as_ref(),
+    )?;
 
     // Per-task OOC Vivado synth → hierarchical utilization → `total_area`.
     // When disabled (the default), reports and topology consumers derive
@@ -88,6 +100,7 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
             args.jobs,
             runner,
             &sources,
+            projection.as_ref().map(|projection| &projection.flat),
         )?;
     }
 

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use tapa_codegen::generate_rtl;
 use tapa_codegen::rtl_state::TopologyWithRtl;
+use tapa_ir::transforms::FlatProjection;
 use tapa_ir::{Design, FloorplanResult, SynthTarget};
 use tapa_rtl::VerilogModule;
 
@@ -22,8 +23,13 @@ pub type TaskHdlInputs = BTreeMap<String, Vec<Utf8PathBuf>>;
 /// Floorplanning needs the RTL interface shapes before it solves placement,
 /// while code generation needs the same parsed modules afterwards. Keeping
 /// preparation separate lets both phases share one authoritative parse.
-pub fn prepare_rtl_state(design: &Design, hdl_inputs: &TaskHdlInputs) -> Result<TopologyWithRtl> {
+pub fn prepare_rtl_state(
+    design: &Design,
+    hdl_inputs: &TaskHdlInputs,
+    projection: Option<&FlatProjection>,
+) -> Result<TopologyWithRtl> {
     let mut state = TopologyWithRtl::new(design.clone());
+    state.flat_projection = projection.cloned();
 
     for (task_name, task) in &design.tasks {
         if task.synth != SynthTarget::Hls {
@@ -110,8 +116,9 @@ pub fn generate_rtl_tree(
     design: &Design,
     hdl_inputs: &TaskHdlInputs,
     floorplan: Option<&FloorplanResult>,
+    projection: Option<&FlatProjection>,
 ) -> Result<Vec<PathBuf>> {
-    let mut state = prepare_rtl_state(design, hdl_inputs)?;
+    let mut state = prepare_rtl_state(design, hdl_inputs, projection)?;
     state.floorplan = floorplan.cloned();
     emit_prepared_rtl_tree(work_dir, &mut state, hdl_inputs)
 }
@@ -274,8 +281,8 @@ mod tests {
     fn generate_rtl_tree_copies_verilog_support_assets() {
         let dir = tempfile::tempdir().expect("tempdir");
         let hdl_inputs = write_stub_inputs(dir.path(), &["Add", "VecAdd"]);
-        let written =
-            generate_rtl_tree(dir.path(), &vadd_design(), &hdl_inputs, None).expect("generate");
+        let written = generate_rtl_tree(dir.path(), &vadd_design(), &hdl_inputs, None, None)
+            .expect("generate");
 
         let rtl_dir = dir.path().join("rtl");
         let fifo = fs::read_to_string(rtl_dir.join("fifo.v")).expect("fifo.v");
@@ -313,7 +320,7 @@ mod tests {
         );
 
         let candidate_dir = dir.path().join("candidate");
-        generate_rtl_tree(&candidate_dir, &vadd_design(), &inputs, None)
+        generate_rtl_tree(&candidate_dir, &vadd_design(), &inputs, None, None)
             .expect("emit candidate RTL");
         assert_eq!(
             fs::read_to_string(candidate_dir.join("rtl/Add_sort_ip.tcl"))
@@ -385,7 +392,8 @@ mod tests {
             ("VecAdd".to_string(), vec![top_rtl]),
         ]);
 
-        let written = generate_rtl_tree(dir.path(), &design, &hdl_inputs, None).expect("generate");
+        let written =
+            generate_rtl_tree(dir.path(), &design, &hdl_inputs, None, None).expect("generate");
         let template_path = dir.path().join("template/Add_Upper.v");
         let placeholder_path = dir.path().join("rtl/Add_Upper.v");
         let template = fs::read_to_string(&template_path).expect("author template");
@@ -425,7 +433,7 @@ mod tests {
             ),
         ]);
 
-        let Err(error) = prepare_rtl_state(&vadd_design(), &inputs) else {
+        let Err(error) = prepare_rtl_state(&vadd_design(), &inputs, None) else {
             panic!("a different extension cannot stand in for the exact task top file");
         };
         assert!(
@@ -450,7 +458,7 @@ mod tests {
             ),
         ]);
 
-        let Err(error) = prepare_rtl_state(&vadd_design(), &inputs) else {
+        let Err(error) = prepare_rtl_state(&vadd_design(), &inputs, None) else {
             panic!("the top file must declare the task's exact module name");
         };
         assert!(
@@ -464,7 +472,7 @@ mod tests {
     fn prepared_state_is_reused_for_emission() {
         let dir = tempfile::tempdir().expect("tempdir");
         let inputs = write_stub_inputs(dir.path(), &["Add", "VecAdd"]);
-        let mut state = prepare_rtl_state(&vadd_design(), &inputs).expect("prepare");
+        let mut state = prepare_rtl_state(&vadd_design(), &inputs, None).expect("prepare");
         assert_eq!(state.module_map.len(), 2, "both HLS modules are attached");
 
         emit_prepared_rtl_tree(dir.path(), &mut state, &inputs).expect("emit");

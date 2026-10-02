@@ -11,6 +11,7 @@ pub use options::{PlanOptions, PlanOptionsError};
 use std::path::Path;
 use std::time::Duration;
 
+use tapa_ir::transforms::{flatten_with_origins, FlatProjection};
 use tapa_ir::{FloorplanResult, WorkState};
 
 use crate::device::select::select_device;
@@ -69,6 +70,9 @@ pub struct PlanInputs {
     pub memory: Vec<MemoryInterface>,
     /// Enable the transient distributed-control topology for this solve.
     pub control: Option<ControlInterface>,
+    /// Shared flat datapath and original occurrence references, when the
+    /// caller already derived them from the work state's authoritative graph.
+    pub projection: Option<FlatProjection>,
 }
 
 /// Plan a floorplan for a synthesized design.
@@ -332,18 +336,30 @@ fn prepare_plan(
             return Err(PlanError::BankTag { bank, matches });
         }
     }
-    let flat = tapa_ir::flatten(&state.graph)?;
+    let derived_projection;
+    let projection = if let Some(projection) = &inputs.projection {
+        projection
+    } else {
+        derived_projection = flatten_with_origins(&state.graph)?;
+        &derived_projection
+    };
     let active_control = inputs.control.filter(|_| {
-        flat.tasks
-            .get(&flat.top)
-            .is_some_and(|top| !top.tasks.is_empty())
+        state
+            .graph
+            .tasks
+            .get(&state.graph.top)
+            .is_some_and(|top| top.level == tapa_ir::TaskLevel::Upper && !top.tasks.is_empty())
     });
     let control_anchor = active_control
         .map(|control| select_control_anchor(&device, control))
         .transpose()?
         .flatten();
-    let graph =
-        FloorGraph::build_with_interfaces(&flat, &inputs.memory, active_control, control_anchor)?;
+    let graph = FloorGraph::build_with_projection(
+        projection,
+        &inputs.memory,
+        active_control,
+        control_anchor,
+    )?;
     Ok((device, graph))
 }
 
@@ -530,12 +546,7 @@ mod tests {
         }
     }
 
-    #[test]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "the end-to-end assertion covers controller placement and all route inventories"
-    )]
-    fn distributed_control_plan_materializes_and_routes_exact_inventory() {
+    fn nested_control_graph() -> tapa_ir::TaskGraph {
         let json = r#"{
             "schema_version": 3,
             "cflags": [], "top": "Top", "target": "xilinx-vitis",
@@ -543,17 +554,24 @@ mod tests {
                 "Top": {
                     "readable_name":"Top","srcs": ["Top.cpp"], "include_dirs": [], "defines": [],"level":"upper","synth":"hls",
                     "ports":[],"tasks":{
-                        "Normal":[{"name":"normal#0","args":{},"step":0}],
+                        "Group":[{"name":"background","args":{},"step":-1}],
                         "Ticker":[{"name":"ticker[1]","args":{},"step":-1}]
                     },"fifos":{}
                 },
+                "Group": {"readable_name":"Group","srcs": ["Group.cpp"], "include_dirs": [], "defines": [],"level":"upper","synth":"hls",
+                    "ports":[],"tasks":{"Normal":[{"name":"normal#0","args":{},"step":0}]},"fifos":{}},
                 "Normal": {"readable_name":"Normal","srcs": ["Normal.cpp"], "include_dirs": [], "defines": [],"level":"lower","synth":"hls",
                     "ports":[],"self_area":{"lut":120000}},
                 "Ticker": {"readable_name":"Ticker","srcs": ["Ticker.cpp"], "include_dirs": [], "defines": [],"level":"lower","synth":"hls",
                     "ports":[],"self_area":{"lut":120000}}
             }
         }"#;
-        let graph = tapa_ir::TaskGraph::from_json(json).expect("parse");
+        tapa_ir::TaskGraph::from_json(json).expect("parse")
+    }
+
+    #[test]
+    fn distributed_control_plan_materializes_and_routes_exact_inventory() {
+        let graph = nested_control_graph();
         let mut state = WorkState::new(graph);
         state.flow.part_num = Some("xcu280-fsvh2892-2L-e".to_string());
 
@@ -583,7 +601,16 @@ mod tests {
             "the exact S-AXI controller tag anchors the global controller"
         );
         assert_eq!(result.regions["control_s_axi_U"], result.regions[global]);
-        for instance in ["normal#0", "ticker[1]"] {
+        for controller in [
+            tapa_ir::scope_controller_instance_name("background_Top"),
+            tapa_ir::local_controller_instance_name("background_Top"),
+        ] {
+            assert_eq!(
+                result.regions[&controller], result.regions[global],
+                "upper scope controllers share the global controller placement"
+            );
+        }
+        for instance in ["normal#0_background_Top", "ticker[1]"] {
             assert_eq!(
                 result.regions[&tapa_ir::local_controller_instance_name(instance)],
                 result.regions[instance]
@@ -641,8 +668,66 @@ mod tests {
         }
         let xdc = render_xdc(&result).expect("render control XDC");
         assert!(xdc.contains(global));
-        assert!(xdc.contains(&tapa_ir::local_controller_instance_name("normal#0")));
+        assert!(xdc.contains(&tapa_ir::local_controller_instance_name(
+            "normal#0_background_Top"
+        )));
         assert!(xdc.contains(&tapa_ir::local_controller_instance_name("ticker[1]")));
+    }
+
+    #[test]
+    fn scoped_control_preserves_empty_upper_occurrences() {
+        let mut source = nested_control_graph();
+        let mut empty = source.tasks[&source.top].clone();
+        empty.tasks.clear();
+        empty.fifos.clear();
+        empty.ports.clear();
+        source.tasks.insert("Empty".into(), empty);
+        let top = source.tasks.get_mut(&source.top).expect("top");
+        top.fifos.clear();
+        top.tasks = std::collections::BTreeMap::from([(
+            "Empty".into(),
+            [-1, 0]
+                .map(|step| tapa_ir::TaskInstance {
+                    name: None,
+                    args: std::collections::BTreeMap::new(),
+                    step,
+                })
+                .to_vec(),
+        )]);
+        let mut state = WorkState::new(source);
+        state.flow.part_num = Some("xcu280-fsvh2892-2L-e".into());
+        let (_, graph) = prepare_plan(
+            &state,
+            &PlanInputs {
+                control: Some(ControlInterface::default()),
+                projection: Some(flatten_with_origins(&state.graph).expect("shared projection")),
+                ..PlanInputs::default()
+            },
+        )
+        .expect("empty scoped control graph");
+        assert_eq!(
+            graph.vertices().len(),
+            1,
+            "scope controllers add no placement vertices"
+        );
+        assert!(graph.control_nets().is_empty(), "there are no leaf routes");
+        let global = tapa_ir::global_controller_instance_name();
+        let region = "SLOT_X0Y0";
+        let mut regions = std::collections::BTreeMap::from([(global.into(), region.into())]);
+        graph
+            .materialize_co_locations(&mut regions)
+            .expect("scope placements");
+        for index in 0..2 {
+            let scope = format!("Empty_{index}_Top");
+            assert_eq!(
+                regions[&tapa_ir::scope_controller_instance_name(&scope)],
+                region
+            );
+            assert_eq!(
+                regions[&tapa_ir::local_controller_instance_name(&scope)],
+                region
+            );
+        }
     }
 
     #[test]
@@ -786,6 +871,7 @@ mod tests {
                 &PlanInputs {
                     memory: vec![unmodeled],
                     control: None,
+                    projection: None,
                 },
             )
             .expect_err("an unmodeled bank must fail before CBC");
@@ -802,6 +888,7 @@ mod tests {
                 &PlanInputs {
                     memory: vec![interface.clone()],
                     control: None,
+                    projection: None,
                 },
             )
             .expect_err("the stub graph cannot be planned");

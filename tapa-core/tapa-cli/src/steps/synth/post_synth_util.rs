@@ -63,12 +63,13 @@ pub(super) fn emit_post_synth_util(
     jobs: Option<u32>,
     runner: &dyn ToolRunner,
     sources: &TaskSources,
+    emission: Option<&Design>,
 ) -> Result<()> {
     let rtl_dir = work_dir.join("rtl");
     let report_dir = work_dir.join("report");
     fs::create_dir_all(&report_dir)?;
 
-    let module_names: Vec<String> = top_task_child_names(design);
+    let module_names: Vec<String> = top_task_child_names(emission.unwrap_or(design));
     if module_names.is_empty() {
         return Ok(());
     }
@@ -462,6 +463,7 @@ mod tests {
             None,
             &runner,
             &sources,
+            None,
         )
         .expect("emit_post_synth_util");
 
@@ -523,6 +525,7 @@ mod tests {
             None,
             &runner,
             &sources,
+            None,
         )
         .expect("stale-report skip path must succeed");
 
@@ -555,6 +558,7 @@ mod tests {
             Some(2),
             &runner,
             &sources,
+            None,
         )
         .expect("parallel post-synth utilization");
 

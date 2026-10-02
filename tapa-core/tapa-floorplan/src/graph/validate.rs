@@ -5,10 +5,11 @@
 use std::collections::{BTreeMap, HashMap};
 
 use tapa_ir::port::{sanitize_array_name, sanitize_identifier_name};
+use tapa_ir::transforms::FlatProjection;
 use tapa_ir::{
     async_mmap_bridge_instance_name, axi_pipeline_instance_name, control_pipeline_instance_name,
-    global_controller_instance_name, local_controller_instance_name, AxiEndpoint, ControlChannel,
-    TaskGraph,
+    global_controller_instance_name, local_controller_instance_name,
+    scope_controller_instance_name, AxiEndpoint, ControlChannel, TaskGraph,
 };
 
 use crate::graph::floor_graph::{
@@ -47,6 +48,7 @@ pub(super) fn validate_control_names(
     control: ControlInterface,
     vertices: &[Vertex],
     co_located: &[CoLocatedInstance],
+    projection: Option<&FlatProjection>,
 ) -> Result<(), GraphError> {
     let mut occupied = occupied_rtl_names(top, vertices, co_located)?;
     for interface in memory {
@@ -91,6 +93,24 @@ pub(super) fn validate_control_names(
                     &mut occupied,
                     control_pipeline_instance_name(&canonical, channel),
                     &format!("{channel:?} pipeline for `{canonical}`"),
+                )?;
+            }
+        }
+    }
+    if let Some(projection) = projection {
+        for scope in projection
+            .occurrences
+            .iter()
+            .filter(|occurrence| occurrence.parent.is_some() && occurrence.flat_endpoint.is_none())
+        {
+            for name in [
+                scope_controller_instance_name(&scope.global_name),
+                local_controller_instance_name(&scope.global_name),
+            ] {
+                reserve_generated_name(
+                    &mut occupied,
+                    name,
+                    &format!("upper controller for `{}`", scope.global_name),
                 )?;
             }
         }
@@ -504,14 +524,39 @@ mod tests {
                 }),
                 "generated RTL name",
             ),
+            (
+                serde_json::json!({
+                    "Empty": [{"name":"stage","args":{}}],
+                    "A": [{"name":"stage_VecAdd","args":{}}]
+                }),
+                "__tapa_local_controller_stage_VecAdd",
+            ),
+            (
+                serde_json::json!({
+                    "Empty": [{"name":"same#scope","args":{}}, {"name":"same?scope","args":{}}]
+                }),
+                "__tapa_control_scope_same_scope_VecAdd",
+            ),
+            (
+                serde_json::json!({
+                    "Empty": [{"name":"stage","args":{}}],
+                    "A": [{"name":"__tapa_control_scope_stage_VecAdd","args":{}}]
+                }),
+                "__tapa_control_scope_stage_VecAdd",
+            ),
         ];
         for (tasks, expected) in cases {
             let mut value = serde_json::to_value(vadd_graph()).expect("serialize graph");
             value["tasks"]["VecAdd"]["tasks"] = tasks;
             value["tasks"]["VecAdd"]["fifos"] = serde_json::json!({});
+            let mut empty = value["tasks"]["VecAdd"].clone();
+            empty["tasks"] = serde_json::json!({});
+            value["tasks"]["Empty"] = empty;
             let design = TaskGraph::from_json(&value.to_string()).expect("parse case");
-            let error = FloorGraph::build_with_interfaces(
-                &design,
+            let projection =
+                tapa_ir::transforms::flatten_with_origins(&design).expect("projection");
+            let error = FloorGraph::build_with_projection(
+                &projection,
                 &[],
                 Some(ControlInterface::default()),
                 None,

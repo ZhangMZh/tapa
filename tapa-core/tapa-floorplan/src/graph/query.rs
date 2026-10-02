@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+use tapa_ir::transforms::FlatProjection;
 use tapa_ir::TaskGraph;
 
 use super::build::FloorGraphBuilder;
@@ -129,6 +130,33 @@ impl FloorGraph {
         control: Option<ControlInterface>,
         global_anchor: Option<&str>,
     ) -> Result<Self, GraphError> {
+        Self::build_with_scopes(flat, memory, control, global_anchor, None)
+    }
+
+    /// Build from the shared physical projection, retaining original upper
+    /// controllers as aliases of the existing global placement vertex.
+    pub(crate) fn build_with_projection(
+        projection: &FlatProjection,
+        memory: &[MemoryInterface],
+        control: Option<ControlInterface>,
+        global_anchor: Option<&str>,
+    ) -> Result<Self, GraphError> {
+        Self::build_with_scopes(
+            &projection.flat,
+            memory,
+            control,
+            global_anchor,
+            Some(projection),
+        )
+    }
+
+    fn build_with_scopes(
+        flat: &TaskGraph,
+        memory: &[MemoryInterface],
+        control: Option<ControlInterface>,
+        global_anchor: Option<&str>,
+        projection: Option<&FlatProjection>,
+    ) -> Result<Self, GraphError> {
         let top = flat
             .tasks
             .get(&flat.top)
@@ -145,8 +173,11 @@ impl FloorGraph {
 
         let axi_nets = builder.add_memory_interfaces(flat, top, memory)?;
 
-        let control_nets = if let Some(control) = control.filter(|_| !top.tasks.is_empty()) {
-            builder.add_control_interface(flat, top, memory, control, global_anchor)?
+        let has_children = projection.map_or(!top.tasks.is_empty(), |projection| {
+            projection.occurrences.len() > 1
+        });
+        let control_nets = if let Some(control) = control.filter(|_| has_children) {
+            builder.add_control_interface(flat, top, memory, control, global_anchor, projection)?
         } else {
             Vec::new()
         };

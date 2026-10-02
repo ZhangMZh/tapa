@@ -32,7 +32,7 @@ pub const FILE_NAME: &str = "tapa.json";
 /// confusing field-level parse failure. Purely *additive* fields carried with
 /// `#[serde(default, skip_serializing_if = "Option::is_none")]` are
 /// backward-compatible and do not require a bump.
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 5;
 
 /// Everything the pipeline persists between steps.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -109,6 +109,10 @@ impl WorkState {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct FlowSettings {
+    /// Emit a flat data graph while preserving original controller ownership.
+    /// The semantic graph remains hierarchical regardless of this RTL choice.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flatten_hierarchy: bool,
     /// Target part number resolved by `synth` from `--part-num` or
     /// `--platform`. `pack` reads it back to build the `.xo`, and `frt-cosim`
     /// reads it out of the packed archive.
@@ -182,6 +186,7 @@ mod tests {
         state.flow.platform = Some("xilinx_u250_gen3x16_xdma_4_1_202210_1".to_string());
         state.flow.clock_period = Some(ClockPeriod::from_picoseconds(3330));
         state.flow.synthed = true;
+        state.flow.flatten_hierarchy = true;
         let json = serde_json::to_string(&state).expect("serialize");
         let back = WorkState::from_json(&json).expect("parse");
         assert_eq!(back, state, "state must survive a JSON round trip");
@@ -228,15 +233,6 @@ mod tests {
             back, state,
             "a floorplanned state must survive a round trip"
         );
-    }
-
-    #[test]
-    fn version_is_v4_for_typed_invoke_literals() {
-        // A v3 dir carries invoke constants as Verilog-syntax strings,
-        // which the untagged ArgSource now reads as a wire NAME rather
-        // than a literal — accepted silently, then wrong downstream. The
-        // bump is what turns that into "re-run analyze".
-        assert_eq!(VERSION, 4, "typed invoke literals require state v4");
     }
 
     #[test]

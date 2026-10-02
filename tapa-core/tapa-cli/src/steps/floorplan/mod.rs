@@ -15,7 +15,8 @@ use tapa_floorplan::{
     plan_with_inputs, render_xdc, ControlInterface, MemoryInterface, PartitionStrategy, PlanInputs,
     PlanOptions,
 };
-use tapa_ir::{Design, MemoryBindings, PipelineScheme, WorkState};
+use tapa_ir::transforms::{flatten_with_origins, FlatProjection};
+use tapa_ir::{MemoryBindings, PipelineScheme, WorkState};
 use tapa_xilinx::connectivity::parse_vitis_config;
 
 use crate::context::CliContext;
@@ -368,7 +369,7 @@ fn plan_implementation_candidates(
 fn publish_implementation_winner(
     work_dir: &Path,
     state: &mut WorkState,
-    flat: &Design,
+    projection: &FlatProjection,
     hdl_inputs: &TaskHdlInputs,
     connectivity: Option<&ConnectivityInput>,
     target_mhz: u32,
@@ -381,7 +382,7 @@ fn publish_implementation_winner(
         &xdc,
         connectivity.map(|input| input.bytes.as_slice()),
         || {
-            let mut canonical_rtl = prepare_rtl_state(flat, hdl_inputs)?;
+            let mut canonical_rtl = prepare_rtl_state(&state.graph, hdl_inputs, Some(projection))?;
             canonical_rtl.floorplan = Some(result.clone());
             emit_prepared_rtl_tree(work_dir, &mut canonical_rtl, hdl_inputs)?;
 
@@ -430,18 +431,18 @@ pub fn run(args: &FloorplanArgs, ctx: &CliContext) -> Result<()> {
         );
     }
 
-    // Prepare the exact flattened RTL once. The parsed state is available to
-    // derive interface-aware planner inputs before solving and is then reused
-    // directly for code generation below.
-    let flat = tapa_ir::flatten(&state.graph)
+    // Derive placement and controller ownership together. Parse RTL interfaces
+    // before solving and reuse them directly for code generation below.
+    let projection = flatten_with_origins(&state.graph)
         .map_err(|e| CliError::Floorplan(format!("flatten failed: {e}")))?;
-    let hdl_inputs = collect_hdl_inputs(&ctx.work_dir, &flat)?;
-    let mut rtl_state = prepare_rtl_state(&flat, &hdl_inputs)?;
+    let hdl_inputs = collect_hdl_inputs(&ctx.work_dir, &state.graph)?;
+    let mut rtl_state = prepare_rtl_state(&state.graph, &hdl_inputs, Some(&projection))?;
 
     let interfaces = rtl_state
-        .direct_mmap_interfaces(&flat.top)
+        .direct_mmap_interfaces(&projection.flat.top)
         .map_err(|error| CliError::Floorplan(error.to_string()))?;
-    let mut inputs = memory_plan_inputs(&flat.top, &interfaces, connectivity.as_ref())?;
+    let mut inputs = memory_plan_inputs(&projection.flat.top, &interfaces, connectivity.as_ref())?;
+    inputs.projection = Some(projection.clone());
     inputs.control = rtl_state
         .supports_distributed_control()
         .then(|| ControlInterface {
@@ -458,7 +459,7 @@ pub fn run(args: &FloorplanArgs, ctx: &CliContext) -> Result<()> {
                 runner,
                 &ctx.work_dir,
                 &implementation_state,
-                &flat,
+                &projection,
                 &hdl_inputs,
                 connectivity.as_ref().map(|input| input.bytes.as_slice()),
                 target,
@@ -469,7 +470,7 @@ pub fn run(args: &FloorplanArgs, ctx: &CliContext) -> Result<()> {
                     publish_implementation_winner(
                         &ctx.work_dir,
                         &mut state,
-                        &flat,
+                        &projection,
                         &hdl_inputs,
                         connectivity.as_ref(),
                         target.target_mhz(),
@@ -501,6 +502,7 @@ pub fn run(args: &FloorplanArgs, ctx: &CliContext) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     use tapa_ir::{AxiChannelWidths, AxiEndpoint, MemoryBank, MemoryKind};
 
     use crate::testutil::{ctx_at, state_from_json};
@@ -877,11 +879,31 @@ mod tests {
     #[test]
     fn floorplan_step_writes_xdc_and_result() {
         let dir = tempfile::tempdir().expect("tempdir");
-        work_io::store(dir.path(), &synthed_vadd_state()).expect("store state");
+        let mut state = synthed_vadd_state();
+        let mut group = state.graph.tasks["VecAdd"].clone();
+        group.srcs = vec!["Group.cpp".to_string()];
+        group.readable_name = "Group".to_string();
+        let top = state.graph.tasks.get_mut("VecAdd").expect("top");
+        top.tasks = BTreeMap::from([(
+            "Group".to_string(),
+            vec![tapa_ir::TaskInstance {
+                name: None,
+                args: BTreeMap::new(),
+                step: -1,
+            }],
+        )]);
+        top.fifos.clear();
+        state.graph.tasks.insert("Group".to_string(), group);
+        work_io::store(dir.path(), &state).expect("store state");
         write_hls_module(
             dir.path(),
             "VecAdd",
             "module VecAdd(input wire ap_clk, input wire ap_rst_n); endmodule",
+        );
+        write_hls_module(
+            dir.path(),
+            "Group",
+            "module Group(input wire ap_clk, input wire ap_rst_n); endmodule",
         );
         write_hls_module(
             dir.path(),
@@ -914,12 +936,18 @@ mod tests {
                 let xdc = fs_err::read_to_string(dir.path().join(FLOORPLAN_XDC)).expect("xdc");
                 assert!(xdc.contains("create_pblock SLOT_X"), "xdc has pblocks");
                 let reloaded = work_io::load(dir.path()).expect("reload");
+                assert_eq!(
+                    reloaded.graph, state.graph,
+                    "floorplanning must retain source owners"
+                );
                 let floorplan = reloaded.floorplan.expect("floorplan stored");
                 assert_eq!(floorplan.device, "u280");
                 for controller in [
                     tapa_ir::global_controller_instance_name().to_string(),
                     tapa_ir::local_controller_instance_name("A_0"),
                     tapa_ir::local_controller_instance_name("B_0"),
+                    tapa_ir::local_controller_instance_name("Group_0_VecAdd"),
+                    tapa_ir::scope_controller_instance_name("Group_0_VecAdd"),
                 ] {
                     assert!(
                         floorplan.regions.contains_key(&controller),
@@ -928,8 +956,8 @@ mod tests {
                 }
                 assert_eq!(
                     floorplan.regions.len(),
-                    6,
-                    "A_0, B_0, the FIFO, and three controller instances",
+                    8,
+                    "two leaves, the FIFO, and five controller instances",
                 );
             }
             Err(CliError::Floorplan(msg)) if msg.contains("cbc") || msg.contains("solver") => {

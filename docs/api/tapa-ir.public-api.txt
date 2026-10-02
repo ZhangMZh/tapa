@@ -2229,6 +2229,7 @@ pub fn tapa_ir::transforms::flatten_with_origins(&tapa_ir::graph::TaskGraph) -> 
 pub mod tapa_ir::work_state
 pub struct tapa_ir::work_state::FlowSettings
 pub tapa_ir::work_state::FlowSettings::clock_period: core::option::Option<tapa_ir::clock::ClockPeriod>
+pub tapa_ir::work_state::FlowSettings::flatten_hierarchy: bool
 pub tapa_ir::work_state::FlowSettings::part_num: core::option::Option<alloc::string::String>
 pub tapa_ir::work_state::FlowSettings::platform: core::option::Option<alloc::string::String>
 pub tapa_ir::work_state::FlowSettings::synthed: bool
@@ -3721,6 +3722,7 @@ pub fn tapa_ir::floorplan::FloorplanResult::from(T) -> T
 impl<T> serde_core::de::DeserializeOwned for tapa_ir::floorplan::FloorplanResult where T: for<'de> serde_core::de::Deserialize<'de>
 pub struct tapa_ir::FlowSettings
 pub tapa_ir::FlowSettings::clock_period: core::option::Option<tapa_ir::clock::ClockPeriod>
+pub tapa_ir::FlowSettings::flatten_hierarchy: bool
 pub tapa_ir::FlowSettings::part_num: core::option::Option<alloc::string::String>
 pub tapa_ir::FlowSettings::platform: core::option::Option<alloc::string::String>
 pub tapa_ir::FlowSettings::synthed: bool

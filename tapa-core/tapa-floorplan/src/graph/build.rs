@@ -3,10 +3,11 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use tapa_ir::transforms::FlatProjection;
 use tapa_ir::{
     axi_pipeline_instance_name, floorplanned_fifo_storage_depth, global_controller_instance_name,
-    local_controller_instance_name, Area, AxiChannel, AxiEndpoint, ControlChannel, MemoryBank,
-    TaskGraph,
+    local_controller_instance_name, scope_controller_instance_name, Area, AxiChannel, AxiEndpoint,
+    ControlChannel, MemoryBank, TaskGraph,
 };
 
 use crate::graph::floor_graph::{
@@ -325,8 +326,16 @@ impl FloorGraphBuilder {
         memory: &[MemoryInterface],
         control: ControlInterface,
         global_anchor: Option<&str>,
+        projection: Option<&FlatProjection>,
     ) -> Result<Vec<ControlNet>, GraphError> {
-        validate_control_names(top, memory, control, &self.vertices, &self.co_located)?;
+        validate_control_names(
+            top,
+            memory,
+            control,
+            &self.vertices,
+            &self.co_located,
+            projection,
+        )?;
 
         let global_name = global_controller_instance_name().to_string();
         if self.index.contains_key(&global_name) {
@@ -356,6 +365,19 @@ impl FloorGraphBuilder {
                 name: CONTROL_S_AXI_INSTANCE.to_string(),
                 host: global,
             });
+        }
+        if let Some(projection) = projection {
+            for scope in projection.occurrences.iter().filter(|occurrence| {
+                occurrence.parent.is_some() && occurrence.flat_endpoint.is_none()
+            }) {
+                for name in [
+                    scope_controller_instance_name(&scope.global_name),
+                    local_controller_instance_name(&scope.global_name),
+                ] {
+                    self.co_located
+                        .push(CoLocatedInstance { name, host: global });
+                }
+            }
         }
 
         let mut nets = Vec::new();

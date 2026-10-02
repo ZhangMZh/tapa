@@ -95,8 +95,8 @@ Parse C++ source and extract the task graph to `tapa.json` in the work directory
 |------|-------------|
 | `--cflags FLAG` / `-c FLAG` | Compiler flag passed through to the kernel frontend, such as an include path. Repeat the flag for multiple. |
 | `--target {xilinx-vitis,xilinx-hls}` | Output target (default: `xilinx-vitis`). Controls the synthesis flow. |
-| `--flatten-hierarchy` | Flatten the task hierarchy so every leaf task sits directly under the top task, preserving kernel stream port names. |
-| `--keep-hierarchy` | Preserve the task hierarchy as written. This is the default; the flag exists to override `--flatten-hierarchy`. |
+| `--flatten-hierarchy` | Emit flat RTL with every leaf directly under the top, preserving kernel stream names and original upper-task control behavior. The stored task graph retains its original hierarchy. |
+| `--keep-hierarchy` | Emit the task hierarchy as written when compiling without floorplanning. This is the default. |
 
 Flattening appends ancestor paths to promoted explicitly named leaf instances,
 for example `worker_west_Top` and `worker_east_Top`. Explicit names directly
@@ -161,6 +161,11 @@ tapa --work-dir work.out synth \
 ## tapa floorplan
 
 Floorplan a design for a multi-die (multi-SLR) FPGA. Run it between `synth` and `pack` to assign tasks to SLRs, balance resource usage across them, and add pipeline registers on channels that cross SLR boundaries. It writes placement and timing constraints (`floorplan.xdc`) that `pack` picks up automatically.
+
+Floorplanning places leaf tasks independently, including leaves inside upper
+tasks. The generated RTL retains each upper task's launch, join, and detach
+behavior through scope controllers placed with the top controller. The original
+task hierarchy remains in `tapa.json`.
 
 Run it **after** `tapa synth` (it needs each task's resource estimate) and **before** `tapa pack`. The partitioner solves a wire-crossing-minimizing ILP with the local `cbc` solver.
 

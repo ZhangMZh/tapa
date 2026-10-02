@@ -29,7 +29,7 @@ const TAPACC_ARTIFACT: &str = "tapacc.json";
 mod build_design;
 mod run_tapacc;
 
-use build_design::{flatten_graph_value, is_top_leaf};
+use build_design::is_top_leaf;
 use run_tapacc::run_tapacc;
 
 /// Target flows accepted by `tapa analyze`. Kebab-case spellings match
@@ -82,7 +82,7 @@ pub struct AnalyzeArgs {
     #[arg(short = 'c', long = "cflags", value_name = "FLAG")]
     pub cflags: Vec<String>,
 
-    /// Flatten the hierarchy with all leaf-level tasks at top.
+    /// Emit flat RTL with every leaf at top and original controller ownership.
     #[arg(long = "flatten-hierarchy", default_value_t = false)]
     pub flatten_hierarchy: bool,
 
@@ -109,8 +109,8 @@ pub struct AnalyzeArgs {
 /// Run tapacc on each input and write the work dir.
 ///
 /// Merges the task graphs into `<work_dir>/tapa.json` and materializes the
-/// mirrored source tree under `<work_dir>/rewritten/`; with
-/// `--flatten-hierarchy` the stored graph is the leaf-flattened one.
+/// mirrored source tree under `<work_dir>/rewritten/`. The stored graph always
+/// retains hierarchy; `--flatten-hierarchy` selects the later RTL layout.
 pub fn run(args: &AnalyzeArgs, ctx: &CliContext) -> Result<()> {
     // `--tapacc` overrides the walk-up `find_resource` search. Used by
     // the Bazel driver to inject the exact sandbox paths; direct
@@ -163,12 +163,8 @@ pub fn run(args: &AnalyzeArgs, ctx: &CliContext) -> Result<()> {
         );
     }
 
-    let mut graph: Graph = serde_json::from_value(graph_dict)
+    let graph: Graph = serde_json::from_value(graph_dict)
         .map_err(|e| CliError::Codegen(format!("graph schema error: {e}")))?;
-
-    if args.flatten_hierarchy {
-        graph = flatten_graph_value(&graph)?;
-    }
 
     if is_top_leaf(&graph, &args.top) && args.target == AnalyzeTarget::XilinxVitis {
         return Err(CliError::InvalidArg(
@@ -181,7 +177,8 @@ pub fn run(args: &AnalyzeArgs, ctx: &CliContext) -> Result<()> {
 
     // Seed the work dir's one state file. `synth` annotates the graph in
     // place with post-synthesis results and fills in `flow`.
-    let state = WorkState::new(graph);
+    let mut state = WorkState::new(graph);
+    state.flow.flatten_hierarchy = args.flatten_hierarchy;
     work_io::store(work_dir, &state)?;
 
     Ok(())
@@ -217,7 +214,7 @@ mod tests {
         // tapacc-shaped task graph on stdout.
         // Mirrors real `tapacc` output: `readable_name` is emitted for every
         // task (equal to the task name for these non-template tasks).
-        let fixed_graph = r#"{"schema_version": 3, "cflags": [], "tasks": {"VecAdd": {"srcs": ["VecAdd.cpp"], "include_dirs": [], "defines": [], "level": "upper", "synth": "hls", "readable_name": "VecAdd", "ports": [], "tasks": {"Add": [{"step": 0, "args": {}}]}, "fifos": {}}, "Add": {"srcs": ["Add.cpp"], "include_dirs": [], "defines": [], "level": "lower", "synth": "hls", "readable_name": "Add", "ports": []}}, "top": "VecAdd"}"#;
+        let fixed_graph = r#"{"schema_version": 3, "cflags": [], "tasks": {"VecAdd": {"srcs": ["VecAdd.cpp"], "include_dirs": [], "defines": [], "level": "upper", "synth": "hls", "readable_name": "VecAdd", "ports": [], "tasks": {"Middle": [{"step": -1, "args": {}}]}, "fifos": {}}, "Middle": {"srcs": ["Middle.cpp"], "include_dirs": [], "defines": [], "level": "upper", "synth": "hls", "readable_name": "Middle", "ports": [], "tasks": {"Add": [{"step": 0, "args": {}}]}, "fifos": {}}, "Add": {"srcs": ["Add.cpp"], "include_dirs": [], "defines": [], "level": "lower", "synth": "hls", "readable_name": "Add", "ports": []}}, "top": "VecAdd"}"#;
         fs::write(
             &tapacc,
             format!(
@@ -293,6 +290,19 @@ mod tests {
             raw.trim_end(),
             fixed_graph,
             "tapacc.json must hold tapacc's stdout verbatim",
+        );
+
+        let mut flattened_args = args;
+        flattened_args.flatten_hierarchy = true;
+        run(&flattened_args, &ctx).expect("analyze with flat RTL should succeed");
+        let flat_state = work_io::load(&ctx.work_dir).expect("load flat-emission state");
+        assert_eq!(
+            flat_state.graph, state.graph,
+            "physical flattening must retain detached upper ownership and joined children",
+        );
+        assert!(
+            flat_state.flow.flatten_hierarchy,
+            "the RTL layout choice must survive between pipeline commands",
         );
     }
 }

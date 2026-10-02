@@ -70,9 +70,14 @@ breaks one of them is a change that breaks the build — keep them green.
 
 - **Versioned work state.** The `tapa.json` state file is a versioned
   schema: `WorkState` in `tapa-core/tapa-ir/src/work_state.rs` carries a
-  `VERSION` constant (currently `VERSION = 4`), so old state is detected
+  `VERSION` constant (currently `VERSION = 5`), so old state is detected
   instead of silently misparsed. Both frontend and archived graphs pass
   the same schema-version and invoke-literal validation in `tapa-ir`.
+  The original task hierarchy remains authoritative in the state; the
+  `flow.flatten_hierarchy` setting selects physical RTL lowering. Flat placement
+  and controller ownership are derived together from original invocations.
+  Earlier work directories require re-analysis because a flattened graph may
+  have lost its upper-task controller scopes.
   Every invoke constant must bind to a declared scalar child port; missing
   child-task or port metadata and non-scalar declarations are rejected.
   Graph and state readers require one complete JSON document; trailing
@@ -138,13 +143,18 @@ in `tapa-ir` and `tapa-protocol`, never by sharing implementation.
 - **tapa-floorplan** — turns `(design, device)` into a serialized
   `FloorplanResult`. Placements, slot usage, and planned routes use typed
   coordinates; finalization renders region strings for the persisted schema.
+  A flat projection from `tapa-ir` supplies physical leaves and their original
+  invocation owners. Upper-task controllers share the top controller's placement;
+  leaves remain independently placeable.
   It knows nothing about RTL text or the CLI.
 - **tapa-codegen** — a pure function
-  `(Design, Option<FloorplanResult>, modules) → ArtifactManifest` whose
+  `(Design, Option<FlatProjection>, Option<FloorplanResult>, modules) → ArtifactManifest` whose
   manifest is the complete file set: generated RTL, template files, FSM
   files, and embedded assets. Packaging is then a copy operation for the
   caller. Child mmap routes are direct, crossbar, or pipelined variants; only
   crossbar bindings carry slave indices and paired child/wire ID widths.
+  Flat emission uses the projection for data connections and the source graph
+  for scoped control and upper-task argument forwarding.
 - **tapa-xilinx** — every external tool invocation, discovery, versioning,
   and transport (local and remote runners) lives here. Static Tcl, XML, and
   shell templates in the compiler crates use typed Askama contexts, checked
