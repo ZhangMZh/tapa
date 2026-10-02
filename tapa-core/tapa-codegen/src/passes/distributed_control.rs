@@ -3,17 +3,21 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tapa_ir::floorplan::Coor;
+use tapa_ir::transforms::{FlatProjection, OccurrenceId};
 use tapa_ir::{
     control_pipeline_instance_name, global_controller_instance_name,
-    local_controller_instance_name, ControlChannel, PipelineScheme, RoutedChannel,
+    local_controller_instance_name, scope_controller_instance_name, ControlChannel, PipelineScheme,
+    RoutedChannel,
 };
 use tapa_protocol::{
     HANDSHAKE_CLK, HANDSHAKE_DONE, HANDSHAKE_IDLE, HANDSHAKE_READY, HANDSHAKE_RST_N,
     HANDSHAKE_START,
 };
-use tapa_rtl::builder::{ContinuousAssign, Expr, ModuleInstance, ParamArg, PortArg};
+use tapa_rtl::builder::{
+    AlwaysBlock, ContinuousAssign, Expr, ModuleInstance, ParamArg, PortArg, Statement,
+};
 use tapa_rtl::module::{sanitize_array_name, sanitize_identifier_name};
-use tapa_rtl::mutation::{wide_wire, wire};
+use tapa_rtl::mutation::{reg, wide_reg, wide_wire, wire};
 
 use crate::error::CodegenError;
 use crate::instance_signals::InstanceSignals;
@@ -75,12 +79,20 @@ struct PayloadField {
 
 #[derive(Debug)]
 struct ChildControlPlan {
+    owner: Option<String>,
+    register_payload: bool,
     is_autorun: bool,
     launch_width: u32,
     payload: Vec<PayloadField>,
     launch: Option<FeedForwardRoute>,
     reset: Option<FeedForwardRoute>,
     completion: Option<FeedForwardRoute>,
+}
+
+#[derive(Debug)]
+struct ScopeControlPlan {
+    instance: String,
+    completion_signals: Vec<String>,
 }
 
 /// A fully validated distributed-control projection for one flattened top.
@@ -91,6 +103,8 @@ struct ChildControlPlan {
 #[derive(Debug)]
 pub struct DistributedControlPlan {
     children: BTreeMap<String, ChildControlPlan>,
+    scopes: Vec<ScopeControlPlan>,
+    root_completion_signals: Option<Vec<String>>,
     flush_cycles: u32,
 }
 
@@ -105,7 +119,11 @@ impl DistributedControlPlan {
         mmap_connections: &BTreeMap<String, MMapConnection>,
     ) -> Result<Option<Self>, CodegenError> {
         let Some(floorplan) = state.floorplan.as_ref() else {
-            return Ok(None);
+            return if state.flat_projection.is_some() {
+                Self::without_routes(state, mmap_connections).map(Some)
+            } else {
+                Ok(None)
+            };
         };
         let has_marker = floorplan
             .regions
@@ -115,6 +133,11 @@ impl DistributedControlPlan {
             .iter()
             .any(|route| matches!(route.channel, RoutedChannel::Control { .. }));
         if !has_marker {
+            if state.flat_projection.is_some() {
+                return Err(invalid_floorplan(
+                    "scoped flat control is missing global controller placement",
+                ));
+            }
             if has_routes {
                 return Err(invalid_floorplan(
                     "control routes are present without a global controller placement",
@@ -129,7 +152,7 @@ impl DistributedControlPlan {
         }
 
         let task = state
-            .design
+            .data_design()
             .tasks
             .get(task_name)
             .ok_or_else(|| CodegenError::TaskNotFound(task_name.to_owned()))?;
@@ -313,6 +336,8 @@ impl DistributedControlPlan {
             children.insert(
                 instance,
                 ChildControlPlan {
+                    owner: None,
+                    register_payload: false,
                     is_autorun,
                     launch_width,
                     payload,
@@ -333,10 +358,160 @@ impl DistributedControlPlan {
                 .checked_add(max_data_latency)
                 .ok_or_else(|| invalid_floorplan("data-fabric reset latency exceeds u32"))?,
         );
-        Ok(Some(Self {
+        let mut plan = Self {
             children,
+            scopes: Vec::new(),
+            root_completion_signals: None,
             flush_cycles,
-        }))
+        };
+        plan.retain_scopes(state, mmap_connections)?;
+        Ok(Some(plan))
+    }
+
+    fn without_routes(
+        state: &TopologyWithRtl,
+        mmap_connections: &BTreeMap<String, MMapConnection>,
+    ) -> Result<Self, CodegenError> {
+        let mut plan = Self {
+            children: BTreeMap::new(),
+            scopes: Vec::new(),
+            root_completion_signals: None,
+            flush_cycles: 0,
+        };
+        let task = &state.data_design().tasks[&state.design.top];
+        for (definition, instances) in &task.tasks {
+            for (index, invocation) in instances.iter().enumerate() {
+                let instance = invocation.canonical_name(definition, index).into_owned();
+                let is_autorun = invocation.step < 0;
+                let (payload, launch_width) = build_payload_fields(
+                    state,
+                    definition,
+                    &instance,
+                    is_autorun,
+                    &invocation.args,
+                    mmap_connections,
+                )?;
+                plan.children.insert(
+                    instance,
+                    ChildControlPlan {
+                        owner: None,
+                        register_payload: false,
+                        is_autorun,
+                        launch_width,
+                        payload,
+                        launch: None,
+                        reset: None,
+                        completion: None,
+                    },
+                );
+            }
+        }
+        plan.retain_scopes(state, mmap_connections)?;
+        Ok(plan)
+    }
+
+    /// Keep original invocation boundaries while the datapath uses flat leaves.
+    fn retain_scopes(
+        &mut self,
+        state: &TopologyWithRtl,
+        mmap_connections: &BTreeMap<String, MMapConnection>,
+    ) -> Result<(), CodegenError> {
+        let Some(projection) = &state.flat_projection else {
+            return Ok(());
+        };
+        validate_scope_inventory(state, projection)?;
+        let mut completions = BTreeMap::<OccurrenceId, Vec<String>>::new();
+        for (index, occurrence) in projection.occurrences.iter().enumerate().skip(1) {
+            let invocation = projection
+                .source_invocation(&state.design, OccurrenceId(index))
+                .ok_or_else(|| {
+                    invalid_floorplan("flat projection has an unresolved original invocation")
+                })?;
+            if invocation.step >= 0 {
+                completions
+                    .entry(occurrence.parent.expect("child owner"))
+                    .or_default()
+                    .push(
+                        InstanceSignals::new(
+                            sanitize_identifier_name(&occurrence.global_name),
+                            false,
+                        )
+                        .is_done_name(),
+                    );
+            }
+        }
+        for (index, occurrence) in projection.occurrences.iter().enumerate().skip(1) {
+            let id = OccurrenceId(index);
+            let invocation = projection
+                .source_invocation(&state.design, id)
+                .ok_or_else(|| {
+                    invalid_floorplan("flat projection has an unresolved original invocation")
+                })?;
+            let parent = occurrence.parent.expect("non-root occurrence has an owner");
+            let owner = (parent != OccurrenceId(0))
+                .then(|| projection.occurrences[parent.0].global_name.clone());
+            let instance = &occurrence.global_name;
+            let is_autorun = invocation.step < 0;
+            let args = invocation
+                .args
+                .iter()
+                .map(|(port, arg)| {
+                    let mut arg = arg.clone();
+                    if let (Some(owner), tapa_ir::ArgSource::Name(name)) = (&owner, &arg.arg) {
+                        // Original bindings resolve against the immediate scope's
+                        // formal forwarding register, rather than the flat top.
+                        arg.arg = tapa_ir::ArgSource::Name(format!(
+                            "{}__{}",
+                            sanitize_identifier_name(owner),
+                            sanitize_array_name(name)
+                        ));
+                    }
+                    (port.clone(), arg)
+                })
+                .collect();
+            let (payload, launch_width) = build_payload_fields(
+                state,
+                &occurrence.source.as_ref().expect("child definition").0,
+                instance,
+                is_autorun,
+                &args,
+                mmap_connections,
+            )?;
+            if occurrence.flat_endpoint.is_some() {
+                let child = self.children.get_mut(instance).ok_or_else(|| {
+                    invalid_floorplan(format!("projected leaf '{instance}' has no control plan"))
+                })?;
+                child.owner = owner;
+                child.payload = payload;
+                child.launch_width = launch_width;
+            } else {
+                if self.children.contains_key(instance) {
+                    return Err(invalid_floorplan(format!(
+                        "upper scope '{instance}' collides with a physical child"
+                    )));
+                }
+                self.children.insert(
+                    instance.clone(),
+                    ChildControlPlan {
+                        owner,
+                        register_payload: true,
+                        is_autorun,
+                        launch_width,
+                        payload,
+                        launch: None,
+                        reset: None,
+                        completion: None,
+                    },
+                );
+                self.scopes.push(ScopeControlPlan {
+                    instance: instance.clone(),
+                    completion_signals: completions.remove(&id).unwrap_or_default(),
+                });
+            }
+        }
+        self.root_completion_signals =
+            Some(completions.remove(&OccurrenceId(0)).unwrap_or_default());
+        Ok(())
     }
 
     pub(super) fn child_reset_name(instance: &str) -> String {
@@ -380,9 +555,9 @@ impl DistributedControlPlan {
             .map(|field| field.source.clone())
             .collect::<Vec<_>>();
         if !child.is_autorun {
-            launch_fields.push(Expr::ident(GLOBAL_RELEASE));
+            launch_fields.push(Expr::ident(scope_signal(child.owner.as_deref(), "release")));
         }
-        launch_fields.push(Expr::ident(GLOBAL_START));
+        launch_fields.push(Expr::ident(scope_signal(child.owner.as_deref(), "start")));
         module.add_assign(ContinuousAssign::new(
             Expr::ident(&launch_input),
             concat_or_scalar(launch_fields),
@@ -408,11 +583,26 @@ impl DistributedControlPlan {
         );
 
         for field in &child.payload {
-            add_width_wire(module, &field.output, field.width)?;
-            module.add_assign(ContinuousAssign::new(
-                Expr::ident(&field.output),
-                select_bits(&launch_output, field.lsb, field.width),
-            ));
+            if child.register_payload {
+                module.add_signal(if field.width == 1 {
+                    reg(&field.output)
+                } else {
+                    wide_reg(&field.output, &(field.width - 1).to_string(), "0")
+                })?;
+                module.add_always(AlwaysBlock::posedge(
+                    HANDSHAKE_CLK,
+                    vec![Statement::NonblockingAssign {
+                        lhs: Expr::ident(&field.output),
+                        rhs: field.source.clone(),
+                    }],
+                ));
+            } else {
+                add_width_wire(module, &field.output, field.width)?;
+                module.add_assign(ContinuousAssign::new(
+                    Expr::ident(&field.output),
+                    select_bits(&launch_output, field.lsb, field.width),
+                ));
+            }
         }
 
         let launch_start = if child.launch_width == 1 {
@@ -482,6 +672,30 @@ impl DistributedControlPlan {
         task_name: &str,
         completion_signals: &[String],
     ) -> Result<(), CodegenError> {
+        for scope in &self.scopes {
+            let child = &self.children[&scope.instance];
+            let signals =
+                InstanceSignals::new(sanitize_identifier_name(&scope.instance), child.is_autorun);
+            if let Some(module) = modules.get_mut(task_name) {
+                for name in [
+                    signals.start_name(),
+                    signals.done_name(),
+                    signals.ready_name(),
+                    signals.idle_name(),
+                ] {
+                    module.add_signal(wire(name))?;
+                }
+                if !child.is_autorun {
+                    module.add_signal(wire(signals.is_done_name()))?;
+                }
+            }
+            self.instantiate_child(modules, task_name, &scope.instance, &signals)?;
+            Self::instantiate_scope(modules, task_name, scope, &signals)?;
+        }
+        let completion_signals = self
+            .root_completion_signals
+            .as_deref()
+            .unwrap_or(completion_signals);
         let Some(module) = modules.get_mut(task_name) else {
             return Ok(());
         };
@@ -527,6 +741,80 @@ impl DistributedControlPlan {
         );
         Ok(())
     }
+    fn instantiate_scope(
+        modules: &mut ModuleTable<'_>,
+        task_name: &str,
+        scope: &ScopeControlPlan,
+        signals: &InstanceSignals,
+    ) -> Result<(), CodegenError> {
+        let Some(module) = modules.get_mut(task_name) else {
+            return Ok(());
+        };
+        let start = scope_signal(Some(&scope.instance), "start");
+        let release = scope_signal(Some(&scope.instance), "release");
+        module.add_signal(wire(&start))?;
+        module.add_signal(wire(&release))?;
+        let done = logical_reduction(scope.completion_signals.iter().map(Expr::ident), "1'b1");
+        let clear = logical_reduction(
+            scope
+                .completion_signals
+                .iter()
+                .map(|signal| Expr::logical_not(Expr::ident(signal))),
+            "1'b1",
+        );
+        module.add_instance(
+            ModuleInstance::new(
+                "tapa_global_controller",
+                scope_controller_instance_name(&scope.instance),
+            )
+            .with_ports(vec![
+                PortArg::new("ap_clk", Expr::ident(HANDSHAKE_CLK)),
+                PortArg::new("ap_rst_n", Expr::ident(HANDSHAKE_RST_N)),
+                PortArg::new("ap_start", Expr::ident(signals.start_name())),
+                PortArg::new("children_done", done),
+                PortArg::new("children_clear", clear),
+                PortArg::new("launch_start", Expr::ident(start)),
+                PortArg::new("launch_release", Expr::ident(release)),
+                PortArg::new("fabric_reset_n", Expr::lit("")),
+                PortArg::new("ap_done", Expr::ident(signals.done_name())),
+                PortArg::new("ap_ready", Expr::ident(signals.ready_name())),
+                PortArg::new("ap_idle", Expr::ident(signals.idle_name())),
+            ]),
+        );
+        Ok(())
+    }
+}
+
+fn validate_scope_inventory(
+    state: &TopologyWithRtl,
+    projection: &FlatProjection,
+) -> Result<(), CodegenError> {
+    let mut names = BTreeSet::from([global_controller_instance_name().to_owned()]);
+    for occurrence in projection.occurrences.iter().skip(1) {
+        let mut generated = vec![local_controller_instance_name(&occurrence.global_name)];
+        if occurrence.flat_endpoint.is_some() {
+            generated.push(sanitize_identifier_name(&occurrence.global_name));
+        } else {
+            generated.push(scope_controller_instance_name(&occurrence.global_name));
+            if let Some(floorplan) = &state.floorplan {
+                let global_region = floorplan.regions.get(global_controller_instance_name());
+                for name in &generated {
+                    if floorplan.regions.get(name) != global_region {
+                        return Err(invalid_floorplan(format!(
+                            "upper scope controller '{name}' must be placed with the global controller")));
+                    }
+                }
+            }
+        }
+        for name in generated {
+            if !names.insert(name.clone()) {
+                return Err(invalid_floorplan(format!(
+                    "generated control instance '{name}' is not unique"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn take_expected_route(
@@ -770,6 +1058,13 @@ fn parse_atomic_region(region: &str) -> Option<(u32, u32)> {
 
 fn invalid_floorplan(detail: impl Into<String>) -> CodegenError {
     CodegenError::InvalidFloorplan(detail.into())
+}
+
+fn scope_signal(scope: Option<&str>, signal: &str) -> String {
+    scope.map_or_else(
+        || format!("__tapa_control_{signal}"),
+        |instance| format!("{}__{signal}", control_wire_prefix(instance)),
+    )
 }
 
 #[cfg(test)]

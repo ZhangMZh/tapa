@@ -415,3 +415,308 @@ fn distributed_control_survives_reset_and_consecutive_launches() {
         TESTBENCH,
     );
 }
+
+/// The physical leaf graph must retain the invocation barriers of the
+/// original upper scopes, including the scope's scalar binding boundary.
+#[test]
+fn flattened_detached_scope_preserves_its_joined_children() {
+    use common::parse_module;
+    use common::run_manifest::{generate_manifest, rtl_file};
+    use tapa_codegen::rtl_state::TopologyWithRtl;
+    use tapa_ir::transforms::flatten_with_origins;
+
+    let graph = scope_design();
+    for blocked in [true, false] {
+        for floorplanned in [false, true] {
+            let mut source_graph = graph.clone();
+            if !blocked {
+                source_graph
+                    .tasks
+                    .get_mut("Top")
+                    .unwrap()
+                    .tasks
+                    .get_mut("Background")
+                    .unwrap()[0]
+                    .step = 0;
+            }
+            let mut state = TopologyWithRtl::new(source_graph);
+            state.flat_projection = Some(flatten_with_origins(&state.design).unwrap());
+            let finite_sibling = SCOPE_FINISH.replace("module Finish", "module Never");
+            let sibling = if blocked {
+                SCOPE_NEVER
+            } else {
+                &finite_sibling
+            };
+            for (name, source) in [
+                ("Top", SCOPE_TOP),
+                ("Background", SCOPE_BACKGROUND),
+                ("Once", SCOPE_ONCE),
+                ("Never", sibling),
+                ("Finish", SCOPE_FINISH),
+            ] {
+                state.attach_module(name, parse_module(source)).unwrap();
+            }
+            if floorplanned {
+                state.floorplan = Some(scope_floorplan());
+            }
+            let manifest = generate_manifest(&mut state);
+            let mut sources = vec![("Top.v", rtl_file(&manifest, "Top.v").as_str())];
+            if let Some(fsm) = manifest.files().get("rtl/Top_fsm.v") {
+                sources.push(("Top_fsm.v", fsm));
+            }
+            sources.extend([
+                ("Once.v", SCOPE_ONCE),
+                ("Never.v", sibling),
+                ("Finish.v", SCOPE_FINISH),
+                ("scope_harness.v", SCOPE_HARNESS),
+            ]);
+            let testbench = SCOPE_TESTBENCH.replace(
+                "const int forwarding_cycles = 1;",
+                if floorplanned {
+                    "const int forwarding_cycles = 4;"
+                } else {
+                    "const int forwarding_cycles = 1;"
+                },
+            );
+            let testbench = testbench.replace(
+                "const bool blocked = true;",
+                if blocked {
+                    "const bool blocked = true;"
+                } else {
+                    "const bool blocked = false;"
+                },
+            );
+            run_cosim(
+                "scope_harness",
+                &[],
+                &["tapa_control.v"],
+                &sources,
+                &testbench,
+            );
+        }
+    }
+}
+
+fn scope_design() -> tapa_ir::Design {
+    use common::{design, task};
+    use serde_json::json;
+    design(
+        "Top",
+        "xilinx-hls",
+        &[
+            (
+                "Top",
+                task("Top", "upper", |t| {
+                    t["ports"] =
+                        json!([{"cat":"scalar", "name":"value", "type":"uint32_t", "width":32}]);
+                    t["tasks"] = json!({
+                        "Background":[{"name":"bg", "step":-1, "args":{"captured":{"cat":"scalar", "arg":"value"}}}],
+                        "Finish":[{"name":"finish", "args":{}}]
+                    });
+                }),
+            ),
+            (
+                "Background",
+                task("Background", "upper", |t| {
+                    t["ports"] =
+                        json!([{"cat":"scalar", "name":"captured", "type":"uint32_t", "width":32}]);
+                    t["tasks"] = json!({
+                        "Once":[{"name":"once", "args":{"value_offset":{"cat":"scalar", "arg":"captured"}}}],
+                        "Never":[{"name":"never", "args":{}}]
+                    });
+                }),
+            ),
+            (
+                "Once",
+                task("Once", "lower", |t| {
+                    t["ports"] = json!([{"cat":"scalar", "name":"value_offset", "type":"uint32_t", "width":32}]);
+                }),
+            ),
+            ("Never", task("Never", "lower", |_| {})),
+            ("Finish", task("Finish", "lower", |_| {})),
+        ],
+    )
+}
+
+fn scope_floorplan() -> tapa_ir::FloorplanResult {
+    use std::collections::BTreeMap;
+    use tapa_ir::{
+        global_controller_instance_name, local_controller_instance_name,
+        scope_controller_instance_name, ControlChannel, FloorplanResult, PipelineRoute,
+        PipelineScheme, RoutedChannel,
+    };
+    let central = "SLOT_X0Y0";
+    let remote = "SLOT_X1Y0";
+    let mut regions = BTreeMap::from([
+        (
+            global_controller_instance_name().to_owned(),
+            central.to_owned(),
+        ),
+        (scope_controller_instance_name("bg_Top"), central.to_owned()),
+        (local_controller_instance_name("bg_Top"), central.to_owned()),
+    ]);
+    let mut routes = Vec::new();
+    for instance in ["once_bg_Top", "never_bg_Top", "finish"] {
+        regions.insert(instance.to_owned(), remote.to_owned());
+        regions.insert(local_controller_instance_name(instance), remote.to_owned());
+        // Even under a detached ancestor these original joined leaves have
+        // held completion routed back to their own central scope controller.
+        for channel in [
+            ControlChannel::Launch,
+            ControlChannel::Reset,
+            ControlChannel::Completion,
+        ] {
+            let route = if channel == ControlChannel::Completion {
+                vec![remote.to_owned(), central.to_owned()]
+            } else {
+                vec![central.to_owned(), remote.to_owned()]
+            };
+            routes.push(PipelineRoute {
+                channel: RoutedChannel::Control {
+                    instance: instance.to_owned(),
+                    channel,
+                },
+                route,
+                scheme: PipelineScheme::Double,
+                reg_regions: vec![central.to_owned()],
+            });
+        }
+    }
+    FloorplanResult {
+        device: "u280".to_owned(),
+        grid: (2, 1),
+        regions,
+        routes,
+        slot_usage: BTreeMap::new(),
+    }
+}
+
+const SCOPE_TOP: &str = "
+module Top(input wire ap_clk, input wire ap_rst_n, input wire ap_start,
+           output wire ap_done, output wire ap_ready, output wire ap_idle,
+           input wire [31:0] value);
+endmodule
+";
+const SCOPE_BACKGROUND: &str = "
+module Background(input wire ap_clk, input wire ap_rst_n, input wire ap_start,
+           output wire ap_done, output wire ap_ready, output wire ap_idle,
+           input wire [31:0] captured);
+endmodule
+";
+const SCOPE_ONCE: &str = "
+module Once(input wire ap_clk, input wire ap_rst_n, input wire ap_start,
+            output reg ap_done, output wire ap_ready, output wire ap_idle,
+            input wire [31:0] value_offset);
+  reg busy = 0;
+  reg [31:0] count = 0;
+  reg [31:0] accepted_value = 0;
+  assign ap_ready = ap_done;
+  assign ap_idle = !busy && !ap_done;
+  always @(posedge ap_clk) begin
+    if (!ap_rst_n) begin
+      busy <= 0;
+      ap_done <= 0;
+      count <= 0;
+      accepted_value <= 0;
+    end else begin
+      ap_done <= 0;
+      if (busy) begin
+        busy <= 0;
+        ap_done <= 1;
+      end else if (ap_start && !ap_done) begin
+        busy <= 1;
+        count <= count + 1;
+        accepted_value <= value_offset;
+      end
+    end
+  end
+endmodule
+";
+const SCOPE_NEVER: &str = "
+module Never(input wire ap_clk, input wire ap_rst_n, input wire ap_start,
+             output wire ap_done, output wire ap_ready, output wire ap_idle);
+  assign ap_done = 0;
+  assign ap_ready = 0;
+  assign ap_idle = !ap_start;
+endmodule
+";
+const SCOPE_FINISH: &str = "
+module Finish(input wire ap_clk, input wire ap_rst_n, input wire ap_start,
+              output reg ap_done, output wire ap_ready, output wire ap_idle);
+  reg busy = 0;
+  assign ap_ready = ap_done;
+  assign ap_idle = !busy && !ap_done;
+  always @(posedge ap_clk) begin
+    if (!ap_rst_n) begin busy <= 0; ap_done <= 0; end
+    else begin
+      ap_done <= 0;
+      if (busy) begin busy <= 0; ap_done <= 1; end
+      else if (ap_start && !ap_done) busy <= 1;
+    end
+  end
+endmodule
+";
+const SCOPE_HARNESS: &str = "
+module scope_harness(input wire ap_clk, input wire ap_rst_n, input wire ap_start,
+                     input wire [31:0] value, output wire ap_done,
+                     output wire [31:0] count, output wire [31:0] accepted_value,
+                     output wire [31:0] forwarded_value);
+  wire ap_ready, ap_idle;
+  Top dut(.ap_clk(ap_clk), .ap_rst_n(ap_rst_n), .ap_start(ap_start),
+          .ap_done(ap_done), .ap_ready(ap_ready), .ap_idle(ap_idle), .value(value));
+  assign count = dut.once_bg_Top.count;
+  assign accepted_value = dut.once_bg_Top.accepted_value;
+  assign forwarded_value = dut.once_bg_Top.value_offset;
+endmodule
+";
+const SCOPE_TESTBENCH: &str = r#"
+#include "Vscope_harness.h"
+#include <cstdio>
+#include <memory>
+int main() {
+  const bool blocked = true;
+  const int forwarding_cycles = 1;
+  auto dut = std::make_unique<Vscope_harness>();
+  auto tick = [&]() { dut->ap_clk = 0; dut->eval(); dut->ap_clk = 1; dut->eval(); };
+  dut->ap_start = 0; dut->value = 0x1234; dut->ap_rst_n = 0;
+  for (int i = 0; i < 4; ++i) tick();
+  dut->ap_rst_n = 1;
+  for (int i = 0; i < 8; ++i) tick();
+  // Observe the actual leaf input: upper formal forwarding remains a
+  // one-cycle register even when its datapath wrapper is removed. Routed
+  // leaf launch bundles add their declared three pipeline stages.
+  dut->value = 0x5678; dut->ap_clk = 0; dut->eval();
+  for (int i = 0; i < forwarding_cycles; ++i) {
+    if (dut->forwarded_value != 0x1234) {
+      std::puts("FAIL: scalar forwarding changed before its clocked boundary"); return 5;
+    }
+    tick();
+  }
+  if (dut->forwarded_value != 0x5678) {
+    std::puts("FAIL: scalar forwarding did not arrive at its clocked boundary"); return 6;
+  }
+  dut->value = 0x1234;
+  for (int i = 0; i < forwarding_cycles; ++i) tick();
+  for (int run = 0; run < 2; ++run) {
+    dut->ap_start = 1; tick(); dut->ap_start = 0;
+    bool completed = false;
+    for (int i = 0; i < 128; ++i) {
+      tick();
+      if (dut->ap_done) { completed = true; break; }
+    }
+    if (!completed) { std::puts("FAIL: detached upper blocked parent completion"); return 1; }
+    for (int i = 0; i < 32; ++i) tick();
+    const unsigned expected_count = blocked ? 1u : unsigned(run + 1);
+    if (dut->count != expected_count) { std::printf("FAIL: joined finite child executed %u times (expected %u)\n", dut->count, expected_count); return 2; }
+    if (dut->accepted_value != 0x1234) { std::printf("FAIL: upper scalar binding lost: %x\n", dut->accepted_value); return 3; }
+  }
+  // Root reset is the only event that restarts the unfinished detached group.
+  dut->ap_rst_n = 0; for (int i = 0; i < 4; ++i) tick();
+  dut->ap_rst_n = 1; for (int i = 0; i < 8; ++i) tick();
+  dut->ap_start = 1; tick(); dut->ap_start = 0;
+  for (int i = 0; i < 64; ++i) tick();
+  if (dut->count != 1) { std::puts("FAIL: root reset did not restart detached group"); return 4; }
+  std::puts("PASS: detached scope retains local join and scalar forwarding");
+  return 0;
+}
+"#;

@@ -177,7 +177,7 @@ impl TopologyWithRtl {
         cache: &mut BTreeMap<String, BTreeMap<String, MMapConnection>>,
     ) -> Result<BTreeMap<String, MMapConnection>, CodegenError> {
         let task = self
-            .design
+            .data_design()
             .tasks
             .get(task_name)
             .ok_or_else(|| CodegenError::TaskNotFound(task_name.to_owned()))?;
@@ -193,7 +193,7 @@ impl TopologyWithRtl {
                     }
 
                     // Look up child port metadata using the child's port name
-                    let child_task = self.design.tasks.get(child_task_name.as_str());
+                    let child_task = self.data_design().tasks.get(child_task_name.as_str());
                     let port = child_task
                         .and_then(|t| t.ports.iter().find(|p| p.name == *child_port_name));
                     let (child_id_width, child_threads) =
@@ -302,7 +302,7 @@ impl TopologyWithRtl {
             .unwrap_or(1);
 
         let is_upper = self
-            .design
+            .data_design()
             .tasks
             .get(child_task_name)
             .is_some_and(|task| task.level == TaskLevel::Upper);

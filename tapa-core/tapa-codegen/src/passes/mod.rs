@@ -51,7 +51,13 @@ pub fn split_views(
     state: &mut TopologyWithRtl,
 ) -> (DesignView<'_>, ModuleTable<'_>, FsmTable<'_>, OutputSet<'_>) {
     (
-        DesignView::new(&state.design, state.floorplan.as_ref()),
+        DesignView::new(
+            state
+                .flat_projection
+                .as_ref()
+                .map_or(&state.design, |projection| &projection.flat),
+            state.floorplan.as_ref(),
+        ),
         ModuleTable::new(&mut state.module_map),
         FsmTable::new(&mut state.fsm_modules),
         OutputSet::new(&mut state.generated_files, &mut state.template_files),

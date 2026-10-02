@@ -55,12 +55,12 @@ const TASK_PASSES: &[TaskPass] = &[
 /// maps remain public for now; consumers must not re-derive the shipped
 /// set from them.
 pub fn generate_rtl(state: &mut TopologyWithRtl) -> Result<ArtifactManifest, CodegenError> {
-    let task_names: Vec<String> = state.design.tasks.keys().cloned().collect();
+    let task_names: Vec<String> = state.data_design().tasks.keys().cloned().collect();
 
     passes::ignore_task_shells(&mut DesignPassCtx::new(&mut *state))?;
 
     for task_name in &task_names {
-        let task = &state.design.tasks[task_name];
+        let task = &state.data_design().tasks[task_name];
         if task.synth == SynthTarget::Ignore || task.level != TaskLevel::Upper {
             continue;
         }

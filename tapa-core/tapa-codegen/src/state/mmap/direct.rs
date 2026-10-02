@@ -55,7 +55,7 @@ impl TopologyWithRtl {
         task_name: &str,
     ) -> Result<Vec<DirectMmapInterface>, CodegenError> {
         let task = self
-            .design
+            .data_design()
             .tasks
             .get(task_name)
             .ok_or_else(|| CodegenError::TaskNotFound(task_name.to_owned()))?;
@@ -77,7 +77,7 @@ impl TopologyWithRtl {
         let (slave, instance_index, instance) =
             direct_mmap_child_instance(task, connection, &qualified_port)?;
         let child_category =
-            validate_direct_child_mmap(&self.design, instance, slave, &qualified_port)?;
+            validate_direct_child_mmap(self.data_design(), instance, slave, &qualified_port)?;
         let module = self.module_map.get(&slave.task).ok_or_else(|| {
             invalid_direct_mmap(
                 &qualified_port,

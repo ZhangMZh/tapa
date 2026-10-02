@@ -9,6 +9,7 @@ pub use crate::state::mmap::{MMapConnection, MMapSlave};
 use std::collections::BTreeMap;
 
 use tapa_ir::task::TaskLevel;
+use tapa_ir::transforms::FlatProjection;
 use tapa_ir::{Design, FloorplanResult};
 use tapa_rtl::mutation::MutableModule;
 use tapa_rtl::VerilogModule;
@@ -19,6 +20,8 @@ use crate::error::CodegenError;
 pub struct TopologyWithRtl {
     /// The design model.
     pub design: Design,
+    /// Transient physical graph with references to the original control scopes.
+    pub flat_projection: Option<FlatProjection>,
     /// The floorplan, when the design has been floorplanned. Its presence
     /// switches codegen onto the pipelined path (Head/Body/Tail cells on
     /// cross-slot streams and matching region constraints).
@@ -38,12 +41,21 @@ impl TopologyWithRtl {
     pub fn new(design: Design) -> Self {
         Self {
             design,
+            flat_projection: None,
             floorplan: None,
             module_map: BTreeMap::new(),
             fsm_modules: BTreeMap::new(),
             generated_files: BTreeMap::new(),
             template_files: BTreeMap::new(),
         }
+    }
+
+    /// The graph used for physical datapath generation.
+    #[must_use]
+    pub fn data_design(&self) -> &Design {
+        self.flat_projection
+            .as_ref()
+            .map_or(&self.design, |projection| &projection.flat)
     }
 
     /// Whether codegen can emit the distributed controller for the top task.
