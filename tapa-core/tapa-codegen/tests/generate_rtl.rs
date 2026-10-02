@@ -852,6 +852,51 @@ fn test_generate_rtl_distributes_floorplanned_control() {
 
 #[test]
 fn test_generate_rtl_rejects_malformed_control_without_mutation() {
+    // Empty original uppers have no planned control vertex. An original
+    // invocation of an empty upper still owns a scope, even with no leaves.
+    let mut empty_plan = distributed_control_state().floorplan.unwrap();
+    empty_plan.regions.clear();
+    empty_plan.routes.clear();
+    for has_scope in [false, true] {
+        let source = design(
+            "top",
+            "xilinx-hls",
+            &[
+                (
+                    "top",
+                    task("top", "upper", |top| {
+                        if has_scope {
+                            top["tasks"] = serde_json::json!({"empty": [{"args": {}}]});
+                        }
+                    }),
+                ),
+                ("empty", plain("empty", "upper")),
+            ],
+        );
+        let mut state = TopologyWithRtl::new(source);
+        state.flat_projection =
+            Some(tapa_ir::transforms::flatten_with_origins(&state.design).unwrap());
+        state.floorplan = Some(empty_plan.clone());
+        state
+            .attach_module("top", parse_module(&handshake_module_src("top")))
+            .unwrap();
+        let before = state.module_map["top"].emit();
+        if has_scope {
+            let error = generate_rtl(&mut state).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("missing global controller placement"),
+                "{error}"
+            );
+            assert_eq!(state.module_map["top"].emit(), before);
+            assert!(state.generated_files.is_empty());
+        } else {
+            generate_rtl(&mut state)
+                .expect("empty source top has no distributed controller to place");
+            assert!(state.generated_files.contains_key("top_fsm.v"));
+        }
+    }
     let mut cases = Vec::new();
 
     let mut missing = distributed_control_state();

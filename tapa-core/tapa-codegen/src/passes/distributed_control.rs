@@ -133,7 +133,7 @@ impl DistributedControlPlan {
             .iter()
             .any(|route| matches!(route.channel, RoutedChannel::Control { .. }));
         if !has_marker {
-            if state.flat_projection.is_some() {
+            if state.flat_projection.is_some() && state.supports_distributed_control() {
                 return Err(invalid_floorplan(
                     "scoped flat control is missing global controller placement",
                 ));
