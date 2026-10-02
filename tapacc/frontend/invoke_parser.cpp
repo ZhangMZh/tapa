@@ -308,7 +308,10 @@ void CollectStreamDecls(UpperTaskContext& uc, const clang::FunctionDecl* func) {
 // push one `Instance` per vector lane, and bind each argument to its callee
 // port — distributing array arguments across scalar ports by access position
 // and marking each stream endpoint as it is bound.
-void ParseInvocations(UpperTaskContext& uc, const clang::Expr* task_obj) {
+void ParseInvocations(
+    UpperTaskContext& uc, const clang::Expr* task_obj,
+    llvm::function_ref<std::string(const clang::FunctionDecl*, unsigned)>
+        parameter_name) {
   // The child-name mangler and the access positions, which distribute an
   // array argument (streams/mmaps) across the scalar ports it feeds, in
   // order of appearance.
@@ -401,7 +404,7 @@ void ParseInvocations(UpperTaskContext& uc, const clang::Expr* task_obj) {
             continue;
           }
           const clang::ParmVarDecl* param = callee->getParamDecl(param_idx);
-          const std::string port = param->getNameAsString();
+          const std::string port = parameter_name(callee, param_idx);
           const TapaKind pk = ClassifyTapaType(param);
 
           std::vector<Instance>& insts = uc.task.instances[task_name];
@@ -532,7 +535,10 @@ void ValidateStreams(UpperTaskContext& uc) {
 
 }  // namespace
 
-void ParseUpperTask(clang::ASTContext& ctx, TaskModel& task, bool is_top) {
+void ParseUpperTask(
+    clang::ASTContext& ctx, TaskModel& task, bool is_top,
+    llvm::function_ref<std::string(const clang::FunctionDecl*, unsigned)>
+        parameter_name) {
   const clang::FunctionDecl* func = task.def;
   if (func == nullptr || !func->hasBody()) return;
   const clang::Expr* task_obj = GetTapaTaskObject(func->getBody());
@@ -540,7 +546,7 @@ void ParseUpperTask(clang::ASTContext& ctx, TaskModel& task, bool is_top) {
 
   UpperTaskContext uc(ctx, task, is_top);
   CollectStreamDecls(uc, func);
-  ParseInvocations(uc, task_obj);
+  ParseInvocations(uc, task_obj, parameter_name);
   ValidateStreams(uc);
 }
 

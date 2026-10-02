@@ -119,7 +119,10 @@ TEST(InvokeParser, NonTopStreamPortsDoNotBecomeFifos) {
   ASSERT_TRUE(builder.MergeAndDiscover());
   TaskModel model = builder.TuView(ast->getASTContext(), log).tasks.at("Top");
   model.ports = BuildPorts(ast->getASTContext(), model.def);
-  ParseUpperTask(ast->getASTContext(), model, /*is_top=*/false);
+  ParseUpperTask(ast->getASTContext(), model, /*is_top=*/false,
+                 [](const clang::FunctionDecl* callee, unsigned index) {
+                   return callee->getParamDecl(index)->getNameAsString();
+                 });
   EXPECT_TRUE(model.streams.empty());
 }
 

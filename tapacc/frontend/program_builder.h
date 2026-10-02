@@ -137,7 +137,9 @@ class ProgramBuilder {
     std::string readable_name;
     std::string fqn;
     std::string signature;  // canonical parameter types, joined with ","
-    std::string loc;        // rendered file:line:col of the definition
+    // Original owning-definition formal names, indexed by parameter position.
+    std::vector<std::string> parameter_names;
+    std::string loc;  // rendered file:line:col of the definition
     int tu = 0;
     bool is_spec = false;
     bool implicit_spec = false;  // an implicit instantiation, only sighted

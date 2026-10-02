@@ -206,6 +206,9 @@ ProgramBuilder::DefSighting ProgramBuilder::MakeFacts(
   sighting.fqn = def->getQualifiedNameAsString();
   sighting.plain_name = def->getNameAsString();
   sighting.signature = CanonicalSignature(def);
+  for (const clang::ParmVarDecl* param : def->parameters()) {
+    sighting.parameter_names.push_back(param->getNameAsString());
+  }
   sighting.is_spec = def->isFunctionTemplateSpecialization();
   sighting.implicit_spec =
       sighting.is_spec &&
@@ -636,13 +639,18 @@ Program ProgramBuilder::TuView(clang::ASTContext& ctx,
 
 void ProgramBuilder::FillOwnedTasks(int tu, Program& view,
                                     clang::ASTContext& ctx) {
+  const auto mangler = CreateMangleContext(ctx);
+  const auto parameter_name = [&](const clang::FunctionDecl* callee,
+                                  unsigned index) {
+    return FirstSighting(KeyOf(*mangler, callee)).parameter_names.at(index);
+  };
   for (auto& [key, task] : tasks_) {
     if (task.owner_tu != tu) continue;
     TaskModel& model = view.tasks.at(task.model.name);
     // Ports, instances, and streams exist only where the definition is.
     model.ports = BuildPorts(ctx, model.def);
     if (model.level == TaskLevel::kUpper) {
-      ParseUpperTask(ctx, model, /*is_top=*/model.name == top_);
+      ParseUpperTask(ctx, model, /*is_top=*/model.name == top_, parameter_name);
     }
     task.model = model;
   }

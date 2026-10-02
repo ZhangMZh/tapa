@@ -1,7 +1,10 @@
 #ifndef TAPA_FRONTEND_INVOKE_PARSER_H_
 #define TAPA_FRONTEND_INVOKE_PARSER_H_
 
+#include <string>
+
 #include "clang/AST/ASTContext.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 
 #include "program.h"
 
@@ -17,7 +20,13 @@ namespace tapa::cc {
 // single endpoint, so the kernel-boundary streams appear in the task graph.
 // Reports stream wiring errors (double produce/consume, half-connected) and
 // prunes unused streams via `ctx` diagnostics. A no-op for a leaf task.
-void ParseUpperTask(clang::ASTContext& ctx, TaskModel& task, bool is_top);
+// `parameter_name` resolves a callee's original definition formal by position;
+// caller-visible declarations may rename or omit it. The callback stays
+// TU-local.
+void ParseUpperTask(
+    clang::ASTContext& ctx, TaskModel& task, bool is_top,
+    llvm::function_ref<std::string(const clang::FunctionDecl*, unsigned)>
+        parameter_name);
 
 }  // namespace tapa::cc
 

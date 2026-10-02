@@ -88,6 +88,9 @@ breaks one of them is a change that breaks the build — keep them green.
 - **tapacc → IR conformance.** The task-graph schema has two
   implementations that must agree: `tapacc` emits the JSON and `tapa-ir`
   parses it with `deny_unknown_fields`.
+  Invocation arguments bind by position to parameter names from the owning
+  definition, including when a declaration in another source file uses
+  different names or omits them.
   `tapa-core/tapa-cli/tests/tapacc_conformance.rs` runs the real `tapacc`
   on a reference design and strict-parses its verbatim stdout, catching any
   drift between the two sides.

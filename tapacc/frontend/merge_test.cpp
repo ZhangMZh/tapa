@@ -7,6 +7,8 @@
 // codegen/tree_pipeline.h.
 
 #include <algorithm>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -47,16 +49,18 @@ std::string OneError(const ProgramBuilder& builder) {
 
 // The top (TU A) sees only Worker's declaration; TU B owns the definition.
 constexpr char kCrossCaller[] = R"cpp(
-  void Worker(tapa::istream<float>& in, tapa::ostream<float>& out);
+  void Worker(tapa::istream<float>& input, tapa::ostream<float>&,
+              int advertised_count, int, unsigned);
 
-  void Top(tapa::istream<float>& x, tapa::ostream<float>& y) {
+  void Top(tapa::istream<float>& x, tapa::ostream<float>& y, int n) {
     tapa::stream<float> q;
-    tapa::task().invoke(Worker, x, q).invoke(Worker, q, y);
+    tapa::task().invoke(Worker, x, q, n, 7, 9u).invoke(Worker, q, y, 42, n, 11u);
   }
 )cpp";
 
 constexpr char kCrossCallee[] = R"cpp(
-  void Worker(tapa::istream<float>& in, tapa::ostream<float>& out) {
+  void Worker(tapa::istream<float>& in, tapa::ostream<float>& out, int count,
+              int offset, unsigned flags) {
     for (int i = 0; i < 3; ++i) out.write(in.read());
   }
 )cpp";
@@ -74,8 +78,23 @@ TEST(Merge, CrossTuInvokeTakesBodyFromOwningTu) {
   // The invoking TU still parses the instances: Worker runs twice, wired
   // through the local FIFO.
   const TaskModel& top = *m.builder.FindTask("Top");
-  EXPECT_EQ(top.instances.at("Worker").size(), 2u);
+  const auto& workers = top.instances.at("Worker");
+  ASSERT_EQ(workers.size(), 2u);
   ASSERT_EQ(top.streams.count("q"), 1u);
+  // Calls are positional: declarations may rename or omit parameter names.
+  // Preserve both unnamed scalar arguments before creating the name-keyed map.
+  ASSERT_EQ(workers[0].args.size(), 5u);
+  ASSERT_EQ(workers[1].args.size(), 5u);
+  EXPECT_EQ(workers[0].args.at("in").arg, "x");
+  EXPECT_EQ(workers[0].args.at("out").arg, "q");
+  EXPECT_EQ(workers[0].args.at("count").arg, "n");
+  EXPECT_EQ(workers[0].args.at("offset").value, std::optional<uint64_t>(7));
+  EXPECT_EQ(workers[0].args.at("flags").value, std::optional<uint64_t>(9));
+  EXPECT_EQ(workers[1].args.at("in").arg, "q");
+  EXPECT_EQ(workers[1].args.at("out").arg, "y");
+  EXPECT_EQ(workers[1].args.at("count").value, std::optional<uint64_t>(42));
+  EXPECT_EQ(workers[1].args.at("offset").arg, "n");
+  EXPECT_EQ(workers[1].args.at("flags").value, std::optional<uint64_t>(11));
 
   // The definition renders once, in the owning TU's mirror, under its own
   // guard; the invoking TU carries only the declaration.
