@@ -97,6 +97,12 @@ Because `Rsqrt` is tagged `ignore`, TAPA generates RTL template files under `wor
 
 Write or adapt your RTL files so their port declarations match the generated templates. When you run `tapa pack --custom-rtl` in the next step, TAPA performs advisory port checking on `.v` files: it warns on mismatches but does not abort the build. Resolve any reported mismatches before moving to hardware.
 
+For stream ports, a write transfers data on a rising clock edge only when
+both `*_write` and `*_full_n` are asserted. A producer may hold a pending
+write while `*_full_n` is low; keep its data stable until the write is
+accepted. A read consumes data only when both `*_read` and `*_empty_n` are
+asserted. Backpressure must preserve data that has already been accepted.
+
 ### Step 6: Repack with custom RTL
 
 Two workflows are available depending on whether you are iterating on the RTL separately from the HLS compilation step.

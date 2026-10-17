@@ -188,7 +188,10 @@ void InnerStage(int b, tapa::istreams<pkt_t, kN / 2>& in_q0,
   - **Depth < 128**: synthesised from SRL shift-registers (no BRAM cost).
   - **Depth ≥ 128**: mapped to BRAM.
   - **Depth ≥ 4096 and element width ≥ 36 bits**: mapped to URAM.
-  - Default depth is 2, which costs only SRL resources.
+- Default depth is 2, which costs only SRL resources.
+
+Without floorplanning, a shallow FIFO becomes full at its configured depth,
+even when its physical SRL storage has a minimum of four slots.
 
 ---
 

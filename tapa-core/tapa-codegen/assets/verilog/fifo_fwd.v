@@ -47,7 +47,7 @@ module fifo_fwd #(
         end
       end
 
-      if (if_write && if_write_ce) begin
+      if (if_write && if_write_ce && if_full_n) begin
         mem <= if_din;
       end
     end
