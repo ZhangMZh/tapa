@@ -29,8 +29,9 @@ int main(int argc, char* argv[]) {
     b[i] = static_cast<float>(i) * 2;
     c[i] = 0.f;
   }
-  int64_t kernel_time_ns = tapa::invoke(VecAddShared, FLAGS_bitstream,
-                                        tapa::read_write_mmap<float>(data), n);
+  const tapa::read_write_mmap<float> memory(data);
+  int64_t kernel_time_ns =
+      tapa::invoke(VecAddShared, FLAGS_bitstream, memory, n);
   clog << "kernel time: " << kernel_time_ns * 1e-9 << " s" << endl;
 
   uint64_t num_errors = 0;

@@ -36,10 +36,11 @@ int main(int argc, char* argv[]) {
       c[i][j] = 0.f;
     }
   }
+  tapa::read_only_mmaps<float, 4> a_memory(a);
+  const tapa::read_only_mmaps<float, 4> b_memory(b);
+  tapa::write_only_mmaps<float, 4> c_memory(c);
   int64_t kernel_time_ns =
-      tapa::invoke(VecAdd, FLAGS_bitstream, tapa::read_only_mmaps<float, 4>(a),
-                   tapa::read_only_mmaps<float, 4>(b),
-                   tapa::write_only_mmaps<float, 4>(c), n);
+      tapa::invoke(VecAdd, FLAGS_bitstream, a_memory, b_memory, c_memory, n);
   clog << "kernel time: " << kernel_time_ns * 1e-9 << " s" << endl;
 
   uint64_t num_errors = 0;

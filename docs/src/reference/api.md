@@ -181,9 +181,16 @@ template <typename T, uint64_t N>
 class mmaps;
 ```
 
+`slice<Offset, Count>()` returns a `mmaps<T, Count>` view of consecutive
+regions. The range may end at `N`; each region retains its buffer address and
+element count, so writes through the slice update the original buffer.
+
 ### Directional mmap wrappers (host-side only)
 
 Used in the top-level `tapa::invoke()` call to express direction hints. The kernel task signature uses plain `tapa::mmap<T>` or `tapa::mmaps<T, N>`.
+
+Wrappers may be temporary expressions or named mutable or const variables.
+Each form passes the same buffer addresses, element counts, and direction hints.
 
 | Wrapper | Direction |
 |---------|-----------|

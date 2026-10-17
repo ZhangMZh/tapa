@@ -1,5 +1,6 @@
 #include "tapa/host/mmap.h"
 
+#include <array>
 #include <cstdint>
 
 #include <type_traits>
@@ -80,6 +81,29 @@ TEST(TaggedMmapTest, SizedMmapsKeepTheTagAndTheCount) {
                                           .template vectorized<2>()),
                              read_only_mmaps<vec_t<int, 2>, 4>>::value,
                 "vectorized() must keep both the tag and the channel count");
+}
+
+TEST(MmapsTest, SlicesPreserveRegionsAndIncludeTheLastChannel) {
+  std::array<std::vector<int>, 4> buffers = {
+      std::vector<int>{10}, std::vector<int>{20, 21},
+      std::vector<int>{30, 31, 32}, std::vector<int>{40, 41, 42, 43}};
+  mmaps<int, 4> memory(buffers);
+
+  auto middle = memory.slice<1, 2>();
+  auto tail = memory.slice<2, 2>();
+  auto whole = memory.slice<0, 4>();
+  for (int i = 0; i < 2; ++i) {
+    EXPECT_EQ(middle[i].data(), buffers[i + 1].data());
+    EXPECT_EQ(middle[i].size(), buffers[i + 1].size());
+    EXPECT_EQ(tail[i].data(), buffers[i + 2].data());
+    EXPECT_EQ(tail[i].size(), buffers[i + 2].size());
+  }
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_EQ(whole[i].data(), buffers[i].data());
+    EXPECT_EQ(whole[i].size(), buffers[i].size());
+  }
+  tail[1][2] = 99;
+  EXPECT_EQ(buffers[3][2], 99);
 }
 
 }  // namespace

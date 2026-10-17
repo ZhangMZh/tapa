@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -265,12 +266,14 @@ class mmaps {
 
   template <uint64_t offset, uint64_t length>
   mmaps<T, length> slice() {
-    static_assert(offset + length < S, "invalid slice");
-    mmaps<T, length> result;
+    static_assert(offset <= S && length <= S - offset, "invalid slice");
+    std::array<T*, length> pointers;
+    std::array<uint64_t, length> sizes;
     for (uint64_t i = 0; i < length; ++i) {
-      result.mmaps_[i] = this->mmaps_[offset + i];
+      pointers[i] = mmaps_[offset + i].data();
+      sizes[i] = mmaps_[offset + i].size();
     }
-    return result;
+    return mmaps<T, length>(pointers, sizes);
   }
 
   /// Reinterprets each element as @c vec_t<T,N>. Each size must be a multiple
@@ -483,6 +486,44 @@ TAPA_DEFINE_ACCESSOR(read_write_, , BufferAccess::ReadWrite);
 TAPA_DEFINE_ACCESSOR(, &, BufferAccess::ReadWrite);
 
 #undef TAPA_DEFINE_ACCESSOR
+
+// Named directional handles use the same buffer lowering as temporaries.
+// Keep this forwarding specific to mmap handles: stream and seq arguments
+// carry reference identity in their accessor specializations.
+#define TAPA_FORWARD_TAGGED_MMAP_ACCESSOR(tag, qualifier)                     \
+  template <typename T>                                                       \
+  struct accessor<mmap<T>, tag##_mmap<T> qualifier>                           \
+      : accessor<mmap<T>, tag##_mmap<T>> {};                                  \
+  template <typename T, uint64_t S>                                           \
+  struct accessor<mmaps<T, S>, tag##_mmaps<T, S> qualifier>                   \
+      : accessor<mmaps<T, S>, tag##_mmaps<T, S>> {                            \
+    using accessor<mmaps<T, S>, tag##_mmaps<T, S>>::access;                   \
+    static mmaps<T, S> access(tag##_mmaps<T, S> qualifier arg, bool) {        \
+      return arg;                                                             \
+    }                                                                         \
+  };                                                                          \
+  template <typename T, int chan_count, int64_t chan_size>                    \
+  struct accessor<hmap<T, chan_count, chan_size>, tag##_mmap<T> qualifier>    \
+      : accessor<hmap<T, chan_count, chan_size>, tag##_mmap<T>> {             \
+    using accessor<hmap<T, chan_count, chan_size>, tag##_mmap<T>>::access;    \
+    static hmap<T, chan_count, chan_size> access(tag##_mmap<T> qualifier arg, \
+                                                 bool) {                      \
+      return arg;                                                             \
+    }                                                                         \
+  }
+
+#define TAPA_FORWARD_TAGGED_MMAP_FAMILY(tag)      \
+  TAPA_FORWARD_TAGGED_MMAP_ACCESSOR(tag, &);      \
+  TAPA_FORWARD_TAGGED_MMAP_ACCESSOR(tag, const&); \
+  TAPA_FORWARD_TAGGED_MMAP_ACCESSOR(tag, const)
+
+TAPA_FORWARD_TAGGED_MMAP_FAMILY(placeholder);
+TAPA_FORWARD_TAGGED_MMAP_FAMILY(read_only);
+TAPA_FORWARD_TAGGED_MMAP_FAMILY(write_only);
+TAPA_FORWARD_TAGGED_MMAP_FAMILY(read_write);
+
+#undef TAPA_FORWARD_TAGGED_MMAP_FAMILY
+#undef TAPA_FORWARD_TAGGED_MMAP_ACCESSOR
 
 // An async_mmap parameter names five channel endpoints with identity; a
 // formal task parameter must take it by lvalue reference. The same
