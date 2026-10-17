@@ -28,6 +28,8 @@ exports_files([
     "tapa-codegen/assets/verilog/fifo_bram.v",
     "tapa-codegen/assets/verilog/fifo_fwd.v",
     "tapa-codegen/assets/verilog/fifo_srl.v",
+    "testdata/rtl/axis_handshake.v",
+    "testdata/rtl/narrow_axi_incr.v",
 ])
 
 _ALL_SRCS = glob(

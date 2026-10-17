@@ -26,10 +26,10 @@ bool tapa_hls_stream_ostream_step(const char* port, bool write, const uint8_t* d
 // `std::unordered_map<uint64_t, uint8_t>` spends about 43 bytes of hash node
 // per modeled byte: a 16 MiB buffer cost 738 MB resident, against 34 MB here.
 //
-// Addresses outside the range are ordinary traffic, not errors -- a burst beat
-// is as wide as the data bus, so the last beat of a buffer that is not a whole
-// number of beats runs past the end. Reads there yield zero and writes there
-// are dropped, which is what the map did for addresses it never loaded.
+// Addresses outside the range are ordinary traffic, not errors -- the last
+// full-width beat of a buffer can run past the end. Reads there yield zero and
+// writes there are dropped, which is what the map did for addresses it never
+// loaded.
 class MemRegion {
  public:
   MemRegion(uint64_t base, size_t size) : base_(base), data_(size) {}
@@ -47,13 +47,15 @@ class MemRegion {
     }
   }
 
-  void write(uint64_t addr, const void* buf, const void* strb_ptr, size_t nbytes) {
+  void write(uint64_t addr, const void* buf, const void* strb_ptr, size_t nbytes,
+             size_t lane) {
     auto* src = reinterpret_cast<const uint8_t*>(buf);
     auto* strb = reinterpret_cast<const uint8_t*>(strb_ptr);
     for (size_t i = 0; i < nbytes; i++) {
+      const size_t byte = lane + i;
       const uint64_t off = addr + i - base_;
-      if (off < data_.size() && (strb[i / 8] & (1 << (i % 8))))
-        data_[off] = src[i];
+      if (off < data_.size() && (strb[byte / 8] & (1 << (byte % 8))))
+        data_[off] = src[byte];
     }
   }
 
@@ -66,12 +68,25 @@ static V{{ top_name }}* dut;
 
 static constexpr int kMaxOutstanding = 16;
 
+static size_t axi_lane(const char* port, uint64_t addr, size_t beat_bytes,
+                       size_t bus_bytes) {
+  const size_t lane = addr % bus_bytes;
+  if (beat_bytes > bus_bytes - lane) {
+    std::cerr << "Unsupported AXI transfer on " << port << ": " << beat_bytes
+              << " bytes at address " << addr << " exceeds the " << bus_bytes
+              << "-byte data bus\n";
+    std::exit(EXIT_FAILURE);
+  }
+  return lane;
+}
+
 template <typename Id>
 struct AxiReadReq {
   uint64_t addr;
   uint8_t len;
   Id id;
   uint8_t beat;
+  uint8_t size;
 };
 
 template <typename Id>
@@ -79,6 +94,7 @@ struct AxiWriteReq {
   uint64_t addr;
   Id id;
   uint8_t beat;
+  uint8_t size;
 };
 
 {% for arg in mmap_args %}
@@ -102,7 +118,7 @@ static void tick() {
 {% for arg in mmap_args %}
     if (dut->{{ arg.axi.arvalid }} && dut->{{ arg.axi.arready }}) {
       rd_q_{{ arg.ident }}.push_back({dut->{{ arg.axi.araddr }}, (uint8_t)dut->{{ arg.axi.arlen }},
-                                      dut->{{ arg.axi.arid }}, 0});
+                                      dut->{{ arg.axi.arid }}, 0, (uint8_t)dut->{{ arg.axi.arsize }}});
     }
     if (dut->{{ arg.axi.rvalid }} && dut->{{ arg.axi.rready }}) {
       auto& r = rd_q_{{ arg.ident }}.front();
@@ -111,13 +127,17 @@ static void tick() {
       rd_have_data_{{ arg.ident }} = false;
     }
     if (dut->{{ arg.axi.awvalid }} && dut->{{ arg.axi.awready }}) {
-      wr_q_{{ arg.ident }}.push_back({dut->{{ arg.axi.awaddr }}, dut->{{ arg.axi.awid }}, 0});
+      wr_q_{{ arg.ident }}.push_back({dut->{{ arg.axi.awaddr }}, dut->{{ arg.axi.awid }}, 0,
+                                      (uint8_t)dut->{{ arg.axi.awsize }}});
     }
     if (dut->{{ arg.axi.wvalid }} && dut->{{ arg.axi.wready }} && !wr_q_{{ arg.ident }}.empty()) {
       auto& w = wr_q_{{ arg.ident }}.front();
-      mem_{{ arg.ident }}.write(w.addr + (uint64_t)w.beat * {{ arg.data_width_bytes }},
-                                &dut->{{ arg.axi.wdata }}, &dut->{{ arg.axi.wstrb }},
-                                {{ arg.data_width_bytes }});
+      const size_t beat_bytes = size_t{1} << w.size;
+      const uint64_t addr = w.addr + (uint64_t)w.beat * beat_bytes;
+      const size_t lane = axi_lane("{{ arg.name }}", addr, beat_bytes,
+                                   {{ arg.data_width_bytes }});
+      mem_{{ arg.ident }}.write(addr, &dut->{{ arg.axi.wdata }},
+                                &dut->{{ arg.axi.wstrb }}, beat_bytes, lane);
       w.beat++;
       if (dut->{{ arg.axi.wlast }}) {
         b_q_{{ arg.ident }}.push_back(w.id);
@@ -128,6 +148,23 @@ static void tick() {
       b_q_{{ arg.ident }}.pop_front();
     }
 {% endfor %}
+{% if mode == "vitis" %}
+{% for arg in stream_args %}
+    if (stream_in_have_{{ arg.ident }} && dut->{{ arg.sig.tvalid }} && dut->{{ arg.sig.tready }}) {
+      stream_in_have_{{ arg.ident }} = false;
+    }
+{% endfor %}
+{% for arg in stream_out_args %}
+    if (dut->{{ arg.sig.tvalid }} && dut->{{ arg.sig.tready }}) {
+      std::array<uint8_t, {{ arg.dpi_width_bytes }}> stream_out_bytes_{{ arg.ident }}{};
+      std::memcpy(stream_out_bytes_{{ arg.ident }}.data(), &dut->{{ arg.sig.tdata }}, {{ arg.width_bytes }});
+{% if arg.axis %}
+      stream_out_bytes_{{ arg.ident }}[{{ arg.width_bytes }}] = dut->{{ arg.sig.tlast }};
+{% endif %}
+      (void)tapa_stream_try_write("{{ arg.name }}", stream_out_bytes_{{ arg.ident }}.data());
+    }
+{% endfor %}
+{% endif %}
   }
   dut->ap_clk = 1;
   dut->eval();
@@ -145,8 +182,14 @@ static void service_all_axi() {
     dut->{{ arg.axi.rvalid }} = 1;
     // Capture each beat once so a concurrent write cannot change stalled data.
     if (!rd_have_data_{{ arg.ident }}) {
-      mem_{{ arg.ident }}.read(r.addr + (uint64_t)r.beat * {{ arg.data_width_bytes }},
-                               &dut->{{ arg.axi.rdata }}, {{ arg.data_width_bytes }});
+      const size_t beat_bytes = size_t{1} << r.size;
+      const uint64_t addr = r.addr + (uint64_t)r.beat * beat_bytes;
+      const size_t lane = axi_lane("{{ arg.name }}", addr, beat_bytes,
+                                   {{ arg.data_width_bytes }});
+      std::memset(&dut->{{ arg.axi.rdata }}, 0, sizeof(dut->{{ arg.axi.rdata }}));
+      mem_{{ arg.ident }}.read(addr,
+                               reinterpret_cast<uint8_t*>(&dut->{{ arg.axi.rdata }}) + lane,
+                               beat_bytes);
       dut->{{ arg.axi.rlast }} = (r.beat == r.len) ? 1 : 0;
       dut->{{ arg.axi.rid }} = r.id;
       dut->{{ arg.axi.rresp }} = 0;
@@ -240,21 +283,10 @@ static void service_streams() {
   if (stream_in_have_{{ arg.ident }}) {
     std::memcpy(&dut->{{ arg.sig.tdata }}, stream_in_data_{{ arg.ident }}.data(), {{ arg.width_bytes }});
   }
-  if (stream_in_have_{{ arg.ident }} && dut->{{ arg.sig.tready }}) {
-    stream_in_have_{{ arg.ident }} = false;
-  }
 {% endfor %}
 {% for arg in stream_out_args %}
   bool can_write_{{ arg.ident }} = tapa_stream_can_write("{{ arg.name }}");
   dut->{{ arg.sig.tready }} = can_write_{{ arg.ident }} ? 1 : 0;
-  std::array<uint8_t, {{ arg.dpi_width_bytes }}> stream_out_bytes_{{ arg.ident }}{};
-  std::memcpy(stream_out_bytes_{{ arg.ident }}.data(), &dut->{{ arg.sig.tdata }}, {{ arg.width_bytes }});
-{% if arg.axis %}
-  stream_out_bytes_{{ arg.ident }}[{{ arg.width_bytes }}] = dut->{{ arg.sig.tlast }};
-{% endif %}
-  if (dut->{{ arg.sig.tvalid }} && can_write_{{ arg.ident }}) {
-    (void)tapa_stream_try_write("{{ arg.name }}", stream_out_bytes_{{ arg.ident }}.data());
-  }
 {% endfor %}
 {% endif %}
 }

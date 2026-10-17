@@ -73,7 +73,10 @@ cargo_artifacts(
 cargo_test(
     name = "cargo_test",
     size = "enormous",
-    srcs = _ALL_SRCS,
+    srcs = _ALL_SRCS + [
+        "//tapa-core:testdata/rtl/axis_handshake.v",
+        "//tapa-core:testdata/rtl/narrow_axi_incr.v",
+    ],
     cargo_args = [
         "-p",
         "frt-shm",

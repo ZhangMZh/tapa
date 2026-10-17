@@ -571,9 +571,15 @@ fn verilator_vitis_tb_uses_direct_axis_input_handshake() {
         "{tb}"
     );
     assert!(
-        tb.contains("if (stream_in_have_s && dut->s_TREADY) {"),
+        tb.contains("if (stream_in_have_s && dut->s_TVALID && dut->s_TREADY) {"),
         "{tb}"
     );
+    let settle = tb.find("dut->eval();").expect("settle driven inputs");
+    let consume = tb
+        .find("if (stream_in_have_s && dut->s_TVALID && dut->s_TREADY) {")
+        .expect("input handshake");
+    let edge = tb.find("dut->ap_clk = 1;").expect("rising edge");
+    assert!(settle < consume && consume < edge, "{tb}");
     assert!(
         !tb.contains("stream_in_have_s = tapa_stream_istream_step("),
         "{tb}"
@@ -606,6 +612,18 @@ fn verilator_vitis_tb_uses_direct_axis_write_handshake() {
     );
     assert!(
         tb.contains("(void)tapa_stream_try_write(\"s_out\", stream_out_bytes_s_out.data());"),
+        "{tb}"
+    );
+    let settle = tb.find("dut->eval();").expect("settle driven inputs");
+    let transfer = tb
+        .find("if (dut->s_out_TVALID && dut->s_out_TREADY) {")
+        .expect("output handshake");
+    let capture = tb
+        .find("std::memcpy(stream_out_bytes_s_out.data()")
+        .expect("capture output payload");
+    let edge = tb.find("dut->ap_clk = 1;").expect("rising edge");
+    assert!(
+        settle < transfer && transfer < capture && capture < edge,
         "{tb}"
     );
     assert!(

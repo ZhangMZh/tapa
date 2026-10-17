@@ -284,6 +284,32 @@ initial begin
 end
 "#,
     );
+    let run = run_xsim_testbench(&spec, &ctx, &dpi_lib, &tb);
+    assert!(
+        run.status.success(),
+        "Xsim mmap/stream roundtrip failed:\n{}\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        ctx.buffers["a"].as_slice(),
+        &17u32.to_le_bytes(),
+        "Xsim must finish the mmap/stream work before exiting"
+    );
+    assert!(
+        ctx.streams[&spec.args[2].name].is_empty(),
+        "7-bit EoT was not consumed"
+    );
+    check_manual_stream_output(&mut output_queue);
+}
+
+#[cfg(target_os = "linux")]
+fn run_xsim_testbench(
+    spec: &frt_cosim::metadata::KernelSpec,
+    ctx: &frt_cosim::context::CosimContext,
+    dpi_lib: &Path,
+    tb: &str,
+) -> std::process::Output {
     let tmp = tempfile::tempdir().expect("testbench directory");
     let tb_path = tmp.path().join("tb.sv");
     std::fs::write(&tb_path, tb).expect("write Xsim testbench");
@@ -304,7 +330,7 @@ end
             "--binary",
             "--timing",
             "--top-module",
-            "tb_manual_hls_top",
+            &format!("tb_{}", spec.top_name),
             "--timescale-override",
             "1ns/1ps",
             "-j",
@@ -313,7 +339,7 @@ end
             "-std=c++20",
             "-LDFLAGS",
         ])
-        .arg(&dpi_lib)
+        .arg(dpi_lib)
         .args(["-LDFLAGS", "-Wl,--export-dynamic"])
         .arg(&tb_path)
         .args(&spec.verilog_files)
@@ -332,27 +358,11 @@ end
         String::from_utf8_lossy(&build.stdout),
         String::from_utf8_lossy(&build.stderr)
     );
-    let run = Command::new(tmp.path().join("obj_dir/Vtb_manual_hls_top"))
+    Command::new(tmp.path().join(format!("obj_dir/Vtb_{}", spec.top_name)))
         .env(frt_shm::env::TAPA_DPI_CONFIG, ctx.dpi_config_json())
         .current_dir(tmp.path())
         .output()
-        .expect("run Xsim testbench");
-    assert!(
-        run.status.success(),
-        "Xsim mmap/stream roundtrip failed:\n{}\n{}",
-        String::from_utf8_lossy(&run.stdout),
-        String::from_utf8_lossy(&run.stderr)
-    );
-    assert_eq!(
-        ctx.buffers["a"].as_slice(),
-        &17u32.to_le_bytes(),
-        "Xsim must finish the mmap/stream work before exiting"
-    );
-    assert!(
-        ctx.streams[&spec.args[2].name].is_empty(),
-        "7-bit EoT was not consumed"
-    );
-    check_manual_stream_output(&mut output_queue);
+        .expect("run Xsim testbench")
 }
 
 #[test]
@@ -455,4 +465,206 @@ fn open_cosim_verilator_xo_mmap_axis_roundtrip() {
     instance.finish().expect("finish");
 
     assert_eq!(mmap_word[0], 19);
+}
+
+#[test]
+fn open_cosim_verilator_axis_handshakes_use_settled_inputs() {
+    if !ensure_verilator() {
+        eprintln!("skipping: verilator not found in PATH");
+        return;
+    }
+    ensure_dpi_lib_built("frt-dpi-verilator");
+
+    let tmp = tempfile::tempdir().expect("archive directory");
+    let xo_path = tmp.path().join("axis_handshake.xo");
+    let mut archive = zip::ZipWriter::new(File::create(&xo_path).expect("create archive"));
+    let opts: FileOptions<'_, ()> = FileOptions::default();
+    archive.start_file("kernel.xml", opts).expect("kernel XML");
+    archive
+        .write_all(
+            br#"<root><kernel name="axis_handshake"><ports>
+  <port name="s" mode="read_only" dataWidth="32"/>
+  <port name="result" mode="write_only" dataWidth="32"/>
+</ports><args>
+  <arg name="s" addressQualifier="4" id="0" port="s" depth="2"/>
+  <arg name="result" addressQualifier="4" id="1" port="result" depth="1"/>
+</args></kernel></root>"#,
+        )
+        .expect("write kernel XML");
+    archive
+        .start_file("rtl/axis_handshake.v", opts)
+        .expect("RTL entry");
+    archive
+        .write_all(include_bytes!(
+            "../../../tapa-core/testdata/rtl/axis_handshake.v"
+        ))
+        .expect("write RTL");
+    archive.finish().expect("finish archive");
+
+    let mut input = SharedMemoryQueue::create("axis_settle_input", 2, 5).expect("input queue");
+    input
+        .try_push(&pack_stream_elem_u32(1, false))
+        .expect("first input");
+    input
+        .try_push(&pack_stream_elem_u32(2, true))
+        .expect("second input");
+    // A single output slot forces the second transfer to wait for host readback.
+    let mut output = SharedMemoryQueue::create("axis_settle_output", 1, 5).expect("output queue");
+    let mut instance = Instance::open(&xo_path, &Simulator::Verilator).expect("open instance");
+    instance
+        .set_stream_arg_raw(0, &input.path().to_string_lossy())
+        .expect("bind input");
+    instance
+        .set_stream_arg_raw(1, &output.path().to_string_lossy())
+        .expect("bind output");
+    instance.exec().expect("execute");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut received = Vec::new();
+    let completed = loop {
+        let mut token = [0u8; 5];
+        while output.pop_into(&mut token) {
+            received.push(token);
+        }
+        if instance.is_finished().expect("poll simulation") {
+            while output.pop_into(&mut token) {
+                received.push(token);
+            }
+            break true;
+        }
+        if std::time::Instant::now() >= deadline {
+            instance.kill().expect("stop timed-out simulation");
+            break false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    };
+    instance.finish().expect("finish simulation");
+
+    assert!(completed, "AXIS transfers did not finish: {received:?}");
+    assert!(input.is_empty(), "an input token was not consumed");
+    assert_eq!(
+        received,
+        [
+            pack_stream_elem_u32(1, false),
+            pack_stream_elem_u32(3, true)
+        ],
+        "every settled AXIS handshake must transfer its payload exactly once"
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn cosim_aligned_narrow_incr_bursts_use_requested_bytes_and_bus_lanes() {
+    use frt_cosim::context::CosimContext;
+    use frt_cosim::metadata::{ArgKind, ArgSpec, KernelSpec, Mode};
+    use frt_cosim::runner::{verilator::VerilatorRunner, SimRunner};
+    use frt_cosim::tb::xsim::{XsimOptions, XsimTbGenerator};
+    use std::collections::HashMap;
+
+    if !ensure_verilator() {
+        eprintln!("skipping: verilator not found in PATH");
+        return;
+    }
+    let spec = KernelSpec {
+        top_name: "narrow_axi_incr".into(),
+        mode: Mode::Hls,
+        args: vec![ArgSpec {
+            name: "a".into(),
+            id: 0,
+            kind: ArgKind::Mmap {
+                data_width: 64,
+                addr_width: 64,
+            },
+        }],
+        part_num: None,
+        verilog_files: vec![Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tapa-core/testdata/rtl/narrow_axi_incr.v")],
+        tcl_files: vec![],
+        xci_files: vec![],
+        scalar_register_map: HashMap::new(),
+    };
+    let initial = [0x1122_3344_u32, 0x5566_7788, 0x99aa_bbcc]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect::<Vec<_>>();
+    let expected = [0x11b2_33d4_u32, 0xe5f6_0718, 0x993a_bb5c]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect::<Vec<_>>();
+    let scalars = HashMap::new();
+    let mut failures = Vec::new();
+    for xsim in [false, true] {
+        let mut ctx = CosimContext::new(&spec).expect("cosim context");
+        // Three four-byte transfers on an eight-byte bus include an upper-lane
+        // beat and a final beat that must stay inside the twelve-byte mapping.
+        ctx.resize_buffer("a", initial.len()).expect("resize mmap");
+        ctx.buffers
+            .get_mut("a")
+            .expect("mmap")
+            .as_mut_slice()
+            .copy_from_slice(&initial);
+        let name = if xsim { "Xsim" } else { "Verilator" };
+        let dpi = ensure_dpi_lib_built(if xsim {
+            "frt-dpi-xsim"
+        } else {
+            "frt-dpi-verilator"
+        });
+        let success = if xsim {
+            let mut tb = XsimTbGenerator::new(
+                &spec,
+                &dpi,
+                &ctx.base_addresses,
+                &scalars,
+                "",
+                XsimOptions::default(),
+            )
+            .render_tb()
+            .expect("Xsim testbench");
+            tb.insert_str(
+                tb.rfind("endmodule").expect("module end"),
+                "initial begin repeat (200) @(posedge ap_clk); \
+                 $fatal(1, \"narrow AXI burst did not finish\"); end\n",
+            );
+            let run = run_xsim_testbench(&spec, &ctx, &dpi, &tb);
+            if !run.status.success() {
+                failures.push(format!(
+                    "{name} failed: {}\n{}",
+                    String::from_utf8_lossy(&run.stdout),
+                    String::from_utf8_lossy(&run.stderr)
+                ));
+            }
+            run.status.success()
+        } else {
+            let runner = VerilatorRunner { dpi_lib: dpi };
+            let tmp = tempfile::tempdir().expect("Verilator work directory");
+            runner
+                .prepare(&spec, &ctx, &scalars, tmp.path())
+                .expect("prepare Verilator");
+            let mut child = runner
+                .spawn(&spec, &ctx, tmp.path())
+                .expect("start Verilator");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let status = loop {
+                if let Some(status) = child.try_wait().expect("poll Verilator") {
+                    break status;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().expect("stop timed-out Verilator");
+                    break child.wait().expect("reap Verilator");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            };
+            if !status.success() {
+                failures.push(format!("{name} failed: {status}"));
+            }
+            status.success()
+        };
+        if success && ctx.buffers["a"].as_slice() != expected {
+            failures.push(format!(
+                "{name} corrupted selected lanes or inactive bytes: {:?}",
+                ctx.buffers["a"].as_slice()
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

@@ -59,8 +59,14 @@ port table is available, independent of XML child order.
 Cosimulation AXI read responses capture each beat once and retain its data
 and ID until the VALID/READY handshake, including across concurrent writes
 to the same memory while a read is stalled. Verilator settles every driven
-input before accepting AXI handshakes at each rising edge, including when
-response IDs select destinations with different readiness.
+input before accepting AXI and AXIS handshakes at each rising edge, including
+when response IDs select destinations with different readiness or stream
+readiness and payloads depend on newly driven inputs.
+
+For aligned incrementing AXI bursts, both cosimulation models use SIZE to
+advance the address and select the active bus lanes on each beat. Writes retain
+bytes disabled by WSTRB, including at a partial final bus beat. DPI transfers
+cover only the requested bytes and keep their strict mapped-buffer bounds.
 
 ## Load-Bearing Contract Guards
 
