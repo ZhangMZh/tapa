@@ -355,11 +355,13 @@ fn user_sll_body_indices(route: &PipelineRoute) -> BTreeSet<usize> {
 /// Escape text embedded in a Tcl double-quoted diagnostic without changing
 /// what Vivado displays. Brackets matter for flattened array names: leaving
 /// them bare would invoke Tcl command substitution while reporting the error.
+/// Braces must also be escaped because Tcl counts them inside the enclosing
+/// braced `if` body, including within quoted text.
 fn tcl_double_quote_escape(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for character in text.chars() {
         match character {
-            '\\' | '"' | '$' | '[' => escaped.push('\\'),
+            '\\' | '"' | '$' | '[' | '{' | '}' => escaped.push('\\'),
             '\n' => {
                 escaped.push_str("\\n");
                 continue;
@@ -1254,24 +1256,24 @@ set_false_path -quiet -through [get_nets -quiet -hier -filter {NAME =~ \"*periph
     }
 
     #[test]
-    fn missing_cell_diagnostic_escapes_tcl_substitutions() {
-        let result = FloorplanResult {
-            device: "u280".to_string(),
-            grid: (2, 3),
-            regions: Map::from([(
-                "fifo[0]$quoted\"".to_string(),
-                "SLOT_X0Y0_TO_SLOT_X0Y0".to_string(),
-            )]),
-            routes: Vec::new(),
-            slot_usage: Map::new(),
-        };
-        let xdc = emit_xdc(&result, &select_device("u280").expect("u280")).expect("render");
+    fn missing_cell_diagnostic_escapes_tcl_syntax() {
+        let device = select_device("u280").expect("u280");
+        // Tcl counts braces inside the braced `if` body even within quotes.
+        // Unbalanced braces break the script even when the cell is present;
+        // preceding backslashes must retain both their value and that escape.
+        for (name, escaped) in [
+            ("fifo[0]$quoted\"", "fifo\\[0]\\$quoted\\\""),
+            ("worker{", r"worker\{"),
+            ("worker}", r"worker\}"),
+            (r"worker\}", r"worker\\\}"),
+            (r"worker\\{", r"worker\\\\\{"),
+        ] {
+            let result = minimal_result(&[(name, "SLOT_X0Y0")], Vec::new());
+            let xdc = emit_xdc(&result, &device).expect("render");
 
-        assert_missing_cell_is_fatal(&xdc, "fifo[0]$quoted\"");
-        assert!(
-            xdc.contains("expected cell `fifo\\[0]\\$quoted\\\"`"),
-            "{xdc}"
-        );
+            assert_missing_cell_is_fatal(&xdc, name);
+            assert!(xdc.contains(&format!("expected cell `{escaped}`")), "{xdc}");
+        }
     }
 
     fn assert_missing_cell_is_fatal(xdc: &str, description: &str) {
