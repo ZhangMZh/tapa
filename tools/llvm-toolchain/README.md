@@ -1,87 +1,80 @@
-# Hermetic LLVM toolchain
+# LLVM toolchain
 
-TAPA's Bazel C/C++ toolchain comes from `toolchains_llvm`, which by default
-downloads the **official prebuilt** clang+llvm release archives. Those
-binaries link `libxml2.so.2`, which Ubuntu ≥ 24.04 (and other modern
-distros) no longer ship — so `ld.lld`, `clang`, and the tblgen host tools
-fail inside the sandbox with `libxml2.so.2: cannot open shared object file`.
+TAPA uses `toolchains_llvm` to configure its Bazel C/C++ toolchain. On Linux
+x86_64, the compiler, linker, and binary utilities used by Bazel C/C++ actions
+are static binaries from hermetic-llvm, with headers and compiler-rt libraries
+from the matching official LLVM release. These action tools run without host
+libraries such as `libxml2.so.2` and `libz.so.1`. Auxiliary LLVM programs
+retained from the official archive keep their upstream runtime dependencies.
+Other execution platforms use the distributions selected by `toolchains_llvm`
+in `MODULE.bazel`.
 
-This directory builds our own archives **from source with every optional
-host-library dependency disabled**, packaged with the exact upstream layout
-so `toolchains_llvm` can consume them via per-distribution url/sha256
-overrides. The only remaining runtime libs are the build distro's own
-libc/libm/libstdc++ (binaries are built per-distro, matching the
-`llvm_versions` keys in `MODULE.bazel`).
+The target C and C++ headers, startup files, and libraries still come from the
+host distribution. Install its libc development files and libstdc++ headers
+and libraries. The static compiler binaries do not provide a bundled sysroot
+or make generated programs independent of those target libraries.
 
-## Kill list
+## Published archives
 
-| CMake flag | Removes | Why safe |
+The Linux x86_64 toolchain combines two pinned archives:
+
+| Source | Archive | SHA256 |
 |---|---|---|
-| `LLVM_ENABLE_LIBXML2=OFF` | `libxml2.so.2` | Only used for Windows manifest/DIA support; dead weight on Linux. **This is the actual breaker.** |
-| `LLVM_ENABLE_ZLIB=OFF` | `libz.so.1` | Only enables `-gz` compressed debug sections; our builds don't use them. |
-| `LLVM_ENABLE_ZSTD=OFF` | `libzstd` | Same class as zlib (debug compression). |
-| `LLVM_ENABLE_TERMINFO=OFF` | `libtinfo`/`libncurses` | Colored terminal diagnostics in llvm tools only. |
-| `LLVM_ENABLE_LIBEDIT=OFF` | `libedit` | Line editing for interactive clang-repl etc. |
-| `LLVM_ENABLE_LIBPFM=OFF` | `libpfm` | perf monitoring in llvm-exegesis (not shipped). |
-| `LLVM_ENABLE_CURL=OFF` / `LLVM_ENABLE_HTTPLIB=OFF` | `libcurl` | debuginfod client support. |
+| [hermetic-llvm 22.1.7](https://github.com/hermeticbuild/hermetic-llvm/releases/tag/llvm-22.1.7-2) | `llvm-toolchain-minimal-22.1.7-linux-amd64-musl.tar.zst` | `d739a0f8a0f28687e64ea9edf9d98b4cd5f2f1fe72d70eb35834864a0da73bc2` |
+| [Official LLVM 22.1.7](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.7) | `LLVM-22.1.7-Linux-X64.tar.xz` | `edb0522b41e261819c06ea437d249f9b8acfa413d3805bc9920eec6fb76ff830` |
 
-Tests, docs, examples, benchmarks, and OCaml bindings are also excluded.
-Targets: `X86;AArch64` (matches `tapa-llvm-project`'s `llvm_targets`).
-Runtimes: `compiler-rt` only (required for the `build:asan` config);
-stdlib stays the distro `libstdc++` per the existing `llvm.toolchain`
-`stdlib` map.
+The [repository rule](../../bazel/llvm_toolchain.bzl) uses the hermetic-llvm
+archive's static multicall `bin/llvm` and compiler/tool symlinks on Linux
+x86_64. The official archive supplies `include/` and `lib/`, including the
+`lib/clang/22` compiler resources and ASan libraries required by
+`--config=asan`. Every configured C/C++ action tool uses the static binary on
+Linux x86_64. Auxiliary programs absent from the static archive, such as
+`clang-apply-replacements`, remain available from the official archive and
+retain its host runtime dependencies.
+The minimal static archive contains no compiler-rt libraries, so it cannot
+replace the official resource archive by itself.
 
-`build-llvm-toolchain.sh` **fails the build** (`verify_hermetic`) if any
-shipped binary still references a killed library, and smoke-tests C++17
-`<filesystem>` and `-fsanitize=address` with the new toolchain.
+The repository assembly preserves the layout expected by `toolchains_llvm`
+and checks both archive hashes. Updating it requires matching compiler and
+resource versions and reviewing the published archive contents.
 
-## Build one distro locally
+## Optional source build
+
+`build-llvm-toolchain.sh` and the `Build LLVM toolchain (hermetic)` workflow
+provide an optional way to build custom archives. They are not required for
+the published static toolchain above. The builder currently has pinned sources
+for LLVM 18.1.8 and 14.0.0, and the workflow builds those versions in Ubuntu
+and AlmaLinux containers.
+
+The source build disables LLVM's optional libxml2, zlib, zstd, terminfo,
+libedit, libpfm, curl, and httplib dependencies. It builds Clang and LLD for
+`X86;AArch64`, includes compiler-rt, and excludes tests, documentation,
+examples, benchmarks, and bindings. Its binaries still depend on the build
+distribution's libc and C++ runtime.
+
+The script rejects references to disabled libraries and checks C++17
+`<filesystem>` and AddressSanitizer. To build one custom archive:
 
 ```sh
 docker run --rm -v "$PWD":/src:ro -v /tmp/llvm-out:/out \
   ubuntu:22.04 bash /src/tools/llvm-toolchain/build-llvm-toolchain.sh \
   18.1.8 ubuntu-22.04 /tmp/llvm-build
-# artifact + sha256 land in /tmp/llvm-out
 ```
 
-All distros: run the `Build LLVM toolchain (hermetic)` workflow
-(Actions → workflow_dispatch). It publishes
-`clang+llvm-<ver>-x86_64-linux-gnu-<label>.tar.xz` (+ `.sha256`) as assets
-of the chosen release tag. RHEL keys build on AlmaLinux (ABI-equivalent,
-no subscription needed).
-
-## Wiring the assets into Bazel (after a build publishes them)
-
-`toolchains_llvm`'s bzlmod `llvm.toolchain` tag forwards the repo-rule
-attrs, so overrides go directly in `MODULE.bazel` next to `llvm_versions`:
-
-```python
-llvm.toolchain(
-    llvm_versions = { ... },          # unchanged
-    stdlib = { ... },                 # unchanged
-    urls = {
-        "ubuntu-22.04-x86_64": ["https://github.com/tuna/tapa/releases/download/llvm-toolchain/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-22.04.tar.xz"],
-        # ... one entry per llvm_versions key ...
-        # all rhel-8.x keys point at the single rhel-8 asset (same for 9.x)
-    },
-    sha256 = {
-        "ubuntu-22.04-x86_64": "<from the .sha256 file>",
-        # ...
-    },
-    strip_prefix = {
-        # each archive contains a single top dir named like itself
-        "ubuntu-22.04-x86_64": "clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-22.04",
-        # ...
-    },
-)
-```
-
-Land that change only with real published URLs + sha256s; until then the
-default upstream archives remain the source (with the host-lib caveat).
+The artifact and SHA256 file land in `/tmp/llvm-out`. The manual workflow
+publishes the same archive layout as assets of the chosen release tag.
+Configure custom archives through `toolchains_llvm`'s per-platform `urls`,
+`sha256`, and `strip_prefix` overrides only after their URLs and hashes exist.
 
 ## Version policy
 
-Ubuntu keys stay on 18.1.8; RHEL keys stay on 14.0.0 (matching the current
-`llvm_versions` pins — uplifting RHEL to 18.x is a separate decision).
-Pinned source sha256s live in `build-llvm-toolchain.sh` (`SRC_SHA256`);
-add a row when bumping.
+All Linux x86_64 distributions use the same LLVM 22.1.7 static C/C++ action
+tools and matching official resources. Static musl binaries remove these
+tools' dependency on a distribution-specific glibc or libstdc++ runtime. Target
+library compatibility still depends on the distribution's development files.
+Other execution platforms retain the `toolchains_llvm` distribution selection
+for LLVM 22.1.7.
+
+The optional source builder's 18.1.8 and 14.0.0 pins are independent of the
+active Bazel toolchain. Its source hashes live in `build-llvm-toolchain.sh`
+(`SRC_SHA256`); add a row when building another version.

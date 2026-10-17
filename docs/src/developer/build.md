@@ -20,8 +20,9 @@ To build TAPA from source, you need:
 - [Bazel](https://bazel.build) 7.3.2 or later
 - [Binutils](https://www.gnu.org/software/binutils/) 2.30 or later
 - [Git](https://git-scm.com)
-- [Libstdc++](https://gcc.gnu.org/libstdc++/) matching the most recent GCC
-  version installed on your system
+- C library headers, startup files, and libraries for your system
+- [Libstdc++](https://gcc.gnu.org/libstdc++/) headers and libraries matching
+  the most recent GCC version installed on your system
 - [Python](https://www.python.org) 3 or later for Bazel
 - [Rust](https://www.rust-lang.org) 1.97.1 (via [rustup](https://rustup.rs)) for
   building via `cargo` directly — pre-commit's fmt/clippy hooks use it. The
@@ -45,7 +46,7 @@ sudo apt-get install bazel
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Install other tools
-sudo apt-get install binutils git python3 coinor-cbc
+sudo apt-get install g++ binutils git python3 coinor-cbc
 ```
 
 ```admonish tip
@@ -102,6 +103,22 @@ bazel build //...
 
 This command compiles all TAPA targets, including the compiler, runtime
 library, and tests.
+
+On Linux x86_64, the compiler, linker, and binary utilities used by Bazel C/C++
+actions are static LLVM 22.1.7 binaries from the published hermetic-llvm
+archive. Headers and compiler-rt libraries come from the same version's
+official archive. These action tools run without host libxml2, zlib, or
+libstdc++ shared libraries. Retained auxiliary LLVM programs keep their
+upstream runtime dependencies.
+Generated programs still use the system's C and C++ headers and libraries;
+this is not a bundled sysroot. Other execution platforms use the distributions
+selected by `toolchains_llvm`. See the
+[toolchain details](https://github.com/tuna/tapa/tree/main/tools/llvm-toolchain)
+for archive provenance and the optional source build.
+
+Hardware-emulation builds explicitly select XSIM's bundled Clang for generated
+simulation code, rather than relying on the host GCC's default C standard.
+SystemC compilation and linking use AMD's bundled GCC and libraries.
 
 For building a specific target, replace `//...` with the desired target
 name. For instance, to build only the TAPA compiler:

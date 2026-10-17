@@ -74,6 +74,30 @@ http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_
 
 llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm", dev_dependency = True)
 
+# Static tools avoid optional host-library dependencies such as libxml2.
+# The matching official distribution supplies headers and compiler-rt.
+http_archive(
+    name = "llvm_static_tools",
+    build_file_content = 'exports_files(["BUILD.bazel"])',
+    sha256 = "d739a0f8a0f28687e64ea9edf9d98b4cd5f2f1fe72d70eb35834864a0da73bc2",
+    urls = ["https://github.com/hermeticbuild/hermetic-llvm/releases/download/llvm-22.1.7-2/llvm-toolchain-minimal-22.1.7-linux-amd64-musl.tar.zst"],
+)
+
+llvm_distribution = use_repo_rule("@toolchains_llvm//toolchain:rules.bzl", "llvm")
+
+llvm_distribution(
+    name = "llvm_distribution",
+    llvm_versions = {"": "22.1.7"},
+)
+
+llvm_toolchain = use_repo_rule("//bazel:llvm_toolchain.bzl", "llvm_toolchain")
+
+llvm_toolchain(
+    name = "llvm_toolchain_distribution",
+    distribution = "@llvm_distribution//:BUILD.bazel",
+    tools = "@llvm_static_tools//:BUILD.bazel",
+)
+
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust", dev_dependency = True)
 rust.toolchain(
     edition = "2021",
@@ -84,35 +108,14 @@ use_repo(rust, "rust_toolchains")
 register_toolchains("@rust_toolchains//:all")
 
 llvm.toolchain(
-    llvm_versions = {
-        # Latest version supporting Ubuntus
-        "ubuntu-18.04-x86_64": "18.1.8",
-        "ubuntu-20.04-x86_64": "18.1.8",
-        "ubuntu-22.04-x86_64": "18.1.8",
-        "ubuntu-24.04-x86_64": "18.1.8",
-        "ubuntu-25.04-x86_64": "18.1.8",
-        # Latest version supporting RHELs
-        "rhel-8.6-x86_64": "14.0.0",
-        "rhel-8.7-x86_64": "14.0.0",
-        "rhel-8.8-x86_64": "14.0.0",
-        "rhel-8.9-x86_64": "14.0.0",
-        "rhel-8.10-x86_64": "14.0.0",
-        "rhel-9.0-x86_64": "14.0.0",
-        "rhel-9.1-x86_64": "14.0.0",
-        "rhel-9.2-x86_64": "14.0.0",
-        "rhel-9.3-x86_64": "14.0.0",
-        "rhel-9.4-x86_64": "14.0.0",
-        "rhel-9.5-x86_64": "14.0.0",
-        # Other platforms use latest that toolchains_llvm ships a build for
-        "": "22.1.7",
-    },
+    llvm_version = "22.1.7",
     stdlib = {
         "linux-x86_64": "stdc++",
         "linux-aarch64": "stdc++",
     },
 )
+llvm.toolchain_root(label = "@llvm_toolchain_distribution//:BUILD.bazel")
 use_repo(llvm, "llvm_toolchain")
-use_repo(llvm, "llvm_toolchain_llvm")
 
 register_toolchains(
     "@llvm_toolchain//:all",

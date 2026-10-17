@@ -42,6 +42,9 @@ def _vpp_xclbin_impl(ctx):
         vpp_cmd += [
             "--vivado.prop=fileset.sim_1.xsim.compile.xsc.mt_level=2",
             "--vivado.prop=fileset.sim_1.xsim.elaborate.mt_level=2",
+            # Use XSIM's bundled compiler for generated simulation code.
+            # Host GCC defaults can reject code emitted by this tool version.
+            "--vivado.prop=fileset.sim_1.xsim.elaborate.xelab.more_options={--cc clang}",
             # Xilinx's bundled GCC may not know about multiarch system header
             # paths (e.g., /usr/include/x86_64-linux-gnu for asm/types.h).
             "--vivado.prop=fileset.sim_1.xsim.compile.xsc.more_options={--gcc_compile_options -I/usr/include/x86_64-linux-gnu}",

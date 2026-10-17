@@ -1,0 +1,18 @@
+"""Checks for the resolved LLVM toolchain."""
+
+load("@rules_python//python:defs.bzl", "py_binary")
+load(":toolchain_test.bzl", "toolchain_test")
+
+py_binary(
+    name = "check_tools",
+    srcs = ["check_tools.py"],
+)
+
+toolchain_test(
+    name = "host_library_independence_test",
+    size = "small",
+    target_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
