@@ -357,6 +357,32 @@ mod tests {
     #[test]
     fn relative_xo_output_is_absolutized_for_tclargs() {
         use crate::runtime::process::ToolOutput;
+
+        const CHILD_ENV: &str = "TAPA_TEST_RELATIVE_XO_OUTPUT_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            // Changing cwd affects every test thread and any child it spawns.
+            // Keep the temporary cwd in a process that runs only this test.
+            let child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tools::package_xo::tests::relative_xo_output_is_absolutized_for_tclargs",
+                    "--nocapture",
+                ])
+                .env(CHILD_ENV, "1")
+                .output()
+                .expect("run isolated cwd test");
+            let stdout = String::from_utf8_lossy(&child.stdout);
+            let stderr = String::from_utf8_lossy(&child.stderr);
+            assert!(
+                child.status.success() && stdout.contains("running 1 test"),
+                "isolated cwd test failed ({}):\nstdout: {}\nstderr: {}",
+                child.status,
+                stdout.chars().take(4096).collect::<String>(),
+                stderr.chars().take(4096).collect::<String>(),
+            );
+            return;
+        }
+
         let tmp = tempfile::tempdir().unwrap();
         let hdl_dir = Utf8PathBuf::from_path_buf(tmp.path().join("hdl")).unwrap();
         std::fs::create_dir_all(&hdl_dir).unwrap();
