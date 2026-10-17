@@ -5,6 +5,8 @@
 #include "tapa/host/stream.h"
 
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ostream>
 #include <string>
@@ -169,6 +171,66 @@ void CheckEmptyStreamReads(const T& value) {
 TEST(StreamReadTest, EmptyReadsReturnValueInitializedElements) {
   CheckEmptyStreamReads(2333);
   CheckEmptyStreamReads(std::array<int, 3>{1, 2, 3});
+}
+
+TEST(StreamCompletionDeathTest, FinalTransferAfterBlockedPollRemainsUsable) {
+  EXPECT_EXIT(
+      {
+        internal::frt_queue<int> queue(1, "completed_output");
+        // The queue is mapped locally; unlink it before the child exits.
+        std::remove(queue.get_frt_stream().path().c_str());
+        internal::note_frt_instance_scheduled();
+        // The blocked poll yielded before the final output arrived and the
+        // kernel finished. The guard must recheck current readiness.
+        queue.push(42);
+        internal::note_frt_instance_finished();
+        internal::check_kernel_can_still_serve(
+            queue, "empty", &internal::type_erased_queue::empty);
+        std::exit(queue.pop() == 42 ? 0 : 1);
+      },
+      testing::ExitedWithCode(0), "");
+
+  EXPECT_EXIT(
+      {
+        internal::frt_queue<int> queue(1, "completed_input");
+        std::remove(queue.get_frt_stream().path().c_str());
+        internal::note_frt_instance_scheduled();
+        queue.push(41);
+        // The formerly full queue has room after the kernel consumed its
+        // last input while the producer was yielded.
+        queue.pop();
+        internal::note_frt_instance_finished();
+        internal::check_kernel_can_still_serve(
+            queue, "full", &internal::type_erased_queue::full);
+        queue.push(42);
+        std::exit(queue.pop() == 42 ? 0 : 1);
+      },
+      testing::ExitedWithCode(0), "");
+}
+
+TEST(StreamCompletionDeathTest, StillBlockedAfterCompletionAborts) {
+  EXPECT_DEATH(
+      {
+        internal::frt_queue<int> queue(1, "empty_after_completion");
+        std::remove(queue.get_frt_stream().path().c_str());
+        internal::note_frt_instance_scheduled();
+        internal::note_frt_instance_finished();
+        internal::check_kernel_can_still_serve(
+            queue, "empty", &internal::type_erased_queue::empty);
+      },
+      "still empty after every kernel instance finished");
+
+  EXPECT_DEATH(
+      {
+        internal::frt_queue<int> queue(1, "full_after_completion");
+        std::remove(queue.get_frt_stream().path().c_str());
+        internal::note_frt_instance_scheduled();
+        queue.push(42);
+        internal::note_frt_instance_finished();
+        internal::check_kernel_can_still_serve(
+            queue, "full", &internal::type_erased_queue::full);
+      },
+      "still full after every kernel instance finished");
 }
 
 TEST(LeftoverLogTest, SingleLeftoverIsReported) {

@@ -68,6 +68,10 @@ advance the address and select the active bus lanes on each beat. Writes retain
 bytes disabled by WSTRB, including at a partial final bus beat. DPI transfers
 cover only the requested bytes and keep their strict mapped-buffer bounds.
 
+Blocked host stream operations recheck queue readiness after observing kernel
+completion, so a final transfer made during a scheduler yield remains usable.
+They abort only when the kernel has finished and the queue is still blocked.
+
 ## Load-Bearing Contract Guards
 
 Several cross-component contracts are guarded in CI. These are the seams
