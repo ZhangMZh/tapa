@@ -523,6 +523,14 @@ TEST(IntTest, Int128Interop) {
   unsigned __int128 wide_native = static_cast<unsigned __int128>(1) << 100;
   tapa::u<128> from_native(wide_native);
   EXPECT_EQ(tapa::u<64>(from_native(127, 64)), 1ULL << 36);  // bit 100
+
+  const __int128 negative = -2;
+  auto signed_sum = tapa::u<8>(8) + negative;
+  EXPECT_TRUE(decltype(signed_sum)::sign_flag);
+  EXPECT_EQ(signed_sum, 6);
+  EXPECT_EQ(tapa::i<256>(8) / negative, -4);
+  EXPECT_TRUE(negative < tapa::i<256>(0));
+  EXPECT_EQ(tapa::u<8>(16) << negative, 4);
 #endif
 }
 

@@ -234,6 +234,14 @@ struct to_base {
           u<static_cast<int>(8 * sizeof(T))>>::type>::type;
 };
 
+#ifdef __SIZEOF_INT128__
+// Like is_integral, is_signed excludes __int128 in strict C++ mode.
+template <>
+struct to_base<__int128> {
+  using type = i<128>;
+};
+#endif
+
 // Limb-array arithmetic; all operands and results have N limbs.
 template <int N>
 inline void add_limbs(const uint64_t (&a)[N], const uint64_t (&b)[N],
