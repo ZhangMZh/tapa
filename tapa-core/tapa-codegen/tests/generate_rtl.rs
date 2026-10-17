@@ -136,6 +136,50 @@ fn test_generate_rtl_sanitizes_explicit_instance_names() {
 }
 
 #[test]
+fn test_generate_rtl_rejects_colliding_child_instance_names_before_mutation() {
+    for (first, second, identifier) in [
+        (Some("worker#1"), Some("worker_1"), "worker_1"),
+        (Some("worker"), Some("worker"), "worker"),
+        (None, Some("child_0"), "child_0"),
+    ] {
+        let top = task("top", "upper", |t| {
+            t["tasks"] = serde_json::json!({
+                "child": [{"name": first, "args": {}}, {"name": second, "args": {}}]
+            });
+        });
+        let mut state = TopologyWithRtl::new(design(
+            "top",
+            "xilinx-hls",
+            &[("top", top), ("child", plain("child", "lower"))],
+        ));
+        attach_basic_modules(&mut state, &["top", "child"]);
+        let original_top = state.module_map["top"].emit();
+
+        let Err(error) = generate_rtl(&mut state) else {
+            panic!("colliding child instances must not share RTL identifiers");
+        };
+        let diagnostic = error.to_string();
+        assert!(
+            diagnostic.contains(&format!(
+                "task `top`: `{}` and `{}`",
+                first.unwrap_or("child_0"),
+                second.unwrap_or("child_1")
+            )) && diagnostic.contains(&format!("RTL identifier `{identifier}`")),
+            "{diagnostic}"
+        );
+        assert_eq!(
+            state.module_map["top"].emit(),
+            original_top,
+            "reject the collision before changing the parent RTL"
+        );
+        assert!(
+            state.fsm_modules.is_empty(),
+            "reject before creating the FSM"
+        );
+    }
+}
+
+#[test]
 fn test_generate_rtl_child_scalar_pipeline_preserves_width() {
     let top = task("top", "upper", |t| {
         t["tasks"] =

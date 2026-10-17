@@ -143,10 +143,26 @@ pub struct TaskStageInputs {
 }
 
 impl TaskStageInputs {
-    /// Compute every per-task plan up front so malformed memory geometry is
-    /// rejected before any RTL state is mutated.
+    /// Compute every per-task plan up front so ambiguous child identities and
+    /// malformed memory geometry are rejected before RTL state is mutated.
     pub fn prepare(state: &TopologyWithRtl, task_name: &str) -> Result<Self, CodegenError> {
         let is_top_task = task_name == state.design.top;
+
+        let mut instance_names = BTreeMap::new();
+        for (child_name, instances) in &state.data_design().tasks[task_name].tasks {
+            for (index, instance) in instances.iter().enumerate() {
+                let logical_name = instance.canonical_name(child_name, index);
+                let rtl_name = tapa_rtl::module::sanitize_identifier_name(&logical_name);
+                if let Some(previous) =
+                    instance_names.insert(rtl_name.clone(), logical_name.clone())
+                {
+                    return Err(CodegenError::InvalidChildInstanceNames(format!(
+                        "task `{task_name}`: `{previous}` and `{logical_name}` both \
+                         produce RTL identifier `{rtl_name}`"
+                    )));
+                }
+            }
+        }
 
         // Reject malformed memory geometry before mutating any RTL state.
         let mmap_conns = state.aggregate_mmap_connections(task_name)?;

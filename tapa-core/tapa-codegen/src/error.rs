@@ -16,6 +16,9 @@ pub enum CodegenError {
     #[error("invalid mmap connection: {0}")]
     InvalidMmapConnection(String),
 
+    #[error("invalid child instance names: {0}")]
+    InvalidChildInstanceNames(String),
+
     #[error("invalid floorplan: {0}")]
     InvalidFloorplan(String),
 

@@ -104,6 +104,10 @@ under the top task are preserved; unnamed leaves use their task name and index
 in the flattened top. FIFO names that collide after scope qualification are
 rejected because merging them would change connectivity.
 
+Child instances within one task must have distinct generated RTL identifiers.
+Compilation rejects explicit or automatic names that become identical after
+replacing characters unsupported in RTL identifiers, and reports both names.
+
 ### Example
 
 ```bash
