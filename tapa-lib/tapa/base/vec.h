@@ -117,9 +117,10 @@ struct vec_t : protected std::array<T, N> {
   template <typename T2>                                 \
   vec_t<T, N>& operator op##=(const T2 & rhs) {          \
     TAPA_VEC_INLINE;                                     \
+    const auto value = rhs;                              \
     for (size_type i = 0; i < N; ++i) {                  \
       TAPA_VEC_UNROLL;                                   \
-      set(i, get(i) op rhs);                             \
+      set(i, get(i) op value);                           \
     }                                                    \
     return *this;                                        \
   }
@@ -189,11 +190,12 @@ struct vec_t : protected std::array<T, N> {
   /// Shifts all elements left by 1, discarding [0] and placing @p val at [N-1].
   void shift(const T& val) {
     TAPA_VEC_INLINE;
+    const T value = val;
     for (size_type i = 1; i < N; ++i) {
       TAPA_VEC_UNROLL;
       set(i - 1, get(i));
     }
-    set(N - 1, val);
+    set(N - 1, value);
   }
 
   /// Returns whether any element equals @p val.

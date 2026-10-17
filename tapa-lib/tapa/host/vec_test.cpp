@@ -108,6 +108,16 @@ TEST(VecTest, CompoundAssignmentAgainstAScalar) {
   EXPECT_TRUE(Equals(v, 0b1, 0b1, 0b1001, 0b1000));
 }
 
+TEST(VecTest, ScalarCompoundAssignmentCapturesAnAliasedElement) {
+  for (int pos = 0; pos < Vec4::length; ++pos) {
+    SCOPED_TRACE(pos);
+    Vec4 v = MakeVec4(1, 2, 3, 4);
+    const int scalar = v[pos];
+    v += v[pos];
+    EXPECT_TRUE(Equals(v, 1 + scalar, 2 + scalar, 3 + scalar, 4 + scalar));
+  }
+}
+
 TEST(VecTest, UnaryOperatorsApplyElementwise) {
   EXPECT_TRUE(Equals(-MakeVec4(1, -2, 3, -4), -1, 2, -3, 4));
   EXPECT_TRUE(Equals(+MakeVec4(1, -2, 3, -4), 1, -2, 3, -4));
@@ -168,6 +178,16 @@ TEST(VecTest, ShiftDropsTheFirstElementAndAppends) {
   Vec4 v = MakeVec4(1, 2, 3, 4);
   v.shift(5);
   EXPECT_TRUE(Equals(v, 2, 3, 4, 5));
+}
+
+TEST(VecTest, ShiftAppendsTheOriginalValueOfAnAliasedElement) {
+  for (int pos = 0; pos < Vec4::length; ++pos) {
+    SCOPED_TRACE(pos);
+    Vec4 v = MakeVec4(1, 2, 3, 4);
+    const int appended = v[pos];
+    v.shift(v[pos]);
+    EXPECT_TRUE(Equals(v, 2, 3, 4, appended));
+  }
 }
 
 TEST(VecTest, HasFindsAnElementAndWorksOnAConstVector) {

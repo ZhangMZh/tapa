@@ -261,6 +261,10 @@ struct vec_t {
 
 Related free functions: `truncated<begin, end>(vec)`, `cat(v1, v2)`, `make_vec<N>(val)`.
 
+Scalar compound assignments capture the scalar before updating any element.
+`shift(val)` discards the first element and appends the original value of
+`val`. Both operations support a scalar that refers to an element of the vector.
+
 ### `tapa::u<W>` / `tapa::i<W>`
 
 Vendor-agnostic arbitrary-width integers: `tapa::u<32>` is a 32-bit unsigned value, `tapa::i<32>` a 32-bit signed one. In software simulation they are self-implemented (no vendor headers needed); on the Xilinx HLS target they alias `ap_uint<W>`/`ap_int<W>`.
