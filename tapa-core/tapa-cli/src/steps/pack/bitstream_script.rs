@@ -12,6 +12,7 @@ use std::os::unix::fs::PermissionsExt;
 use tapa_ir::ClockPeriod;
 
 use crate::error::{CliError, Result};
+use crate::util::shell_quote;
 
 /// Render the `#!/bin/bash` v++ script with an absolute `.xo` path.
 ///
@@ -37,9 +38,13 @@ pub(super) fn render_vitis_script(
         floorplan_xdc: Option<&'a str>,
         connectivity_ini: Option<&'a str>,
     }
-    let xo = absolutize_lexical(output_file).display().to_string();
-    let floorplan_xdc = floorplan_xdc.map(|p| absolutize_lexical(p).display().to_string());
-    let connectivity_ini = connectivity_ini.map(|p| absolutize_lexical(p).display().to_string());
+    let top = shell_quote(top);
+    let xo = shell_quote(&absolutize_lexical(output_file).display().to_string());
+    let platform = platform.filter(|value| !value.is_empty()).map(shell_quote);
+    let floorplan_xdc =
+        floorplan_xdc.map(|p| shell_quote(&absolutize_lexical(p).display().to_string()));
+    let connectivity_ini =
+        connectivity_ini.map(|p| shell_quote(&absolutize_lexical(p).display().to_string()));
     let target_frequency = clock_period
         .map(|clock| {
             tapa_xilinx::target_frequency_mhz(clock.nanoseconds())
@@ -55,10 +60,10 @@ pub(super) fn render_vitis_script(
     let rendered = format!(
         "#!/bin/bash\n{}",
         askama::Template::render(&Template {
-            top,
+            top: &top,
             xo: &xo,
             target_frequency: target_frequency.as_deref(),
-            platform: platform.filter(|value| !value.is_empty()),
+            platform: platform.as_deref(),
             floorplan_xdc: floorplan_xdc.as_deref(),
             connectivity_ini: connectivity_ini.as_deref(),
         })
@@ -248,7 +253,7 @@ mod tests {
             &skeleton,
             &[
                 "TOP=VecAdd",
-                "XO='/tmp/out.xo'",
+                "XO=/tmp/out.xo",
                 "v++ ${DEBUG}",
                 "PLATFORM=\"\"",
                 "Please edit this file and set a valid PLATFORM",
@@ -285,6 +290,81 @@ mod tests {
             assert!(
                 mode & 0o111 != 0,
                 "bitstream script must be executable; got mode {mode:o}",
+            );
+        }
+    }
+
+    #[test]
+    fn rendered_script_passes_paths_as_literal_vpp_arguments() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for directory in [
+            "build files",
+            "designer's files",
+            "shell $TAPA_PATH_FRAGMENT `printf expanded` * ?",
+        ] {
+            let work = dir.path().join(directory);
+            let xo = work.join("design.xo");
+            let xdc = work.join("floorplan.xdc");
+            let ini = work.join("link_config.ini");
+            let platform = work.join("board.xpfm");
+            let script = dir.path().join("run.sh");
+            write_vitis_script(
+                &script,
+                "Top",
+                &xo,
+                platform.to_str(),
+                Some(ClockPeriod::from_picoseconds(3330)),
+                Some(&xdc),
+                Some(&ini),
+            )
+            .expect("write script");
+            let output = std::process::Command::new("bash")
+                .args([
+                    "-c",
+                    r#"v++() { printf '%s\0' "$@"; }
+source "$1""#,
+                    "capture-vitis-script",
+                ])
+                .arg(&script)
+                .env("TAPA_PATH_FRAGMENT", "expanded")
+                .current_dir(dir.path())
+                .output()
+                .expect("execute rendered Bash script");
+            assert!(
+                output.status.success(),
+                "script failed for {directory:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let captured = String::from_utf8(output.stdout).expect("UTF-8 arguments");
+            let args: Vec<_> = captured.split_terminator('\0').collect();
+            assert!(
+                args.contains(&xo.to_str().expect("UTF-8 XO path")),
+                "{args:?}"
+            );
+            assert!(
+                args.windows(2).any(|pair| {
+                    pair == ["--config", ini.to_str().expect("UTF-8 connectivity path")]
+                }),
+                "connectivity path was changed or split: {args:?}"
+            );
+            let xdc_arg = format!(
+                "--vivado.prop=run.impl_1.STEPS.OPT_DESIGN.TCL.PRE={}",
+                xdc.display()
+            );
+            assert!(args.contains(&xdc_arg.as_str()), "{args:?}");
+            assert!(
+                args.windows(2).any(|pair| {
+                    pair == [
+                        "--platform",
+                        platform.to_str().expect("UTF-8 platform path"),
+                    ]
+                }),
+                "platform path was changed or split: {args:?}"
+            );
+            assert!(
+                args.windows(2)
+                    .any(|pair| pair == ["--kernel_frequency", "300"]),
+                "{args:?}"
             );
         }
     }

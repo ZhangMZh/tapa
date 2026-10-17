@@ -3,7 +3,7 @@ TARGET=hw
 # DEBUG=-g
 
 TOP={{ top }}
-XO='{{ xo }}'
+XO={{ xo }}
 
 {% if let Some(target_frequency) = target_frequency %}TARGET_FREQUENCY={{ target_frequency }}
 {% else %}
@@ -11,7 +11,7 @@ XO='{{ xo }}'
 {% endif %}
 {% if let Some(platform) = platform %}PLATFORM={{ platform }}
 {% else %}PLATFORM=""
-if [ -z $PLATFORM ]; then echo 'Please edit this file and set a valid PLATFORM= on line "${LINENO}"'; exit; fi
+if [ -z "${PLATFORM}" ]; then echo 'Please edit this file and set a valid PLATFORM= on line "${LINENO}"'; exit; fi
 
 {% endif %}
 OUTPUT_DIR="$(pwd)/vitis_run_${TARGET}"
@@ -23,22 +23,22 @@ PLACEMENT_STRATEGY="EarlyBlockPlacement"
 v++ ${DEBUG} \
   --link \
   --output "${OUTPUT_DIR}/${TOP}_${PLATFORM}.xclbin" \
-  --kernel ${TOP} \
-  --platform ${PLATFORM} \
-  --target ${TARGET} \
+  --kernel "${TOP}" \
+  --platform "${PLATFORM}" \
+  --target "${TARGET}" \
   --report_level 2 \
   --temp_dir "${OUTPUT_DIR}/${TOP}_${PLATFORM}.temp" \
   --optimize 3 \
-  --connectivity.nk ${TOP}:1:${TOP} \
+  --connectivity.nk "${TOP}:1:${TOP}" \
   --save-temps \
   "${XO}" \
-  --vivado.synth.jobs ${MAX_SYNTH_JOBS} \
+  --vivado.synth.jobs "${MAX_SYNTH_JOBS}" \
   --vivado.prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.IS_ENABLED=1 \
-  --vivado.prop=run.impl_1.STEPS.OPT_DESIGN.ARGS.DIRECTIVE=$STRATEGY \
-  --vivado.prop=run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE=$PLACEMENT_STRATEGY \
-  --vivado.prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE=$STRATEGY \
-  --vivado.prop=run.impl_1.STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE=$STRATEGY \
+  --vivado.prop=run.impl_1.STEPS.OPT_DESIGN.ARGS.DIRECTIVE="${STRATEGY}" \
+  --vivado.prop=run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE="${PLACEMENT_STRATEGY}" \
+  --vivado.prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE="${STRATEGY}" \
+  --vivado.prop=run.impl_1.STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE="${STRATEGY}" \
 {% if let Some(floorplan_xdc) = floorplan_xdc %}  --vivado.prop=run.impl_1.STEPS.OPT_DESIGN.TCL.PRE={{ floorplan_xdc }} \
 {% endif %}{% if let Some(connectivity_ini) = connectivity_ini %}  --config {{ connectivity_ini }} \
-{% endif %}{% if target_frequency.is_some() %}  --kernel_frequency ${TARGET_FREQUENCY} \
+{% endif %}{% if target_frequency.is_some() %}  --kernel_frequency "${TARGET_FREQUENCY}" \
 {% endif %}

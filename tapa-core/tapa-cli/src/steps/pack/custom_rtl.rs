@@ -9,7 +9,8 @@
 //!    `<work_dir>/rtl/<module>.v` placeholder. Mismatches log a warning;
 //!    unknown modules are accepted as helpers.
 //! 3. Copy every collected file into `<work_dir>/rtl` (overwriting
-//!    generated templates when names collide).
+//!    generated templates when names collide). A source that is already
+//!    the destination file is left untouched.
 //!
 //! Port mismatches only warn, and non-Verilog files are accepted so
 //! users can drop `.tcl` helpers alongside `.v` overrides.
@@ -155,11 +156,7 @@ pub(super) fn apply_custom_rtl(
         let dest = rtl_dir.join(file_name);
         let replaced = copy_overlay(src, &dest)?;
         if replaced {
-            log::info!(
-                "custom-rtl: replaced {} with {}",
-                dest.display(),
-                src.display(),
-            );
+            log::info!("custom-rtl: using {} for {}", src.display(), dest.display());
         } else {
             log::info!(
                 "custom-rtl: added {} from {}",
@@ -172,9 +169,22 @@ pub(super) fn apply_custom_rtl(
 }
 
 /// Overlay `src` onto `dest`. Returns `true` if `dest` already existed
-/// (i.e. the file was replaced), `false` if it was newly added.
+/// and `false` if it was newly added. Identical source and destination
+/// files are left untouched, including symbolic and hard-link aliases.
 fn copy_overlay(src: &Path, dest: &Path) -> Result<bool> {
     let replaced = dest.try_exists()?;
+    #[cfg(unix)]
+    if replaced {
+        use std::os::unix::fs::MetadataExt as _;
+
+        // Canonical paths miss hard links. Metadata follows symbolic links
+        // without requiring read permission on a write-only destination.
+        let source = fs_err::metadata(src)?;
+        let destination = fs_err::metadata(dest)?;
+        if (source.dev(), source.ino()) == (destination.dev(), destination.ino()) {
+            return Ok(true);
+        }
+    }
     fs_err::copy(src, dest)?;
     Ok(replaced)
 }
@@ -340,6 +350,34 @@ mod tests {
             copied.contains("rst"),
             "placeholder template must be overwritten by the overlay"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pack_custom_rtl_preserves_in_place_overlay() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rtl_dir = dir.path().join("rtl");
+        let src = rtl_dir.join("Foo.v");
+        let body = "module Foo(input wire clk); endmodule\n";
+        write(&src, body);
+
+        let hard_link = dir.path().join("hard").join("Foo.v");
+        let symbolic_link = dir.path().join("symbolic").join("Foo.v");
+        fs_err::create_dir_all(hard_link.parent().expect("parent")).expect("mkdir hard");
+        fs_err::create_dir_all(symbolic_link.parent().expect("parent")).expect("mkdir symbolic");
+        fs_err::hard_link(&src, &hard_link).expect("hard link");
+        std::os::unix::fs::symlink(&src, &symbolic_link).expect("symbolic link");
+
+        for path in [&src, &hard_link, &symbolic_link, &rtl_dir] {
+            apply_custom_rtl(&rtl_dir, std::slice::from_ref(path), &TemplatesInfo::new())
+                .expect("apply in-place overlay");
+            assert_eq!(
+                fs_err::read_to_string(&src).expect("read custom RTL"),
+                body,
+                "overlay {} must preserve the existing file",
+                path.display(),
+            );
+        }
     }
 
     #[test]

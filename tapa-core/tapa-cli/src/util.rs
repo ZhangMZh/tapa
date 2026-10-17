@@ -7,6 +7,20 @@ use tapa_ir::ClockPeriod;
 
 use crate::error::CliError;
 
+/// Single-quote an argument unless it is made only of characters every shell
+/// leaves alone.
+pub fn shell_quote(arg: &str) -> String {
+    let safe = !arg.is_empty()
+        && arg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_=+:,./@".contains(c));
+    if safe {
+        arg.to_owned()
+    } else {
+        format!("'{}'", arg.replace('\'', r"'\''"))
+    }
+}
+
 /// Parse a `--clock-period` flag: nanoseconds in decimal. A *target* period
 /// must be positive — zero has no frequency to synthesize for — which is
 /// stricter than [`ClockPeriod`] itself, since a measured period of zero is

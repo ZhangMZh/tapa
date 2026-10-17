@@ -292,6 +292,13 @@ Package per-task RTL from the work directory into a single output artifact. For 
 | `--connectivity FILE` | Memory connectivity `.ini` with the Vitis `sp=` bank assignments. When set, the emitted bitstream script passes it to `v++ --link` as a `--config`, binding each M-AXI port to its bank — required for HBM/DDR designs. |
 | `--bitstream-script FILE` / `-s FILE` | Write the generated bitstream-generation script to this path. |
 
+The generated script passes XO, floorplan, connectivity, and platform paths
+literally to `v++`, including paths containing spaces or apostrophes.
+
+If a custom RTL source and its destination in `<work-dir>/rtl` refer to the
+same file, packaging leaves it untouched and continues. This also applies
+to symbolic links and hard links to that file.
+
 ### Example
 
 ```bash

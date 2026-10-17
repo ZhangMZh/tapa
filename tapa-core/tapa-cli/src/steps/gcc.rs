@@ -8,6 +8,7 @@ use clap::Parser;
 use crate::context::CliContext;
 use crate::error::Result;
 use crate::tapacc::cflags::{get_tapa_cflags, get_tapa_ldflags};
+use crate::util::shell_quote;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -56,20 +57,6 @@ fn format_command(cmd: &Command) -> String {
         out.push_str(&shell_quote(&arg.to_string_lossy()));
     }
     out
-}
-
-/// Single-quote an argument unless it is made only of characters every shell
-/// leaves alone.
-fn shell_quote(arg: &str) -> String {
-    let safe = !arg.is_empty()
-        && arg
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "-_=+:,./@".contains(c));
-    if safe {
-        arg.to_owned()
-    } else {
-        format!("'{}'", arg.replace('\'', r"'\''"))
-    }
 }
 
 #[cfg(test)]
