@@ -11,4 +11,20 @@
 #include "tapa/xilinx/hls/logging.h"
 #include "tapa/xilinx/hls/util.h"
 
+namespace tapa {
+namespace internal {
+
+template <int W, bool S>
+inline ap_int_base<W, false> materialize(const ap_range_ref<W, S>& proxy) {
+  return static_cast<ap_int_base<W, false>>(proxy);
+}
+
+template <int W, bool S>
+inline bool materialize(const ap_bit_ref<W, S>& proxy) {
+  return static_cast<bool>(proxy);
+}
+
+}  // namespace internal
+}  // namespace tapa
+
 #include "tapa/base/vec.h"
