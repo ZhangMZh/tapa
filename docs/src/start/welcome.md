@@ -22,6 +22,7 @@ TAPA is a task-parallel HLS framework that compiles C++ dataflow programs to Ver
 - [Installation](installation.md)
 - [Your First Run](first-run.md)
 - [Fast Hardware Simulation](../howto/fast-cosim.md)
+- [Floorplan for Timing Closure](../howto/floorplan.md)
 - [Build & Deploy xclbin](../howto/build-and-run.md)
 - [Debug a Deadlock](../troubleshoot/deadlocks-and-hangs.md)
 

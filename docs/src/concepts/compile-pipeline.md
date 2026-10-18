@@ -52,8 +52,8 @@ Linux machine that has Vitis HLS installed.
 multi-die device, balances resource usage across them, and inserts pipeline
 registers on channels that cross SLR boundaries. It writes `floorplan.xdc`,
 which `pack` picks up automatically. Skip it if your design already meets
-timing; see [Performance Tuning](../howto/performance-tuning.md) for when it
-helps.
+timing; see [Floorplan for Timing Closure](../howto/floorplan.md) for when it
+helps and how to run it.
 
 **`tapa pack`** — Combines the generated RTL into an `.xo` for the default
 `xilinx-vitis` target or a `.zip` for `xilinx-hls`. An XO feeds `v++ --link`;

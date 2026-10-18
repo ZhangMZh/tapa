@@ -164,7 +164,8 @@ tapa --work-dir work.out synth \
 Floorplan a design for a supported multi-die (multi-SLR) FPGA. Run it after
 `synth` and before `pack` to place tasks, balance resource usage, and pipeline
 connections between SLRs. It writes `floorplan.xdc`, which `pack` applies
-automatically.
+automatically. See [Floorplan for Timing Closure](../howto/floorplan.md) for
+the guided workflow.
 
 ### Supported devices
 

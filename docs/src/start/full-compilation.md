@@ -52,6 +52,12 @@ combined timing and area summary to `work.out/report.json` and
 
 Artifact produced: `vecadd.xo`
 
+```admonish tip
+For a supported multi-SLR design with cross-SLR timing or congestion issues,
+run `tapa floorplan` and repack before cosimulation. `tapa compile` does not
+include that step; see [Floorplan for Timing Closure](../howto/floorplan.md).
+```
+
 ## Stage 2 — Fast hardware simulation
 
 Before waiting hours for a full bitstream, validate the RTL with TAPA's

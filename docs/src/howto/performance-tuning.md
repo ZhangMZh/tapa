@@ -87,37 +87,15 @@ TAPA needs a resource estimate for each task to balance the design across SLRs d
 
 ## Improving Fmax with `tapa floorplan`
 
-The checks above improve *throughput* (II, memory, FIFO depth). To improve *clock frequency* (Fmax) on a multi-SLR device, run `tapa floorplan` between `synth` and `pack`. It assigns tasks to SLRs, balances resource usage across them, adds pipeline registers on the channels that cross SLR boundaries, and generates the placement and timing constraints for `pack`.
+The checks above improve throughput. To improve clock frequency on a
+supported multi-SLR device, run `tapa floorplan` between `synth` and `pack`.
+It places tasks, balances resources, and pipelines SLR crossings.
 
-### When it helps
+Use floorplanning for cross-SLR timing failures or routing congestion, not for
+long combinational paths inside a task. Those require HLS changes.
 
-Floorplanning helps when your design is **SLR-crossing-bound**: without it, Vivado either fails to route at your target clock or leaves long, slow paths across dies. Typical signs are routing congestion or worst paths that hop between SLRs. If your design already meets timing, you don't need it.
-
-### Running it with implementation feedback
-
-`tapa floorplan` can plan alone (fast — just writes constraints), or run the plan through `v++ --link` to measure the resulting Fmax:
-
-```bash
-tapa --work-dir work.out floorplan \
-  --partition-strategy multi-level --pp-scheme double \
-  --connectivity connectivity.ini \
-  --dse --dse-min 0.55 --dse-max 0.90 --dse-step 0.05 \
-  --vivado-threads 2
-```
-
-- `--run-impl` plans once and measures that single plan.
-- `--dse` sweeps a range of per-SLR utilization caps, measures each, and reports the best Fmax. Results land in `floorplan-metrics.json` (winner) and `dse/candidates.json` (all candidates).
-
-See the [`tapa floorplan` CLI reference](../reference/cli.md) for the full flag set.
-
-### What floorplanning can and cannot fix
-
-Floorplanning fixes problems caused by **placement and routing** — SLR crossings, congestion, and reset-distribution delay. It does **not** change the logic inside a task. If your worst failing paths live entirely within one task (a long combinational chain the HLS scheduler placed in a single cycle), no floorplan will close timing; you need to restructure that task (e.g. add a `[[tapa::pipeline(1)]]`, split the operation across cycles).
-
-To tell the two apart, read the post-implementation timing report. Repeated
-failures on cross-SLR routes or in congested regions are candidates for
-floorplanning. A long combinational path contained within one task requires
-HLS changes even if its endpoints happen to be placed in different SLRs.
+See [Floorplan for Timing Closure](floorplan.md) for the complete workflow,
+including connectivity, `--run-impl`, DSE, result files, and troubleshooting.
 
 ## Advanced flags summary
 

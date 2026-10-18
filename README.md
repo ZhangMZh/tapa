@@ -126,6 +126,7 @@ Full documentation: **[tapa.readthedocs.io](https://tapa.readthedocs.io/en/lates
 | [Installation](https://tapa.readthedocs.io/en/latest/start/installation.html) | Install from release or build from source |
 | [Your First Run](https://tapa.readthedocs.io/en/latest/start/first-run.html) | Software simulation without FPGA hardware |
 | [How-To Guides](https://tapa.readthedocs.io/en/latest/howto/software-simulation.html) | Build, simulate, and deploy designs |
+| [Floorplan for Timing Closure](https://tapa.readthedocs.io/en/latest/howto/floorplan.html) | Place and pipeline supported multi-SLR designs |
 | [Tutorials](https://tapa.readthedocs.io/en/latest/tutorials/learning-path.html) | Annotated labs from vector addition to parallel RTL emulation |
 | [C++ API Reference](https://tapa.readthedocs.io/en/latest/reference/api.html) | Full API: tasks, streams, mmap, utilities |
 | [CLI Reference](https://tapa.readthedocs.io/en/latest/reference/cli.html) | All `tapa` subcommands and flags |
