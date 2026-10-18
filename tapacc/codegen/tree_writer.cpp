@@ -203,6 +203,30 @@ const std::string* TreeLayout::KeyOf(llvm::StringRef abs_path) const {
 
 // ── Per-file buffer with #line re-snap ────────────────────────────────────
 
+// Writes the identity of original text at `loc`. In an ordinary file the
+// mirror keeps using its canonical physical path. If a user #line directive
+// remaps either component, the presumed identity is authoritative so the
+// generated marker preserves both __FILE__ and __LINE__.
+void WriteOriginalLineIdentity(llvm::raw_ostream& os,
+                               const clang::SourceManager& sm,
+                               clang::SourceLocation loc,
+                               const std::string& physical_path) {
+  const clang::PresumedLoc presumed = sm.getPresumedLoc(loc);
+  const clang::PresumedLoc physical =
+      sm.getPresumedLoc(loc, /*UseLineDirectives=*/false);
+  const bool remapped =
+      presumed.isValid() &&
+      (!physical.isValid() || presumed.getLine() != physical.getLine() ||
+       llvm::StringRef(presumed.getFilename()) != physical.getFilename());
+  if (remapped) {
+    os << presumed.getLine() << " \"" << presumed.getFilename() << "\"";
+    return;
+  }
+  os << (presumed.isValid() ? presumed.getLine()
+                            : sm.getSpellingLineNumber(loc))
+     << " \"" << physical_path << "\"";
+}
+
 TreeFileBuffer::TreeFileBuffer(clang::SourceManager& sm,
                                clang::Rewriter& rewriter, clang::FileID file,
                                std::string abs_path)
@@ -251,9 +275,13 @@ std::string TreeFileBuffer::SyntheticLead(clang::SourceLocation begin,
     return text.str();
   }
   // The leading newline keeps the marker on its own line whatever precedes
-  // the anchor; the trailing one ends it.
-  return "\n#line " + std::to_string(sm_.getSpellingLineNumber(begin)) +
-         " \"tapa:" + abs_path_ + "\"\n" + text.str();
+  // the anchor; the trailing one ends it. The anchor's presumed line names
+  // the same user construct even when a #line directive remapped it.
+  const clang::PresumedLoc presumed = sm_.getPresumedLoc(begin);
+  const unsigned line = presumed.isValid() ? presumed.getLine()
+                                           : sm_.getSpellingLineNumber(begin);
+  return "\n#line " + std::to_string(line) + " \"tapa:" + abs_path_ + "\"\n" +
+         text.str();
 }
 
 bool TreeFileBuffer::ApplyEdit(clang::SourceLocation begin, unsigned length,
@@ -305,8 +333,9 @@ bool TreeFileBuffer::ResnapAfterEdit(clang::SourceLocation begin,
   // can be emitted ahead of it, and a `#line` directive glued to prior
   // text is a syntax error. A leading blank line is legal and harmless;
   // pins are absolute.
-  os << (begin_offset > 0 ? "\n" : "") << "#line "
-     << sm_.getSpellingLineNumber(at) << " \"" << abs_path_ << "\"\n";
+  os << (begin_offset > 0 ? "\n" : "") << "#line ";
+  WriteOriginalLineIdentity(os, sm_, at, abs_path_);
+  os << "\n";
   // InsertTextAfter, not Before: an edit at the same offset (a pure
   // insertion's own marker) must land after the inserted text, and
   // RewriteBuffer maps equal offsets through that flag.
@@ -316,11 +345,11 @@ bool TreeFileBuffer::ResnapAfterEdit(clang::SourceLocation begin,
 
 std::string TreeFileBuffer::Render() {
   // Untouched files are byte-identical copies of the original. An edited
-  // file opens by adopting the original's identity (`#line 1 "<abs>"`), so
-  // diagnostics and `__FILE__` cite the user's source, not the mirror --
-  // without it, the region before the first edit's marker would keep the
-  // mirror's path (its line numbers coincide only because nothing shifted
-  // above the first edit yet).
+  // file opens by adopting the original physical identity (`#line 1
+  // "<abs>"`), so diagnostics and `__FILE__` in its untouched head cite the
+  // user's source, not the mirror. This initial adoption deliberately
+  // precedes any user #line directive; re-snap markers use presumed identity
+  // for the original text after later edits.
   if (!had_edits_) return sm_.getBufferData(file_).str();
   std::string out = "#line 1 \"" + abs_path_ + "\"\n";
   llvm::raw_string_ostream os(out);

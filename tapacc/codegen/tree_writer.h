@@ -115,11 +115,12 @@ class TreeLayout {
 
 // One mirrored file under rewrite: its original bytes plus edits, with
 // `#line` bookkeeping keeping diagnostics pointed at the original file.
-// Every edit that changes the line count is followed by a
-// `#line <n> "<abs_path>"` marker re-snapping the following text to its
-// original numbering. Markers are computed in original-file coordinates:
-// each line-count change re-snaps immediately, so a later edit's marker is
-// correct no matter how many earlier edits shifted the text physically.
+// Every edit that changes the line count is followed by a `#line` marker
+// re-snapping the following text to its original presumed identity (or its
+// canonical physical identity when no user #line directive remaps it).
+// Markers are computed in original-file coordinates: each line-count change
+// re-snaps immediately, so a later edit's marker is correct no matter how
+// many earlier edits shifted the text physically.
 class TreeFileBuffer {
  public:
   TreeFileBuffer(clang::SourceManager& sm, clang::Rewriter& rewriter,
@@ -151,8 +152,8 @@ class TreeFileBuffer {
   // interface preambles, stubs, wrappers) carries lines the original file
   // does not have, so a multi-line insertion is prefixed with a marker
   // adopting the synthetic identity `tapa:<original path>` at the anchor's
-  // original line. Diagnostics inside the inserted span then name the file
-  // and construct it belongs to while saying the text is TAPA's; the
+  // original presumed line. Diagnostics inside the inserted span then name
+  // the file and construct it belongs to while saying the text is TAPA's; the
   // trailing re-snap restores the original identity for the text that
   // follows. Insertions without a newline (an attribute prefix decorating
   // one original line) pass through unchanged.

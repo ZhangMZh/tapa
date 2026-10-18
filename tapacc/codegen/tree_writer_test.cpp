@@ -339,6 +339,50 @@ TEST(TreeFileBuffer, MultiLineReplacementResnapsWithLineMarker) {
             "int two;\n");
 }
 
+TEST(TreeFileBuffer, UserLineDirectivesSurviveEdits) {
+  constexpr char code[] = R"tapa(#line 100 "logical.cpp"
+int one;
+void f() {
+  one = 1;
+}
+static_assert(__LINE__ == 104);
+static_assert(__builtin_strcmp(__FILE__, "logical.cpp") == 0);
+)tapa";
+  auto ast = clang::tooling::buildASTFromCodeWithArgs(
+      code, std::vector<std::string>{"-std=c++17"}, "main.cpp");
+  ASSERT_NE(ast, nullptr);
+  clang::SourceManager& sm = ast->getSourceManager();
+  clang::Rewriter rewriter(sm, ast->getLangOpts());
+  TreeFileBuffer buffer(sm, rewriter, sm.getMainFileID(), "/src/main.cpp");
+
+  const std::string body = "void f() {\n  one = 1;\n}";
+  const size_t offset = std::string(code).find(body);
+  ASSERT_NE(offset, std::string::npos);
+  const clang::SourceLocation begin =
+      sm.getLocForStartOfFile(sm.getMainFileID()).getLocWithOffset(offset);
+  // Synthetic text uses the presumed anchor line, while retaining TAPA's
+  // distinct physical-source identity.
+  EXPECT_EQ(buffer.SyntheticLead(begin, "generated\ntext"),
+            "\n#line 101 \"tapa:/src/main.cpp\"\ngenerated\ntext");
+  ASSERT_TRUE(
+      buffer.ReplaceWithLineResnap(RangeOf(sm, offset, body.size()),
+                                   "void f() {\n  one = 1;\n  one += 1;\n}"));
+
+  const std::string rendered = buffer.Render();
+  // The initial physical adoption remains; the post-edit marker restores
+  // the user's presumed file and line instead of resetting to main.cpp:6.
+  EXPECT_TRUE(llvm::StringRef(rendered).starts_with(
+      "#line 1 \"/src/main.cpp\"\n#line 100 \"logical.cpp\"\n"));
+  EXPECT_NE(rendered.find("#line 104 \"logical.cpp\"\nstatic_assert"),
+            std::string::npos)
+      << rendered;
+  // Compile the edited bytes: these assertions check the actual predefined
+  // __LINE__ and __FILE__ values after the re-snap, not just marker text.
+  EXPECT_TRUE(clang::tooling::runToolOnCodeWithArgs(
+      std::make_unique<clang::SyntaxOnlyAction>(), rendered,
+      std::vector<std::string>{"-std=c++17"}, "main.cpp"));
+}
+
 TEST(TreeFileBuffer, ForeignInsertionAtMarkerOffsetDoesNotGlueTheMarker) {
   // A guard edge and a helper's inline attribute can land at the same
   // offset; the `#line` re-snap must still start its own line. This is the
