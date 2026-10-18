@@ -80,6 +80,9 @@ pub struct MutableModule {
     pub inner: VerilogModule,
     /// Raw body text between port declarations and `endmodule`.
     pub body_text: String,
+    /// Raw source after the first module: later modules and trailing
+    /// text, emitted verbatim once this module is closed.
+    trailing_text: String,
     /// New module instances to append to the body.
     added_instances: Vec<ModuleInstance>,
     /// New continuous assigns to append.
@@ -91,13 +94,16 @@ pub struct MutableModule {
 impl MutableModule {
     /// Create a mutable module from a parsed `VerilogModule`.
     ///
-    /// Extracts the original body after the module's declaration prefix using
-    /// parser-derived source boundaries, independently of line formatting.
+    /// Extracts the original body after the module's declaration prefix, plus
+    /// the trailing source after the first module, using parser-derived
+    /// boundaries, independently of line formatting.
     pub fn from_parsed(module: VerilogModule) -> Self {
-        let body_text = crate::parser::original_module_body(&module.source).to_owned();
+        let (body_text, trailing_text) = crate::parser::original_module_text(&module.source);
+        let (body_text, trailing_text) = (body_text.to_owned(), trailing_text.to_owned());
         Self {
             inner: module,
             body_text,
+            trailing_text,
             added_instances: Vec::new(),
             added_assigns: Vec::new(),
             added_always: Vec::new(),
@@ -334,6 +340,10 @@ impl MutableModule {
         }
 
         let _ = writeln!(out, "endmodule //{}", self.inner.name);
+
+        // Later modules and trailing text pass through untouched; only the
+        // boundary before this suffix is normalized by the terminator above.
+        let _ = write!(out, "{}", self.trailing_text);
         out
     }
 }
@@ -635,6 +645,61 @@ endmodule
                 "declaration prefixes must not be duplicated in the body"
             );
         }
+    }
+
+    #[test]
+    fn emit_preserves_modules_after_the_first_and_trailing_text() {
+        let tail = concat!(
+            "// between modules: endmodule\n",
+            "module Second(a);\n",
+            "  input a;\n",
+            "  wire [3:0] keep_me = 4'b0;\n",
+            "endmodule : Second\n",
+            "// final trailing text mentioning endmodule\n",
+            "`ifdef UNUSED\n",
+            "`endif\n\n  ",
+        );
+        let source = format!(
+            "module First(input i, output o);\n\
+             wire tmp;\n\
+             assign o = i; // endmodule inside a body comment\n\
+             initial $display(\"endmodule inside a string\");\n\
+             endmodule\n\
+             {tail}"
+        );
+        let module = VerilogModule::parse(&source).unwrap();
+        let mut mm = MutableModule::from_parsed(module);
+        mm.add_assign(ContinuousAssign::new(Expr::ident("tmp"), Expr::ident("i")));
+        let emitted = mm.emit();
+
+        let endmodule_line = emitted
+            .lines()
+            .position(|line| line.starts_with("endmodule"))
+            .expect("first module has a terminator");
+        let added_line = emitted
+            .lines()
+            .position(|line| line.contains("assign tmp = i;"))
+            .expect("added assign emitted");
+        assert!(
+            added_line < endmodule_line,
+            "added statements must stay inside the first module:\n{emitted}"
+        );
+        assert!(
+            !mm.body_text.contains("module Second"),
+            "later modules belong to the trailing text, not the body:\n{}",
+            mm.body_text
+        );
+        assert_eq!(
+            emitted.matches("\nendmodule").count(),
+            2,
+            "exactly two module terminators, no extra one appended:\n{emitted}"
+        );
+        assert!(
+            emitted.ends_with(tail),
+            "later modules and trailing text preserved byte-for-byte:\n{emitted}"
+        );
+        let reparsed = VerilogModule::parse(&emitted).unwrap();
+        assert_eq!(reparsed.name, "First", "emitted text stays parseable");
     }
 
     #[test]

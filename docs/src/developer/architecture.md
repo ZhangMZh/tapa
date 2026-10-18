@@ -151,8 +151,9 @@ in `tapa-ir` and `tapa-protocol`, never by sharing implementation.
   emitted (tree-sitter + nom). Other crates never manipulate Verilog
   source as text. Activity queries inspect a transient tree-sitter CST and
   prove only unconditional, full-width literal-zero drivers inactive. Module
-  body boundaries also come from the CST, preserving original body text
-  independently of header and declaration layout.
+  body boundaries also come from the CST, preserving original body text and
+  any modules or trailing text after the first independently of header and
+  declaration layout.
 - **tapa-floorplan** — turns `(design, device)` into a serialized
   `FloorplanResult`. Placements, slot usage, and planned routes use typed
   coordinates; finalization renders region strings for the persisted schema.

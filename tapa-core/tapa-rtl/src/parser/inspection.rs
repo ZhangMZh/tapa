@@ -165,19 +165,25 @@ fn is_declaration_prefix(node: Node, src: &[u8]) -> bool {
     }
 }
 
-/// Locate the original body with the same CST grammar used for the interface.
+/// Locate the original body and trailing source with the same CST grammar
+/// used for the interface: the body runs from the end of the declaration
+/// prefix to the module's `endmodule`, and the tail holds everything after
+/// the first `module_declaration` — later modules and trailing text, except
+/// the terminator's own same-line comment, which emission rewrites.
 /// No body nodes or rewritten source are retained between inspections.
-pub fn original_module_body(source: &str) -> &str {
+pub fn original_module_text(source: &str) -> (&str, &str) {
+    let empty = ("", "");
     let src = source.as_bytes();
     let mut parser = sv_parser();
     let Some(tree) = parser.parse(src, None) else {
-        return "";
+        return empty;
     };
-    let Some(module) = find_first_module(tree.root_node()) else {
-        return "";
+    let root = tree.root_node();
+    let Some(module) = find_first_module(root) else {
+        return empty;
     };
     let Some(header) = module_header(module) else {
-        return "";
+        return empty;
     };
     let body_end = (0..child_count(module))
         .map(|i| module.child(i).unwrap())
@@ -199,5 +205,15 @@ pub fn original_module_body(source: &str) -> &str {
             body_start = child.end_byte();
         }
     }
-    &source[body_start..body_end]
+    // The comment on the terminator's own line is replaced by the emitted
+    // `endmodule //name`; every later node starts the preserved tail.
+    let tail_start = (0..child_count(root))
+        .map(|i| root.child(i).unwrap())
+        .filter(|node| node.start_byte() >= module.end_byte())
+        .find(|node| {
+            !(node.start_position().row == module.end_position().row
+                && matches!(node.kind(), "one_line_comment" | "block_comment"))
+        })
+        .map_or_else(|| source.len(), |node| node.start_byte());
+    (&source[body_start..body_end], &source[tail_start..])
 }
