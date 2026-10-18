@@ -2,5 +2,5 @@
 # All rights reserved. The contributor(s) of this file has/have agreed to the
 # RapidStream Contributor License Agreement.
 
-This version does not use async_mmap
+This variant uses direct `mmap` interfaces rather than `async_mmap`.
 Source: https://github.com/cornell-zhang/HiSparse

@@ -17,13 +17,14 @@ This directory contains multiple small example TAPA designs:
 | `gemv` | Matrix-vector multiply |
 | `graph` | Graph traversal with a large per-task local buffer |
 | `ignore` | `[[tapa::target("ignore")]]` for custom-RTL replacement |
-| `jacobi` | Stencil computation with end-of-transmission (`close()`) |
+| `jacobi` | Stencil computation with end-of-transaction (`close()`) |
 | `network` | Packet switching with `peek` and detached tasks |
 | `templated` | Templated leaf tasks |
 
 For large and complex designs, refer to the `tests/regression` directory.
 
 To run the examples, build TAPA from source and follow the instructions below.
+
 ```bash
 cd tapa/tests/apps/vadd
 tapa g++ -- vadd.cpp vadd-host.cpp -o vadd

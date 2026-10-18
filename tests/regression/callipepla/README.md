@@ -6,10 +6,10 @@ RapidStream Contributor License Agreement.
 
 # Demo: Callipepla, conjugate gradient (CG) solver
 
-## Feature
+## Configuration
 
-26 HBM channels, 512-bit each.
+The design uses 26 HBM channels, each 512 bits wide.
 
 ## Source
 
-This design source is collected from [Callipepla](https://github.com/UCLA-VAST/Callipepla).
+This design was collected from [Callipepla](https://github.com/UCLA-VAST/Callipepla).

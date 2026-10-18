@@ -6,10 +6,11 @@ RapidStream Contributor License Agreement.
 
 # Demo: Serpens, general-purpose sparse matrix-vector multiplication
 
-## Feature
+## Configuration
 
-32 HBM channels, tailored to 256-bit each + 2 512-bit DDR controllers. All memory ports used.
+The design uses all available memory ports: 32 HBM channels (256 bits each)
+and two DDR controllers (512 bits each).
 
 ## Source
 
-This design source is collected from [Serpens](https://github.com/UCLA-VAST/Serpens).
+This design was collected from [Serpens](https://github.com/UCLA-VAST/Serpens).
