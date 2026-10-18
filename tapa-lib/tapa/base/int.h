@@ -1127,7 +1127,7 @@ class bit_ref {
 
   operator bool() const { return ref_.get_bit(idx_); }  // NOLINT
   bit_ref& operator=(uint64_t value) {
-    ref_.set_bit(idx_, (value & 1) != 0);
+    ref_.set_bit(idx_, value != 0);
     return *this;
   }
   bit_ref& operator|=(bool b) { return *this = ref_.get_bit(idx_) | b; }

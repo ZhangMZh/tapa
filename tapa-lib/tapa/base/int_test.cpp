@@ -437,6 +437,11 @@ TEST(IntTest, BitAssignmentUsesTheWholeSourceValue) {
   // ap_bit_ref assigns `val != 0`; taking bit 0 would clear the bit for an
   // even non-zero source such as a 2-bit mask.
   tapa::u<8> flags = 0;
+  flags[3] = 2;
+  EXPECT_EQ(flags, 8);
+  flags[3] = 0;
+  EXPECT_EQ(flags, 0);
+
   tapa::u<4> hit = 2;
   flags[3] = hit;
   EXPECT_EQ(flags, 8);
