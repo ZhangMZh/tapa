@@ -6,7 +6,7 @@
 
 ## What you need
 
-- A compiled `.xo` from `tapa compile --work-dir work.out`
+- A compiled `.xo` from `tapa --work-dir work.out compile ...`
 - Reports in `work.out/` (synthesis reports, utilization data)
 - Understanding of your design's expected throughput
 
@@ -18,24 +18,33 @@ Work through these checks in order — each is faster to fix than the next.
 
 After `tapa compile`, check the HLS reports in `work.out/` for II violations:
 
-- An II > 1 on a pipelined loop means the loop is not fully pipelined and throughput is reduced.
-- Look for `WARNING: [HLS ...] Unable to schedule` or `II = N` where N > 1 in the HLS log.
+- An II > 1 on a pipelined loop means it cannot accept a new iteration every
+  cycle, which can reduce throughput.
+- Look for scheduling warnings and the achieved II in the HLS report.
 
-Fix: Add `[[tapa::pipeline(1)]]` to the loop, or restructure the loop body to eliminate data-path dependencies.
+If the loop is not already pipelined, add `[[tapa::pipeline(1)]]` to request
+II=1. If it still reports II>1, read the violation and restructure the
+specified dependency, memory access, or data path. The attribute is a request,
+not a guarantee that HLS can achieve II=1.
 
 ### 2. Check memory throughput — consider `async_mmap`
 
-Synchronous `mmap` accesses stall the task until each memory transaction completes. If your task spends time waiting for DRAM:
+`mmap` leaves request scheduling to HLS and does not expose separate
+request/response channels. If memory latency limits your task:
 
 - Use `tapa::async_mmap` to overlap computation and memory access.
 - Check the synthesis report for memory interface utilization.
 
 ### 3. Check stream depths — FIFOs too shallow?
 
-FIFOs that are too shallow cause backpressure and reduce throughput when producer and consumer tasks run at different rates. If tasks are frequently stalling:
+A shallow FIFO can throttle a bursty producer even when the consumer's
+average rate is sufficient. First rule out an element-count or protocol bug;
+increasing depth cannot fix a structural deadlock. Then:
 
-- Increase the stream depth in your TAPA source: `tapa::stream<T, DEPTH>`.
-- Check waveforms from fast cosim (`-xsim_save_waveform`) to observe backpressure.
+- Check waveforms from fast cosim (`-xsim_save_waveform`) to observe
+  backpressure.
+- If additional burst storage is needed, increase the depth in
+  `tapa::stream<T, DEPTH>` and review the resource cost.
 
 ### 4. Find resource hotspots with `--enable-synth-util`
 
@@ -53,7 +62,7 @@ TAPA runs an additional RTL synthesis pass and writes per-task resource counts t
 - `work.out/report.json` — machine-readable JSON
 - `work.out/report.yaml` — human-readable YAML
 
-Both files contain per-task LUT, FF, BRAM, and DSP counts. Use them to identify which tasks are consuming the most resources before proceeding to full implementation.
+Both files contain per-task LUT, FF, BRAM, URAM, and DSP counts. Use them to identify which tasks are consuming the most resources before proceeding to full implementation.
 
 ## Validation
 
@@ -63,7 +72,7 @@ After running `tapa synth --enable-synth-util`, confirm the reports were written
 ls work.out/report.json work.out/report.yaml
 ```
 
-- `work.out/report.json` — machine-readable per-task resource counts (LUT, FF, BRAM, DSP)
+- `work.out/report.json` — machine-readable per-task resource counts (LUT, FF, BRAM, URAM, DSP)
 - `work.out/report.yaml` — human-readable version of the same data
 
 If these files are missing, synthesis either did not run or exited before the reporting step. Check the HLS log in `work.out/` for errors.
@@ -107,7 +116,10 @@ See the [`tapa floorplan` CLI reference](../reference/cli.md) for the full flag 
 
 Floorplanning fixes problems caused by **placement and routing** — SLR crossings, congestion, and reset-distribution delay. It does **not** change the logic inside a task. If your worst failing paths live entirely within one task (a long combinational chain the HLS scheduler placed in a single cycle), no floorplan will close timing; you need to restructure that task (e.g. add a `[[tapa::pipeline(1)]]`, split the operation across cycles).
 
-To tell the two apart, read the post-implementation timing report: worst paths whose *source and destination sit in different SLRs*, or whose source is a reset/clock tree, are placement problems the floorplan can address; worst paths contained inside a single task instance are logic-depth problems that require HLS changes.
+To tell the two apart, read the post-implementation timing report. Repeated
+failures on cross-SLR routes or in congested regions are candidates for
+floorplanning. A long combinational path contained within one task requires
+HLS changes even if its endpoints happen to be placed in different SLRs.
 
 ## Advanced flags summary
 

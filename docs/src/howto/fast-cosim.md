@@ -2,15 +2,19 @@
 
 **Purpose:** Validate RTL correctness faster than Vitis cosimulation using TAPA's fast cosim.
 
-**When to use this:** After `tapa compile` produces a `.xo` file, before the multi-hour `v++ --link` step. Fast cosim catches logic bugs in generated RTL in seconds rather than the ten-plus minutes Vitis cosimulation requires.
+**When to use this:** After `tapa compile` produces an RTL archive and before
+the multi-hour `v++ --link` step. For small designs, fast cosim checks the
+generated RTL in seconds; Vitis hardware emulation takes much longer to set
+up and run.
 
 ## What you need
 
-- A `.xo` kernel object from `tapa compile` (or a `.zip` for the `xilinx-hls` target)
-- One of:
-  - **xsim**: Requires a Vivado installation. Linux only. No version floor.
-  - **verilator**: Open-source. Works on Linux and macOS. No Vivado required.
-    **Must be 5.044 or newer** — see below.
+- A `.xo` kernel object from `tapa compile` (or a `.zip` for `xilinx-hls`)
+- A host executable built against the same kernel interface
+- One of these backends:
+  - **xsim**: Requires Vivado on Linux.
+  - **verilator**: Open-source, works on Linux and macOS, and does not require
+    Vivado. **Must be 5.044 or newer** — see below.
 
 ```admonish warning title="Check your Verilator version before choosing it"
 Verilator older than 5.044 cannot elaborate the AXI master Vitis HLS generates
@@ -32,13 +36,13 @@ problem:
 Pass the `.xo` file as the `--bitstream` argument:
 
 ```bash
-./vadd --bitstream VecAdd.xo 1000
+./vadd --bitstream vecadd.xo 1000
 ```
 
 For the `xilinx-hls` target, a `.zip` file also works:
 
 ```bash
-./vadd --bitstream VecAdd.zip 1000
+./vadd --bitstream vecadd.zip 1000
 ```
 
 ### Choosing a simulator backend
@@ -46,7 +50,7 @@ For the `xilinx-hls` target, a `.zip` file also works:
 The default backend is `xsim`. To switch to Verilator:
 
 ```bash
-./vadd --bitstream VecAdd.xo -cosim_simulator verilator 1000
+./vadd --bitstream vecadd.xo -cosim_simulator verilator 1000
 ```
 
 ### Saving waveforms
@@ -54,7 +58,7 @@ The default backend is `xsim`. To switch to Verilator:
 Specify a persistent work directory and enable waveform saving:
 
 ```bash
-./vadd --bitstream VecAdd.xo \
+./vadd --bitstream vecadd.xo \
     -cosim_work_dir ./cosim_work \
     -xsim_save_waveform \
     1000
@@ -64,36 +68,60 @@ Specify a persistent work directory and enable waveform saving:
 Strongly recommended: pair `-xsim_save_waveform` with `-cosim_work_dir`. Without a persistent work directory, fast cosim uses a temporary directory that is deleted at exit, removing any saved waveforms with it.
 ```
 
-### Setup-only and resume workflow
+### Setup, manual xsim run, and resume
 
-When you want to inspect the generated simulation environment before committing to a full run:
+Use this workflow when you need to inspect or modify the generated xsim
+environment before running it. The resume step does not simulate by itself:
+you must run the simulator between setup and resume.
 
 ```bash
-# Step 1: set up the simulation environment and stop before running
-./vadd --bitstream VecAdd.xo \
-    -cosim_work_dir ./cosim_work \
+cosim="$PWD/cosim_work"
+
+# Step 1: generate the work directory and dpi_config.json, then exit.
+./vadd --bitstream=vecadd.xo \
+    -cosim_work_dir "$cosim" \
     -cosim_setup_only \
     1000
 
-# Step 2: after inspecting, run post-simulation checks without re-simulating
-./vadd --bitstream VecAdd.xo \
-    -cosim_work_dir ./cosim_work \
+# Step 2: inspect the files if needed, then run xsim yourself.
+TAPA_DPI_CONFIG="$(cat "$cosim/dpi_config.json")" \
+  HOME="$cosim/run" \
+  vivado -mode batch -source "$cosim/run_cosim.tcl"
+
+# Step 3: reopen the simulated buffers and run host-side checks.
+./vadd --bitstream=vecadd.xo \
+    -cosim_work_dir "$cosim" \
     -cosim_resume_from_post_sim \
     1000
 ```
 
+The setup-only command exits before the application's correctness checks.
+The final command skips RTL simulation, copies output buffers back, and lets
+the application check the results.
+
 ### Parallel runs
 
-When a host application calls `tapa::invoke` more than once — for example, a pipeline split into separate kernels each compiled to its own `.xo` file — TAPA launches all cosim instances concurrently. Each kernel is compiled independently and its `.xo` path is passed to its own `tapa::invoke` call via a separate bitstream flag:
+A pipeline split into separately compiled kernels can run one cosim process
+per kernel. Launch those kernels as children of a software-simulated upper
+task and pass each archive through `tapa::executable`:
 
 ```cpp
-// Host code: two separate kernels, each with its own bitstream flag
 DEFINE_string(producer_bitstream, "", "XO for Producer kernel");
 DEFINE_string(consumer_bitstream, "", "XO for Consumer kernel");
 
-tapa::invoke(Producer, FLAGS_producer_bitstream, ...);
-tapa::invoke(Consumer, FLAGS_consumer_bitstream, ...);
+void Top(/* kernel arguments */) {
+  // Declare inter-kernel streams here.
+  tapa::task()
+      .invoke(Producer, tapa::executable(FLAGS_producer_bitstream), ...)
+      .invoke(Consumer, tapa::executable(FLAGS_consumer_bitstream), ...);
+}
 ```
+
+Run the upper task through `tapa::invoke(Top, "", ...)`; the empty path
+keeps the orchestration in software while each non-empty executable path
+starts RTL cosimulation. Ordinary sequential `tapa::invoke` calls in `main`
+do not run concurrently. See [Parallel RTL Emulation](parallel-rtl-emulation.md)
+for the complete pattern and leaf-top target requirements.
 
 ```bash
 ./app --producer_bitstream=producer.xo --consumer_bitstream=consumer.xo
@@ -117,9 +145,9 @@ The following flags control fast cosim behavior when passed to the host executab
 
 | Flag | Description |
 |------|-------------|
-| `-xsim_part_num <part>` | Target FPGA part number for simulation (e.g., `xcu55c-fsvh2892-2L-e`). |
+| `-xsim_part_num <part>` | Override the FPGA part recorded in the archive. Usually unnecessary. |
 | `-cosim_work_dir <dir>` | Persistent working directory for simulation artifacts. Without this, a temporary directory is used and deleted after the run. |
-| `-xsim_save_waveform` | Save simulation waveforms to a `.wdb` file in the work directory. Requires `-cosim_work_dir`. |
+| `-xsim_save_waveform` | Save xsim waveforms to `wave.wdb`. Pair with `-cosim_work_dir` to keep them after exit. |
 | `-xsim_start_gui` | Open the Vivado GUI for interactive debugging during simulation. |
 | `-cosim_simulator <backend>` | Simulator backend: `xsim` (default, Linux only) or `verilator` (cross-platform). |
 | `-cosim_timeout_seconds <seconds>` | Stop fast cosim after this much wall-clock time; `0` (the default) leaves it unlimited. |
@@ -138,7 +166,7 @@ hours, so the runtime cannot choose a safe universal limit. For unattended
 runs, set an explicit wall-clock limit:
 
 ```bash
-./vadd --bitstream VecAdd.xo -cosim_timeout_seconds 3600 1000
+./vadd --bitstream vecadd.xo -cosim_timeout_seconds 3600 1000
 ```
 
 On expiry, TAPA terminates the simulator process group and reports which limit
@@ -148,20 +176,18 @@ directory if the reduced case also stalls.
 
 If the simulation becomes unresponsive:
 
-1. Run with `-cosim_work_dir` to persist intermediate files.
-2. Abort the simulation with Ctrl-C.
-3. Open Vivado in GUI mode and source the run script the work directory kept:
-   ```bash
-   vivado -mode gui -source [work-dir]/run_cosim.tcl
-   ```
+1. Use `-cosim_work_dir` and `-xsim_save_waveform` before starting so the
+   artifacts survive.
+2. Stop the run with Ctrl-C or `-cosim_timeout_seconds`.
+3. Open the saved `wave.wdb` in Vivado's waveform viewer. For xsim, its
+   default location is
+   `<work-dir>/run/cosim.sim/sim_1/behav/xsim/wave.wdb`.
 
-This allows real-time observation and waveform analysis of the frozen state.
-
-The work directory holds the rest of what a post-mortem needs alongside it:
-`tb_<TOP>.sv` is the generated testbench, `vivado.log` is the transcript of the
-run that hung, and `run/` is the Vivado project itself
-(`run/cosim.sim/sim_1/behav/xsim/` is where `-xsim_save_waveform` writes
-`wave.wdb`).
+For a new interactive run, pass `-xsim_start_gui`. Do not source
+`run_cosim.tcl` merely to inspect an old waveform: the script builds and runs
+a new simulation. For xsim post-mortems, the work directory also contains the
+`tb_<TOP>.sv` testbench, the `vivado.log` transcript, and the `run/` Vivado
+project.
 
 ```admonish warning
 Cross-channel access for HBM is not currently supported in fast cosimulation. Each AXI interface can only access one HBM channel.

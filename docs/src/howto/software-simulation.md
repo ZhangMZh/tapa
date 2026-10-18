@@ -19,8 +19,9 @@ inert. Host targets therefore build without a Vitis include path — the test
 tree is built that way, so a program that reaches for a vendor header fails
 here rather than silently depending on an installed Vitis.
 
-A program that still uses vendor constructs keeps working: `tapa analyze`
-reports them as remarks, never errors. See the
+When `tapa analyze` recognizes a vendor construct, it reports a remark with
+the portable spelling; the usage remark itself is not an error. Other
+syntactic or semantic errors can still reject the program. See the
 [vendor-usage warnings](../reference/cli.md).
 ```
 
@@ -32,14 +33,18 @@ Run the executable with no `--bitstream` argument. TAPA detects the missing argu
 ./vadd
 ```
 
-For reproducible output when debugging ordering-sensitive behavior, pin the simulation to a single thread:
+To make ordering-sensitive failures easier to reproduce, use one worker
+thread:
 
 ```bash
 TAPA_CONCURRENCY=1 ./vadd
 ```
 
 ```admonish note
-`TAPA_CONCURRENCY` defaults to the physical CPU core count. Set it to `1` for reproducible task scheduling at the cost of simulation speed.
+`TAPA_CONCURRENCY` defaults to the physical CPU core count. Set it to `1`
+for a simpler scheduling interleaving at the cost of simulation speed. One
+worker still interleaves tasks at blocking points; it does not run each task
+to completion.
 ```
 
 ## Expected output
@@ -55,25 +60,37 @@ The `running software simulation` line confirms the software simulation path was
 
 ## Stream logging
 
-To capture the values flowing through every `tapa::stream` channel, set `TAPA_STREAM_LOG_DIR` before running:
+To capture values written to named `tapa::stream` channels, set
+`TAPA_STREAM_LOG_DIR` to an existing directory before running:
 
 ```bash
-TAPA_STREAM_LOG_DIR=/tmp/logs ./vadd
+mkdir -p /tmp/tapa-stream-logs
+TAPA_STREAM_LOG_DIR=/tmp/tapa-stream-logs ./vadd
 ```
 
-TAPA writes one log file per stream. The format depends on the element type:
+TAPA writes one log file per named stream. Unnamed streams are not logged. The format depends on the element type:
 
 - **Primitive types** (`int`, `float`, …) are logged as human-readable text, one value per line. For example, writing `42` to a `tapa::stream<int>` produces `42\n`.
-- **Non-primitive types without `operator<<`** are logged in hex with little-endian byte order. For example, writing `Foo{0x4222}` to a `tapa::stream<Foo>` produces `0x22420000\n`.
+- **Non-primitive types without `operator<<`** are logged as raw object bytes
+  in host byte order (little-endian on supported hosts). For example, writing
+  `Foo{0x4222}` to a `tapa::stream<Foo>` produces `0x22420000\n` on a
+  little-endian host.
 - **Non-primitive types with `operator<<` defined** are logged using that operator, producing human-readable text.
 
-## Why coroutine simulation is more accurate than Vitis HLS simulation
+## What software simulation does—and does not—model
 
-Vitis HLS software simulation runs each task **sequentially** in a single thread. The tasks take turns executing to completion before the next one starts. This means races between concurrent tasks are invisible — the simulation passes even when tasks make assumptions about each other's execution order that will not hold in real hardware.
+Vitis HLS C simulation executes dataflow functions sequentially rather than
+reproducing their cycle-by-cycle concurrency. TAPA instead schedules each task
+as a coroutine. A blocking stream operation yields so another task can run;
+worker threads (`TAPA_CONCURRENCY`, defaulting to the physical core count) can
+also run tasks in parallel. With `tapa::stream<T, Depth>`, the same depth
+limits apply, so producers experience backpressure when a FIFO fills.
 
-TAPA uses **coroutine-based simulation**: every task becomes a coroutine, and coroutines yield cooperatively at stream blocking points. When a task calls `read()` on an empty stream, it suspends and another task runs. The coroutines are spread over a pool of worker threads (`TAPA_CONCURRENCY`, default: the host's physical core count), so tasks on different workers also run in genuine parallel. Together this models the concurrent, backpressure-driven semantics of hardware much more faithfully. Bugs that manifest in hardware because two tasks execute simultaneously are far more likely to surface during TAPA software simulation than during Vitis HLS software simulation.
-
-This is also why TAPA enforces stream depth in software simulation: a producer that fills a depth-2 FIFO will block in TAPA simulation, just as it would in hardware.
+This helps expose missing handshakes, element-count mismatches, and ordering
+assumptions before synthesis. It is not cycle-accurate: it does not model HLS
+scheduling, clock timing, or every per-instance RTL state detail. A passing
+software simulation therefore checks the C++ dataflow contract, not every
+property of the generated hardware. Use fast cosimulation for RTL validation.
 
 ## Debugging with GDB
 
@@ -90,7 +107,9 @@ Then set a breakpoint on any TAPA task function by name:
 (gdb) run
 ```
 
-Breakpoints, watchpoints, and backtraces all work because every task runs as a coroutine on the host CPU.
+Breakpoints and watchpoints work on the host CPU. Backtraces show the
+currently running coroutine on each worker thread; suspended coroutines are
+not separate native threads.
 
 ## Validation
 
@@ -103,7 +122,9 @@ Simulation is correct when:
 ## If something goes wrong
 
 ```admonish warning
-If the simulation hangs indefinitely, a stream deadlock is likely. See [Deadlocks & Hangs](../troubleshoot/deadlocks-and-hangs.md) for diagnosis steps.
+If the simulation hangs or runs much longer than expected, a stream deadlock
+is one possibility. See [Deadlocks & Hangs](../troubleshoot/deadlocks-and-hangs.md)
+for diagnosis steps.
 
 For unexpected errors or assertion failures, see [Common Errors](../troubleshoot/common-errors.md).
 ```

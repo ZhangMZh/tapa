@@ -6,7 +6,7 @@
 
 ## What you need
 
-- A `.xo` kernel object from `tapa compile`
+- A `.xo` kernel object from `tapa compile` and its matching host executable
 - Vitis and XRT installed (Linux only)
 - The target platform string (e.g., `xilinx_u55c_gen3x16_xdma_3_202210_1`)
 - An Alveo board installed in the system for the final execution step
@@ -23,7 +23,7 @@ tapa \
   --work-dir work.out \
   compile \
   --top VecAdd \
-  --part-num xcu55c-fsvh2892-2L-e \
+  --platform "$platform" \
   --clock-period 3.33 \
   -f vadd.cpp \
   -o vadd.$platform.hw.xo
@@ -50,7 +50,10 @@ The output artifact is `vadd.$platform.hw.xclbin` — this is the bitstream load
 
 Key alignment rules:
 - `--kernel VecAdd` must match the top-level function name in your TAPA source, the same name you passed to `tapa compile --top`.
-- `--platform $platform` must name a platform built for the same device that `tapa compile` targeted. If you compiled with `--part-num xcu55c-fsvh2892-2L-e`, link against a U55C platform; a mismatch fails at link time. Passing `--platform` to `tapa compile` instead of `--part-num` avoids the question entirely, since TAPA then derives the part from the platform.
+- `--platform $platform` must name a platform built for the same device that
+  `tapa compile` targeted; a mismatch fails at link time. The example passes
+  the same platform to both commands, so TAPA and `v++` derive consistent
+  device settings.
 - The input `.xo` filename (`vadd.$platform.hw.xo`) must be the file produced by `tapa compile`.
 
 ## Stage 3: Execute on the FPGA
@@ -66,24 +69,26 @@ The same host executable used for software and hardware simulation runs on board
 ```
 INFO: Found platform: Xilinx
 INFO: Found device: xilinx_u55c_gen3x16_xdma_3_202210_1
-INFO: Using xilinx_u55c_gen3x16_xdma_3_202210_1
 ...
-elapsed time: 7.48926 s
+kernel time: 0.00042 s
 PASS!
 ```
 
-On-board execution is substantially faster than hardware emulation. The elapsed time includes FPGA reconfiguration time (loading the bitstream).
+XRT log messages and kernel time vary by platform, design, and workload.
 
 ## Validation
 
 The run is correct when:
 
 1. XRT finds and selects the expected device.
-2. The elapsed time is reported.
+2. The host process exits successfully.
 3. The application's correctness check prints `PASS!`.
 
 ```admonish tip
-If you use `std::vector` for memory-mapped buffers, XRT may warn about unaligned host pointers, which causes an extra memory copy. To eliminate the copy, use `std::vector<T, tapa::aligned_allocator<T>>` instead.
+If you use `std::vector` for memory-mapped buffers, XRT may warn about
+unaligned host pointers and make an extra copy. Use
+`std::vector<T, tapa::aligned_allocator<T>>` to provide page-aligned storage
+and avoid that alignment-related copy.
 ```
 
 ## If something goes wrong

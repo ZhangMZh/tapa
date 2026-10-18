@@ -1,8 +1,12 @@
 # Vitis Cosimulation
 
-**Purpose:** Run full Vitis hardware emulation for accurate timing after fast cosim passes.
+**Purpose:** Run Vitis hardware emulation to validate the kernel with the
+platform shell and XRT after fast cosim passes.
 
-**When to use this:** When you need accurate timing or bandwidth numbers that fast cosim cannot provide. This step is slow (5–10 minutes for simple designs) and is rarely the first choice — run [Fast Hardware Simulation](fast-cosim.md) first to catch logic errors.
+**When to use this:** When you need Vitis's platform-level simulation rather
+than TAPA's simplified fast-cosim environment. Even a simple design can take
+several minutes, and large designs take much longer. Run
+[Fast Hardware Simulation](fast-cosim.md) first to catch RTL logic errors.
 
 ## What you need
 
@@ -16,16 +20,19 @@
 
 ```bash
 platform=xilinx_u55c_gen3x16_xdma_3_202210_1
+xo=vecadd.xo  # output of tapa compile
 
 v++ -o vadd.$platform.hw_emu.xclbin \
   --link \
   --target hw_emu \
   --kernel VecAdd \
-  --platform $platform \
-  vadd.$platform.hw.xo
+  --platform "$platform" \
+  "$xo"
 ```
 
-Replace `$platform` with your actual target platform string and `VecAdd` with your top-level kernel name. This step typically takes 5–10 minutes.
+Replace `$platform` with your actual target platform string, `VecAdd` with
+your top-level kernel name, and `$xo` with your TAPA-generated XO. This step
+usually takes minutes and can take much longer for a large design.
 
 ### Run the hardware emulation
 
@@ -37,36 +44,31 @@ The same host executable used for software simulation and fast cosim runs unchan
 
 ## Expected output
 
+XRT and hardware-emulation logs vary by Vitis version. The application's
+result should look like:
+
 ```
-INFO: [HW-EMU 05] Path of the simulation directory : /tmp/.frt.0/.run/.../behav_waveform/xsim
-INFO: [HW-EMU 01] Hardware emulation runs simulation underneath. Using a large data set will result in long simulation times. It is recommended that a small dataset is used for faster execution. The flow uses approximate models for Global memories and interconnect and hence the performance data generated is approximate.
-XRT build version: 2.20.0
 ...
 kernel time: 1.00021 s
 PASS!
-INFO: [HW-EMU 06-0] Waiting for the simulator process to exit
+...
 INFO: [HW-EMU 06-1] All the simulator processes exited successfully
 ```
 
-```admonish warning title="The reported time is not a measurement"
-Under hardware emulation the printed `kernel time` is sampled on a one-second
-poll, so it rounds up to a whole second: the same `vadd` xclbin reports
-`1.00024 s` for `n=100` and `4.00121 s` for `n=10000`. Read it as confirmation
-that the kernel ran, not as a number to compare designs with. For cycle-level
-timing, use the simulation log under the path in the `HW-EMU 05` line.
-```
-
-```admonish note
-Vitis hardware emulation uses approximate models for DDR memory and interconnects. Performance numbers from `hw_emu` are indicative, not exact. For precise measurements, run on an actual board using an `hw` bitstream.
+```admonish warning title="Do not benchmark with hardware emulation"
+The host's `kernel time` and Vitis performance reports describe an emulated
+run with approximate global-memory and interconnect models. They are not
+on-board performance measurements. Use them for diagnosis, and measure real
+performance on the target board.
 ```
 
 ## Validation
 
 The run is correct when:
 
-1. The `INFO: [HW-EMU 06-1] All the simulator processes exited successfully` line appears.
+1. The host process exits successfully.
 2. The application's correctness check prints `PASS!`.
-3. A kernel time is reported at all — which confirms the kernel executed, but see the warning above before reading anything into its value.
+3. Vitis reports that its simulator processes exited successfully.
 
 ```admonish tip
 Use a small dataset for hardware emulation runs. Large datasets cause proportionally long simulation times because every clock cycle is simulated in software.
