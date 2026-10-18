@@ -4,13 +4,19 @@
 
 **analyze**
 
-The `tapa analyze` step. Parses the C++ source with `tapacc` (a Clang-based tool) and extracts the task graph and inter-task channels to `tapa.json` in the work directory. This step does not invoke any vendor tools and runs on any host.
+The `tapa analyze` step. Parses C++ with `tapacc` (a Clang-based tool) and
+writes the task graph and inter-task channels to `tapa.json` in the work
+directory. This step runs locally and does not invoke vendor tools.
 
 ---
 
 **async_mmap**
 
-A decoupled memory access type (`tapa::async_mmap<T>`). Instead of stalling on each memory operation, the kernel issues requests through address FIFOs and collects results through data and response FIFOs independently. This decoupling allows the kernel to keep the memory bus busy even when computation is not complete, enabling higher effective memory bandwidth. `async_mmap` must be passed by reference in task signatures.
+A decoupled memory access type (`tapa::async_mmap<T>`). The kernel issues
+requests through address FIFOs and collects data and responses through
+independent FIFOs, rather than leaving all request scheduling to HLS. This can
+keep multiple memory requests outstanding and hide latency. `async_mmap` must
+be passed by reference in task signatures.
 
 ---
 
@@ -22,7 +28,9 @@ The condition where a producer cannot write to a stream because the downstream c
 
 **cosim** (see also: *fast cosim*)
 
-Hardware cosimulation. Runs RTL simulation using the XO artifact to verify the hardware implementation against the software model. TAPA supports fast cosim, which uses the XO directly without running full Vivado implementation. See also: *fast cosim*.
+RTL simulation used to check hardware behavior against the software model.
+TAPA supports fast cosim from an XO or ZIP without Vitis implementation, and
+Vitis hardware emulation from an `hw_emu.xclbin`. See also: *fast cosim*.
 
 ---
 
@@ -46,7 +54,10 @@ A sentinel value written to a stream to signal the end of a data sequence. The p
 
 **fast cosim**
 
-Synonym for *cosim* in the TAPA context. Fast cosim is invoked by passing a `.xo` file as the `--bitstream` argument to the host executable. The host executable runs the Rust `libfrt` cosim runtime in-process, which avoids a full Vivado implementation run and is significantly faster than traditional cosim flows.
+TAPA's lightweight RTL cosimulation flow, distinct from Vitis hardware
+emulation. It is invoked by passing a `.xo` or `.zip` as the host executable's
+`--bitstream` argument. The Rust `libfrt` runtime prepares the simulation and
+launches xsim or Verilator without running Vitis implementation.
 
 ---
 
@@ -64,7 +75,10 @@ A task that contains only computation and does not call `.invoke()`. Leaf tasks 
 
 **mmap**
 
-Memory-mapped region. A contiguous block of host memory exposed to the kernel as a pointer-like handle (`tapa::mmap<T>`). The kernel accesses it synchronously, similar to a C pointer. For pipelined non-blocking access, use `async_mmap` instead. `mmap` is passed by value in task signatures.
+Memory-mapped region. A contiguous block of host memory exposed to the kernel
+as a pointer-like handle (`tapa::mmap<T>`). HLS schedules its accesses; use
+`async_mmap` when you need explicit request/response scheduling. `mmap` is
+passed by value in task signatures.
 
 ---
 
@@ -76,13 +90,18 @@ An array of N mmap regions (`tapa::mmaps<T, N>`) passed as a single argument. Th
 
 **pack**
 
-The `tapa pack` step. Packages per-task RTL produced by `tapa synth` into a single XO (or ZIP) artifact suitable for passing to `v++` or for use in fast cosim.
+The `tapa pack` step. Packages RTL produced by `tapa synth` into one XO for
+`v++ --link` and fast cosim, or one ZIP for direct RTL consumers and fast
+cosim.
 
 ---
 
 **remote execution**
 
-Offloading vendor-tool steps (HLS, pack) to a remote Linux host over SSH. Configured with `--remote-host`. The local machine runs `tapacc` (the analyze step) and uploads each task's rewritten sources to the remote host, which runs Vitis HLS. Useful when cross-compiling from macOS or when the local machine lacks a Vitis licence.
+Offloading vendor-tool steps to a remote Linux host over SSH, configured
+with `--remote-host`. Analysis and planning-only floorplanning stay local;
+synthesis, Vitis XO packaging, and implementation floorplanning can run
+remotely. TAPA transfers each job's sources and outputs automatically.
 
 ---
 
@@ -100,7 +119,10 @@ A FIFO channel between tasks (`tapa::stream<T, Depth>`). Streams are the fundame
 
 **stream depth**
 
-The number of elements the FIFO can hold before the producer blocks. Declared as the second template parameter of `tapa::stream<T, Depth>`. The default depth is 2. Increasing depth decouples producer and consumer and can improve throughput at the cost of FPGA BRAM or LUT resources.
+The number of elements the FIFO can hold before the producer blocks. Declared
+as the second template parameter of `tapa::stream<T, Depth>`; the default is
+2. Increasing depth lets a producer run further ahead and can improve
+throughput at the cost of LUT, SRL, BRAM, or URAM resources.
 
 ---
 
@@ -112,13 +134,25 @@ The `tapa synth` step. Runs Vitis HLS on each non-ignored task extracted during 
 
 **TAPA_CONCURRENCY**
 
-Environment variable controlling the number of coroutine threads used during software simulation. Set to `1` to force sequential execution (useful for debugging). The default is the number of physical CPU cores on the host machine.
+Environment variable controlling the worker threads that run task coroutines.
+Set to `1` to use one worker with cooperative interleaving at blocking points;
+it does not run each task to completion. The default is the host's physical
+CPU core count.
 
 ---
 
-**top-level task** (upper-level task)
+**top-level task**
 
-A task that only invokes other tasks via `tapa::task().invoke()` and contains no direct computation. A top-level task maps to a system-level wrapper in RTL that wires sub-task ports together. The top-level task is specified with `--top` on the `tapa` command line.
+The kernel entry point selected with `--top`. For `xilinx-vitis`, it must be
+an upper-level task; `xilinx-hls` also permits a leaf top.
+
+---
+
+**upper-level task**
+
+An orchestration task that declares channels and invokes children with
+`tapa::task().invoke()` but performs no computation itself. In RTL, it wires
+child interfaces and control logic together.
 
 ---
 
@@ -142,7 +176,9 @@ The Verilog simulator that ships with Vivado, and the default backend for TAPA f
 
 **xclbin**
 
-Xilinx compiled binary. The final bitstream file produced by Vivado implementation. An xclbin is loaded onto the FPGA by the host application at runtime (via XRT or FRT). It is produced by running `v++ --link` on an XO file.
+Xilinx container produced by `v++ --link` from an XO. An `hw.xclbin`
+contains an on-board bitstream; an `hw_emu.xclbin` contains the hardware-
+emulation model. The host loads either through XRT/FRT as appropriate.
 
 ---
 

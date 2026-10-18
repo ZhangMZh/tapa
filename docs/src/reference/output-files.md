@@ -22,11 +22,20 @@ work.zip
 └── tapa.json               # compile metadata (see below)
 ```
 
-`tapa.json` is a verbatim copy of the work directory's [`tapa.json`](#file-and-directory-descriptions) — same schema, same bytes. It is what lets a consumer recover the kernel's interface from the archive alone: TAPA's own co-simulation runtime reads the top task's ports out of `graph` to bind kernel arguments, and takes the part number from `flow`.
+The archive's `tapa.json` is derived from the work directory's
+[`tapa.json`](#file-and-directory-descriptions), then stamped with the cosim
+port metadata needed to bind arguments (including external stream depths and
+async-mmap address widths). The work-directory file is not modified. The
+archive is self-describing: the cosim runtime reads the top task's ports from
+`graph` and the part number from `flow`.
 
 ## Reproducibility
 
-TAPA strips timestamps, absolute paths, and random IDs from both `.xo` and `.zip` artifacts before writing them to disk. Given the same source code and tool versions, repeated invocations produce byte-identical output. This makes the artifacts suitable for CI and release attestation workflows.
+TAPA strips timestamps, absolute paths, and random IDs from both `.xo` and
+`.zip` artifacts before writing them to disk. Given the same sources, compiler
+options, and tool versions, repeated invocations produce byte-identical
+output. This makes the artifacts suitable for CI and release attestation
+workflows.
 
 ```admonish note
 Byte identity holds only within the same vendor tool version. Upgrading Vitis HLS or Vivado will typically change internal artifact content even for identical source inputs.
@@ -101,10 +110,21 @@ For tasks annotated with `[[tapa::target("ignore")]]`, `template/` contains gene
 
 **`tapa.json`**
 
-The single state file: everything the pipeline persists between steps, and the only file `tapa` reads back. It is pretty-printed so work directories stay readable and diffable. It has three top-level keys:
+The single JSON task-graph and flow state file shared between pipeline
+steps. The pipeline also consumes generated RTL, constraints, and metadata
+files, but no second task-graph state file. `tapa.json` is pretty-printed so
+work directories stay readable and diffable. It has three top-level keys:
 
 - **`version`** — schema version of this file. `tapa` refuses a work directory stamped with a version it does not recognise, telling you to re-run `tapa analyze` rather than failing with an obscure parse error.
-- **`graph`** — all contents and metadata of the input design, including the original task hierarchy, retained through flat RTL emission and floorplanning. Written by `tapa analyze` from the `tapacc` output, with the flow `target` and the kernel `cflags` added. Each task's C++ lives outside the JSON, in the `rewritten/` tree named by its `srcs` manifest. `tapa synth` then annotates each task in place with its post-synthesis `clock_period`, `self_area`, and `total_area`; those fields are absent until synthesis populates them.
+- **`graph`** — all contents and metadata of the input design, including the
+  original task hierarchy, retained through flat RTL emission and
+  floorplanning. Its own `schema_version` versions the frontend task-graph
+  format. Written by `tapa analyze` from the `tapacc` output, with the flow
+  `target` and kernel `cflags` added. Each task's C++ lives outside the JSON,
+  in the `rewritten/` tree named by its `srcs` manifest. `tapa synth` then
+  annotates each task with its post-synthesis `clock_period` and `self_area`;
+  `total_area` is populated or derived when reports and topology consumers
+  need it.
 - **`flow`** — compilation settings shared across pipeline steps (the `flatten_hierarchy` RTL emission choice, part number, clock period, platform, and whether synthesis has run). Analyze records the emission choice; synth resolves the tool settings; pack reads them back so options need not be repeated on the command line. The flow `target` is deliberately not duplicated here: it lives in `graph.target` alone.
 
 ```admonish note
@@ -117,7 +137,8 @@ The raw, unmodified output of `tapacc`, saved verbatim by `tapa analyze` for pro
 
 **`report.json` / `report.yaml`**
 
-Timing and resource-utilisation report, written unconditionally after `tapa synth` completes. Both files contain the same data in JSON and YAML encoding. Without `--enable-synth-util`, areas come from HLS estimates; with it, child-task totals are replaced by out-of-context Vivado utilization and the underlying `.hier.util.rpt` files are written under `report/`.
+Timing and resource-utilisation report, written after `tapa synth` completes
+successfully. Both files contain the same data in JSON and YAML encoding. Without `--enable-synth-util`, areas come from HLS estimates; with it, child-task totals are replaced by out-of-context Vivado utilization and the underlying `.hier.util.rpt` files are written under `report/`.
 
 **`floorplan.xdc`**
 

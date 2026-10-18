@@ -30,7 +30,7 @@ These options must appear before the subcommand name.
 | `--work-dir DIR` / `-w DIR` | Working directory for intermediate artifacts (default: `./work.out/`). |
 | `--temp-dir DIR` | Temporary directory, exported to child tools through `TMPDIR`. |
 | `--verbose` / `-v` | Increase logging verbosity. Repeatable (e.g., `-vv`). |
-| `--quiet` / `-q` | Decrease logging verbosity. |
+| `--quiet` / `-q` | Decrease logging verbosity. Repeatable. |
 | `--remote-host user@host[:port]` | Remote Linux host where vendor tools run. |
 | `--remote-key-file PATH` | SSH private key file for authenticating to the remote host. |
 | `--remote-xilinx-settings PATH` | Path to `settings64.sh` on the remote host. |
@@ -125,7 +125,9 @@ tapa --work-dir work.out analyze \
 vadd.cpp:5:13: remark: '#pragma HLS pipeline' is vendor-specific; the portable TAPA form is [[tapa::pipeline(II)]]
 ```
 
-These are never errors: the program still analyzes and compiles. They exist to point at the vendor-agnostic spelling (see the [API reference](api.md)).
+The usage diagnostics are remarks, not errors; unrelated syntax or semantic
+errors can still reject the program. The remarks point to the vendor-agnostic
+spelling (see the [API reference](api.md)).
 
 ---
 
@@ -177,14 +179,17 @@ Run it **after** `tapa synth` (it needs each task's resource estimate) and **bef
 
 Floorplanning needs a device table describing the slot grid and where each memory bank and control interface attaches. Tables ship for:
 
-| Device | Part | Banks | Platform the table was built from |
+| Device | Reference part | Banks | Platform the table was built from |
 |---|---|---|---|
 | Alveo U55C | `xcu55c-fsvh2892-2L-e` | `HBM[0]`–`HBM[31]`, no DDR | `xilinx_u55c_gen3x16_xdma_3_202210_1` |
 | Alveo U250 | `xcu250-figd2104-2L-e` | `DDR[0]`–`DDR[3]`, one per SLR | `xilinx_u250_gen3x16_xdma_4_1_202210_1` |
 | Alveo U280 | `xcu280-fsvh2892-2L-e` | `HBM[0]`–`HBM[31]`, `DDR[0]`, `DDR[1]` | `xilinx_u280_gen3x16_xdma_1_202211_1` |
 | VCK190 | `xcvc1902-vsva2197-2MP-e-S` | `DDR[0]`–`DDR[3]`, by NoC memory controller | `xilinx_vck190_base_202410_1` |
 
-Any other part is rejected with `no floorplan device table matches ...`. The other steps (`analyze`, `synth`, `pack`) work on every part Vitis HLS supports; only floorplanning is restricted.
+Floorplanning also accepts other part strings in these same device families;
+an unknown family is rejected with `no floorplan device table matches ...`.
+The other steps (`analyze`, `synth`, `pack`) work on parts supported by Vitis
+HLS; only floorplanning has this restricted device table.
 
 ### Synthesizing with `--platform`, not `--part-num`
 
@@ -281,7 +286,9 @@ The floorplanned `pack` consumes `floorplan.xdc` and the connectivity config aut
 
 ## tapa pack
 
-Package per-task RTL from the work directory into a single output artifact. For the default `xilinx-vitis` target this produces an XO file; for other targets a ZIP file is produced. Reads RTL produced by `tapa synth`.
+Package RTL from the work directory into a single output artifact: an XO for
+the default `xilinx-vitis` target or a ZIP for `xilinx-hls`. Reads RTL
+produced by `tapa synth`.
 
 ### Optional flags
 
@@ -350,5 +357,8 @@ tapa update
 Separately, `tapa` checks for new releases automatically: at most once every 24 hours it fetches the latest release tag in the background (a detached process that never blocks or fails your command), caches the result, and prints a warning at the end of the **next** invocation when a newer release exists. Set `TAPA_NO_UPDATE_CHECK=1` to disable the check.
 
 ```admonish note
-The automatic check only reads `https://api.github.com/repos/tuna/tapa/releases/latest` and writes its cache under `$XDG_CACHE_HOME/tapa/` (or `~/.cache/tapa/`); it never sends any data.
+The automatic check requests only
+`https://api.github.com/repos/tuna/tapa/releases/latest` and writes its cache
+under `$XDG_CACHE_HOME/tapa/` (or `~/.cache/tapa/`). It does not send project
+sources or design data; the HTTPS request itself still goes to GitHub.
 ```
