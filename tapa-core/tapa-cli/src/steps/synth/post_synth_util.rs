@@ -3,12 +3,12 @@
 //!
 //! Given the work directory layout produced by `generate_rtl_tree`
 //! (`<work_dir>/rtl/*.v`) and the per-task sources staged by
-//! `stage_hls_sources` (resolved from each task's `srcs` manifest), for
+//! `stage_hls_sources` (the rewritten tree's ownership manifest), for
 //! each unique child task of the top task this module:
 //!
 //!   1. Consults the mtime of `<work_dir>/report/<task>.hier.util.rpt`
 //!      and skips the re-synth when the report is newer than every one
-//!      of the task's staged source files.
+//!      of the rewritten tree's freshness dependencies.
 //!   2. Otherwise builds an out-of-context `synth_design` TCL, drives
 //!      it through [`run_vivado`], and requires that the `.rpt` now
 //!      exists and is strictly newer than it was before.
@@ -108,7 +108,7 @@ fn run_and_parse_one(
     let rpt_path = post_syn_rpt_path(work_dir, module_name);
     let prev_mtime = optional_mtime(&rpt_path);
 
-    if should_run_vivado(sources.srcs(module_name), prev_mtime) {
+    if should_run_vivado(sources.freshness_deps(), prev_mtime) {
         run_one(runner, rtl_dir, &rpt_path, module_name, part_num)?;
         if !report_is_fresh(&rpt_path, prev_mtime) {
             return Err(CliError::Codegen(format!(
@@ -147,18 +147,17 @@ fn optional_mtime(path: &Path) -> Option<SystemTime> {
     fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-/// Re-run Vivado if any staged source is strictly newer than the cached
-/// report. When either mtime is unreadable, or the task stages no
-/// sources, we err on the side of running (a missing report counts as
-/// infinitely old).
-fn should_run_vivado(srcs: &[camino::Utf8PathBuf], rpt_mtime: Option<SystemTime>) -> bool {
+/// Re-run Vivado if any staged dependency is strictly newer than the cached
+/// report. A missing report counts as infinitely old; staging rejects
+/// missing dependency files before this check.
+fn should_run_vivado(deps: &[camino::Utf8PathBuf], rpt_mtime: Option<SystemTime>) -> bool {
     let Some(prev) = rpt_mtime else {
         return true;
     };
-    srcs.iter().any(|src| {
-        fs::metadata(src)
+    deps.iter().any(|dep| {
+        fs::metadata(dep)
             .and_then(|meta| meta.modified())
-            .is_ok_and(|src_mtime| src_mtime > prev)
+            .is_ok_and(|dep_mtime| dep_mtime > prev)
     })
 }
 
@@ -417,17 +416,31 @@ mod tests {
         }
     }
 
+    fn write_manifest(dir: &Path, entries: &[&str]) {
+        let mut contents = "tapa-tree-ownership-v1\n".to_string();
+        for entry in entries {
+            contents.push_str(entry);
+            contents.push('\n');
+        }
+        fs::write(
+            dir.join(crate::tapacc::REWRITTEN_DIR)
+                .join(".tapa-tree-manifest"),
+            contents,
+        )
+        .expect("write tree manifest");
+    }
+
     fn setup_work_dir(dir: &Path, tasks: &[(&str, &str)]) {
         fs::create_dir_all(dir.join(crate::tapacc::REWRITTEN_DIR)).expect("mkdir rewritten");
         fs::create_dir_all(dir.join("rtl")).expect("mkdir rtl");
+        let mut owned = Vec::new();
         for (name, body) in tasks {
-            fs::write(
-                dir.join(crate::tapacc::REWRITTEN_DIR)
-                    .join(format!("{name}.cpp")),
-                body,
-            )
-            .expect("write src");
+            let src = format!("{name}.cpp");
+            fs::write(dir.join(crate::tapacc::REWRITTEN_DIR).join(&src), body).expect("write src");
+            owned.push(src);
         }
+        let owned = owned.iter().map(String::as_str).collect::<Vec<_>>();
+        write_manifest(dir, &owned);
     }
 
     /// Stage `design`'s manifest against `work`, as `run_native` does.
@@ -484,8 +497,8 @@ mod tests {
         );
     }
 
-    /// When the report mtime is newer than the .cpp source, the run is
-    /// skipped — so a runner with no queued responses would error out
+    /// When the report mtime is newer than all staged dependencies, the
+    /// run is skipped — so a runner with no queued responses would error out
     /// if the call happened, proving the skip.
     #[test]
     fn post_synth_util_skips_stale_report() {
@@ -497,13 +510,13 @@ mod tests {
         );
         let mut design = vadd_design();
 
-        // Seed the rpt first, then bump the cpp mtime into the past so
-        // the rpt is strictly newer. On systems where touch granularity
-        // is coarse, we also sleep a tick.
+        // Seed the rpt after the source and ownership manifest so it is
+        // strictly newer. On systems where touch granularity is coarse,
+        // we also sleep a tick.
         fs::create_dir_all(work.join("report")).expect("mkdir report");
         let rpt_path = work.join("report").join("Add.hier.util.rpt");
         let src_path = work.join(crate::tapacc::REWRITTEN_DIR).join("Add.cpp");
-        // Re-stamp the source to an old time, then touch the rpt to now.
+        // Touch the report after the staged inputs.
         std::thread::sleep(Duration::from_millis(10));
         fs::write(&rpt_path, sample_rpt("Add")).expect("seed rpt");
         // Verify ordering: rpt must be strictly newer than the source.
@@ -533,6 +546,48 @@ mod tests {
         // But the rpt is still parsed and applied.
         let add = design.tasks.get("Add").expect("Add task");
         assert_eq!(add.total_area.expect("total area").lut, 100);
+    }
+
+    #[test]
+    fn post_synth_util_uses_mirrored_headers_for_freshness() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work = tmp.path();
+        setup_work_dir(
+            work,
+            &[("Add", "void Add() {}\n"), ("VecAdd", "void VecAdd() {}\n")],
+        );
+        let tree = work.join(crate::tapacc::REWRITTEN_DIR);
+        fs::write(tree.join("Add.h"), "#define VALUE 1\n").expect("write header");
+        write_manifest(work, &["Add.cpp", "Add.h", "VecAdd.cpp"]);
+
+        fs::create_dir_all(work.join("report")).expect("mkdir report");
+        let rpt_path = work.join("report").join("Add.hier.util.rpt");
+        std::thread::sleep(Duration::from_millis(10));
+        fs::write(&rpt_path, sample_rpt("Add")).expect("seed rpt");
+        std::thread::sleep(Duration::from_millis(10));
+        fs::write(tree.join("Add.h"), "#define VALUE 2\n").expect("update header");
+
+        let mut design = vadd_design();
+        let runner = MockToolRunner::new();
+        runner.push_ok("vivado", ToolOutput::default());
+        runner.attach_download(crate::util::utf8(rpt_path), sample_rpt("Add").into_bytes());
+        let sources = staged(work, &design);
+        emit_post_synth_util(
+            work,
+            &mut design,
+            "xcu250-figd2104-2L-e",
+            None,
+            &runner,
+            &sources,
+            None,
+        )
+        .expect("newer header must rerun post-synth utilization");
+
+        assert_eq!(
+            runner.calls().len(),
+            1,
+            "post-synth freshness must use the same owned dependencies as HLS"
+        );
     }
 
     #[test]

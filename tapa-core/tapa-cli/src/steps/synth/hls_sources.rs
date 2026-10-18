@@ -5,9 +5,11 @@
 //! analyze` (via `tapacc -emit-dir`) writes. This module is the one
 //! place that verifies those files exist and resolves them to absolute
 //! paths, for every synth consumer — the HLS jobs and the post-synth
-//! utilization pass.
+//! utilization pass. The tree's ownership manifest additionally provides
+//! the complete freshness set, including mirrored headers.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::Path;
 
 use camino::Utf8PathBuf;
@@ -21,23 +23,34 @@ use crate::error::{CliError, Result};
 const DISABLED_MMAP_NAMES: &[&str] = &[
     "begin", "end", "in", "input", "out", "output", "reg", "wire",
 ];
+const TREE_MANIFEST_NAME: &str = ".tapa-tree-manifest";
+const TREE_MANIFEST_HEADER: &str = "tapa-tree-ownership-v1\n";
 
 /// Every task's rewritten sources, resolved absolute against the work
 /// dir's `rewritten/` tree. Built once by [`stage_hls_sources`] before
-/// any HLS job runs, so a missing source fails the whole step up front
-/// instead of one parallel worker deep into synthesis.
+/// any HLS job runs, so missing source or ownership metadata fails the
+/// whole step up front instead of one parallel worker deep into synthesis.
 #[derive(Debug, Clone, Default)]
-pub struct TaskSources(BTreeMap<String, Vec<Utf8PathBuf>>);
+pub struct TaskSources {
+    srcs: BTreeMap<String, Vec<Utf8PathBuf>>,
+    freshness_deps: Vec<Utf8PathBuf>,
+}
 
 impl TaskSources {
-    /// All resolved sources of `task_name`, non-empty for any task that
-    /// passed staging. HLS consumes the whole list; freshness probes
-    /// use it to observe every input file.
+    /// All resolved HLS translation units of `task_name`, non-empty for
+    /// any task that passed staging.
     pub fn srcs(&self, task_name: &str) -> &[Utf8PathBuf] {
-        match self.0.get(task_name) {
+        match self.srcs.get(task_name) {
             Some(srcs) => srcs,
             None => &[],
         }
+    }
+
+    /// Every TAPA-owned file in the rewritten tree, plus the ownership
+    /// manifest itself. This set is shared by all tasks: the manifest
+    /// covers their common translation units and all mirrored headers.
+    pub fn freshness_deps(&self) -> &[Utf8PathBuf] {
+        &self.freshness_deps
     }
 }
 
@@ -53,6 +66,7 @@ impl TaskSources {
 pub fn stage_hls_sources(work_dir: &Path, design: &Design) -> Result<TaskSources> {
     check_reserved_port_names(design)?;
     let tree = work_dir.join(crate::tapacc::REWRITTEN_DIR);
+    let (owned, freshness_deps) = stage_freshness_deps(&tree)?;
     let mut staged = BTreeMap::new();
     for (task_name, task) in &design.tasks {
         if task.srcs.is_empty() {
@@ -87,10 +101,17 @@ pub fn stage_hls_sources(work_dir: &Path, design: &Design) -> Result<TaskSources
         }
         let mut resolved = Vec::with_capacity(task.srcs.len());
         for src in &task.srcs {
-            if Path::new(src).is_absolute() || src.split(['/', '\\']).any(|c| c == "..") {
+            if !is_tree_relative(src) {
                 return Err(CliError::Codegen(format!(
                     "task `{task_name}` src `{src}` must be a path inside \
                      the rewritten tree, not an absolute or parent-escaping one",
+                )));
+            }
+            if !owned.contains(src) {
+                return Err(CliError::Codegen(format!(
+                    "task `{task_name}` src `{src}` is not listed in the \
+                     rewritten-tree ownership manifest; re-run `tapa analyze` \
+                     to rebuild the rewritten tree",
                 )));
             }
             let path = tree.join(src);
@@ -105,7 +126,74 @@ pub fn stage_hls_sources(work_dir: &Path, design: &Design) -> Result<TaskSources
         }
         staged.insert(task_name.clone(), resolved);
     }
-    Ok(TaskSources(staged))
+    for key in &owned {
+        if !tree.join(key).is_file() {
+            return Err(invalid_tree_manifest(
+                &tree.join(TREE_MANIFEST_NAME),
+                format!("owned file `{key}` does not exist under {}", tree.display()),
+            ));
+        }
+    }
+    Ok(TaskSources {
+        srcs: staged,
+        freshness_deps,
+    })
+}
+
+fn stage_freshness_deps(tree: &Path) -> Result<(BTreeSet<String>, Vec<Utf8PathBuf>)> {
+    let manifest = tree.join(TREE_MANIFEST_NAME);
+    let contents = fs::read_to_string(&manifest).map_err(|error| {
+        CliError::Codegen(format!(
+            "cannot read rewritten-tree ownership manifest `{}`: {error}; \
+             re-run `tapa analyze` to rebuild the rewritten tree",
+            manifest.display(),
+        ))
+    })?;
+    let entries = contents
+        .strip_prefix(TREE_MANIFEST_HEADER)
+        .ok_or_else(|| invalid_tree_manifest(&manifest, "unrecognized format"))?;
+    if !entries.is_empty() && !entries.ends_with('\n') {
+        return Err(invalid_tree_manifest(
+            &manifest,
+            "the final entry is not newline-terminated",
+        ));
+    }
+
+    let mut owned = BTreeSet::new();
+    let mut deps = Vec::new();
+    for key in entries.split_terminator('\n') {
+        if !is_tree_relative(key) {
+            return Err(invalid_tree_manifest(
+                &manifest,
+                format!("entry `{key}` is not a relative file key inside the tree"),
+            ));
+        }
+        if !owned.insert(key.to_string()) {
+            return Err(invalid_tree_manifest(
+                &manifest,
+                format!("duplicate entry `{key}`"),
+            ));
+        }
+        deps.push(crate::util::utf8(tree.join(key)));
+    }
+    // Rewriting this file records both additions and removals, including
+    // removals whose former paths are absent from the current entry set.
+    deps.push(crate::util::utf8(manifest));
+    Ok((owned, deps))
+}
+
+fn invalid_tree_manifest(manifest: &Path, reason: impl std::fmt::Display) -> CliError {
+    CliError::Codegen(format!(
+        "invalid rewritten-tree ownership manifest `{}`: {reason}; \
+         re-run `tapa analyze` to rebuild the rewritten tree",
+        manifest.display(),
+    ))
+}
+
+fn is_tree_relative(path: &str) -> bool {
+    !path.is_empty()
+        && !Path::new(path).is_absolute()
+        && !path.split(['/', '\\']).any(|component| component == "..")
 }
 
 fn is_tcl_safe_path_byte(b: u8) -> bool {
@@ -177,10 +265,23 @@ mod tests {
         }
     }
 
+    fn write_manifest(dir: &Path, entries: &[&str]) {
+        let tree = dir.join(crate::tapacc::REWRITTEN_DIR);
+        fs::create_dir_all(&tree).expect("mkdir rewritten");
+        let mut contents = TREE_MANIFEST_HEADER.to_string();
+        for entry in entries {
+            contents.push_str(entry);
+            contents.push('\n');
+        }
+        fs::write(tree.join(TREE_MANIFEST_NAME), contents).expect("write tree manifest");
+    }
+
     fn write_src(dir: &Path, name: &str) {
         let tree = dir.join(crate::tapacc::REWRITTEN_DIR);
         fs::create_dir_all(&tree).expect("mkdir rewritten");
-        fs::write(tree.join(format!("{name}.cpp")), "int main(){}\n").expect("write src");
+        let src = format!("{name}.cpp");
+        fs::write(tree.join(&src), "int main(){}\n").expect("write src");
+        write_manifest(dir, &[&src]);
     }
 
     #[test]
@@ -202,6 +303,7 @@ mod tests {
     #[test]
     fn missing_src_names_the_task_and_tree() {
         let dir = tempfile::tempdir().expect("tempdir");
+        write_manifest(dir.path(), &["Add.cpp"]);
         let d = design(&[("Add", task(&["Add.cpp"]))]);
         let err = stage_hls_sources(dir.path(), &d).expect_err("missing src must fail");
         let msg = err.to_string();
@@ -229,6 +331,7 @@ mod tests {
     #[test]
     fn empty_srcs_manifest_is_rejected() {
         let dir = tempfile::tempdir().expect("tempdir");
+        write_src(dir.path(), "Add");
         let d = design(&[("Add", task(&[]))]);
         let err = stage_hls_sources(dir.path(), &d).expect_err("empty must fail");
         assert!(err.to_string().contains("empty `srcs` manifest"), "{err}");
@@ -271,6 +374,76 @@ mod tests {
             ),
         )]);
         stage_hls_sources(dir.path(), &d).expect("safe manifest must stage");
+    }
+
+    #[test]
+    fn freshness_deps_cover_owned_headers_and_manifest_but_srcs_stay_tus() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_src(dir.path(), "Add");
+        let tree = dir.path().join(crate::tapacc::REWRITTEN_DIR);
+        fs::write(tree.join("Add.h"), "#define VALUE 1\n").expect("write header");
+        write_manifest(dir.path(), &["Add.cpp", "Add.h"]);
+
+        let d = design(&[("Add", task(&["Add.cpp"]))]);
+        let sources = stage_hls_sources(dir.path(), &d).expect("stage");
+        assert_eq!(
+            sources.srcs("Add"),
+            [crate::util::utf8(tree.join("Add.cpp"))]
+        );
+        assert_eq!(
+            sources.freshness_deps(),
+            [
+                crate::util::utf8(tree.join("Add.cpp")),
+                crate::util::utf8(tree.join("Add.h")),
+                crate::util::utf8(tree.join(TREE_MANIFEST_NAME)),
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_or_malformed_ownership_manifest_is_rejected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_src(dir.path(), "Add");
+        let d = design(&[("Add", task(&["Add.cpp"]))]);
+        let manifest = dir
+            .path()
+            .join(crate::tapacc::REWRITTEN_DIR)
+            .join(TREE_MANIFEST_NAME);
+
+        fs::remove_file(&manifest).expect("remove manifest");
+        let err = stage_hls_sources(dir.path(), &d).expect_err("missing manifest must fail");
+        assert!(err.to_string().contains("ownership manifest"), "{err}");
+
+        for malformed in [
+            "not-a-tapa-manifest\n",
+            "tapa-tree-ownership-v1\nAdd.cpp",
+            "tapa-tree-ownership-v1\n\n",
+            "tapa-tree-ownership-v1\nAdd.cpp\nAdd.cpp\n",
+        ] {
+            fs::write(&manifest, malformed).expect("write malformed manifest");
+            let err = stage_hls_sources(dir.path(), &d).expect_err("malformed must fail");
+            assert!(
+                err.to_string()
+                    .contains("invalid rewritten-tree ownership manifest"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn ownership_manifest_paths_and_src_membership_are_validated() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_src(dir.path(), "Add");
+        let d = design(&[("Add", task(&["Add.cpp"]))]);
+        for bad in ["../outside.h", "/outside.h", ""] {
+            write_manifest(dir.path(), &[bad]);
+            let err = stage_hls_sources(dir.path(), &d).expect_err("bad path must fail");
+            assert!(err.to_string().contains("relative file key"), "{err}");
+        }
+
+        write_manifest(dir.path(), &[]);
+        let err = stage_hls_sources(dir.path(), &d).expect_err("unlisted src must fail");
+        assert!(err.to_string().contains("not listed"), "{err}");
     }
 
     #[test]

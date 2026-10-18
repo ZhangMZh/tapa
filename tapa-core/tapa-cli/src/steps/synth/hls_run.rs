@@ -88,7 +88,7 @@ pub fn run_hls_for_leaves(
         if options.skip_based_on_mtime && layout.hdl_dir.is_dir() {
             let hdl_files = list_hdl_files(&layout.hdl_dir)?;
             if hdl_files.iter().any(|path| is_verilog(path))
-                && hdl_files_are_newer_than(&hdl_files, srcs)
+                && hdl_files_are_newer_than(&hdl_files, sources.freshness_deps())
             {
                 log::info!(
                     "skipping HLS for `{task_name}` (mtime cache hit at {})",
@@ -275,29 +275,29 @@ fn task_cflags(user: &[String], tree_root: &Path, task: &Task, tail: &[String]) 
     flags
 }
 
-fn hdl_files_are_newer_than(hdl_files: &[Utf8PathBuf], srcs: &[Utf8PathBuf]) -> bool {
-    if hdl_files.is_empty() || srcs.is_empty() {
+fn hdl_files_are_newer_than(hdl_files: &[Utf8PathBuf], deps: &[Utf8PathBuf]) -> bool {
+    if hdl_files.is_empty() || deps.is_empty() {
         return false;
     }
-    // Every emitted HDL file must postdate the newest source file;
+    // Every emitted HDL file must postdate the newest dependency;
     // a metadata gap on any input conservatively reports stale.
-    let mut newest_src: Option<std::time::SystemTime> = None;
-    for src in srcs {
-        let Ok(meta) = fs::metadata(src) else {
+    let mut newest_dep: Option<std::time::SystemTime> = None;
+    for dep in deps {
+        let Ok(meta) = fs::metadata(dep) else {
             return false;
         };
         let Ok(t) = meta.modified() else {
             return false;
         };
-        newest_src = Some(newest_src.map_or(t, |prev: std::time::SystemTime| prev.max(t)));
+        newest_dep = Some(newest_dep.map_or(t, |prev: std::time::SystemTime| prev.max(t)));
     }
-    let Some(newest_src) = newest_src else {
+    let Some(newest_dep) = newest_dep else {
         return false;
     };
     hdl_files.iter().all(|hdl| {
         fs::metadata(hdl)
             .and_then(|metadata| metadata.modified())
-            .is_ok_and(|hdl_t| hdl_t > newest_src)
+            .is_ok_and(|hdl_t| hdl_t > newest_dep)
     })
 }
 
@@ -372,10 +372,34 @@ mod tests {
         crate::steps::synth::hls_sources::stage_hls_sources(work, design).expect("stage sources")
     }
 
+    fn write_manifest(work: &Path, entries: &[&str]) {
+        let tree = work.join(crate::tapacc::REWRITTEN_DIR);
+        fs::create_dir_all(&tree).unwrap();
+        let mut contents = "tapa-tree-ownership-v1\n".to_string();
+        for entry in entries {
+            contents.push_str(entry);
+            contents.push('\n');
+        }
+        fs::write(tree.join(".tapa-tree-manifest"), contents).unwrap();
+    }
+
     fn seed_rewritten(work: &Path) {
         let tree = work.join(crate::tapacc::REWRITTEN_DIR);
         fs::create_dir_all(&tree).unwrap();
         fs::write(tree.join("Add.cpp"), b"int main(){}\n").unwrap();
+        write_manifest(work, &["Add.cpp"]);
+    }
+
+    fn skip_hls_options() -> HlsRunOptions {
+        HlsRunOptions {
+            part_num: "xcvu37p".to_string(),
+            clock_period: ClockPeriod::from_picoseconds(3330),
+            other_configs: String::new(),
+            cflags: Vec::new(),
+            skip_based_on_mtime: true,
+            jobs: Some(1),
+            keep_work_dir: false,
+        }
     }
 
     fn leaf_task(name: &str) -> Task {
@@ -608,6 +632,102 @@ mod tests {
             "cache hit must carry the existing HDL files forward",
         );
         assert!(runner.calls().is_empty(), "cache hit must not call Vitis");
+    }
+
+    #[test]
+    fn newer_mirrored_header_defeats_mtime_cache() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work = tmp.path();
+        seed_rewritten(work);
+        let tree = work.join(crate::tapacc::REWRITTEN_DIR);
+        fs::write(tree.join("Add.h"), "#define VALUE 1\n").unwrap();
+        write_manifest(work, &["Add.cpp", "Add.h"]);
+
+        let hdl = work.join("hls").join("Add").join("verilog");
+        fs::create_dir_all(&hdl).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(hdl.join("Add.v"), b"module Add(); endmodule\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(tree.join("Add.h"), "#define VALUE 2\n").unwrap();
+
+        let design = leaf_design();
+        let runner = MockToolRunner::new();
+        runner.push_ok("vitis_hls", ToolOutput::default());
+        let _ = run_hls_for_leaves(
+            &runner,
+            work,
+            &design,
+            &staged(work, &design),
+            &skip_hls_options(),
+        );
+        assert_eq!(
+            runner.calls().len(),
+            1,
+            "a header newer than HDL must invalidate the HLS cache"
+        );
+    }
+
+    #[test]
+    fn unrelated_newer_file_does_not_defeat_mtime_cache() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work = tmp.path();
+        seed_rewritten(work);
+        let hdl = work.join("hls").join("Add").join("verilog");
+        fs::create_dir_all(&hdl).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(hdl.join("Add.v"), b"module Add(); endmodule\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(
+            work.join(crate::tapacc::REWRITTEN_DIR).join("notes.txt"),
+            "not TAPA-owned\n",
+        )
+        .unwrap();
+
+        let design = leaf_design();
+        let runner = MockToolRunner::new();
+        run_hls_for_leaves(
+            &runner,
+            work,
+            &design,
+            &staged(work, &design),
+            &skip_hls_options(),
+        )
+        .expect("unowned files must not affect freshness");
+        assert!(runner.calls().is_empty(), "cache hit must not call Vitis");
+    }
+
+    #[test]
+    fn manifest_rewrite_after_file_removal_defeats_mtime_cache() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work = tmp.path();
+        seed_rewritten(work);
+        let tree = work.join(crate::tapacc::REWRITTEN_DIR);
+        fs::write(tree.join("removed.h"), "#define OLD 1\n").unwrap();
+        write_manifest(work, &["Add.cpp", "removed.h"]);
+
+        let hdl = work.join("hls").join("Add").join("verilog");
+        fs::create_dir_all(&hdl).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(hdl.join("Add.v"), b"module Add(); endmodule\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::remove_file(tree.join("removed.h")).unwrap();
+        write_manifest(work, &["Add.cpp"]);
+
+        let design = leaf_design();
+        let runner = MockToolRunner::new();
+        runner.push_ok("vitis_hls", ToolOutput::default());
+        let _ = run_hls_for_leaves(
+            &runner,
+            work,
+            &design,
+            &staged(work, &design),
+            &skip_hls_options(),
+        );
+        assert_eq!(
+            runner.calls().len(),
+            1,
+            "the manifest mtime must retain file-removal freshness information"
+        );
     }
 
     #[test]

@@ -81,8 +81,8 @@ pub struct SynthArgs {
     #[arg(long = "keep-hls-work-dir", default_value_t = false)]
     pub keep_hls_work_dir: bool,
 
-    /// Reuse a task's existing Verilog when it is newer than its
-    /// extracted C++, skipping that task's HLS run.
+    /// Reuse a task's existing Verilog when it is newer than every
+    /// TAPA-owned file in the rewritten source tree.
     #[arg(long = "skip-hls-based-on-mtime", default_value_t = false)]
     pub skip_hls_based_on_mtime: bool,
 

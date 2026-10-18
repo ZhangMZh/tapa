@@ -148,7 +148,7 @@ Run Vitis HLS on each task to produce per-task Verilog RTL. Reads the task graph
 | `-j N` / `--jobs N` | Number of parallel HLS and post-synthesis jobs (default: the host's available parallelism). |
 | `--enable-synth-util` | Run out-of-context Vivado synthesis per task for accurate area numbers instead of the coarser HLS estimates. Costs one extra Vivado run per task. |
 | `--keep-hls-work-dir` | Keep each task's Vitis HLS project under `hls/<task>/project` instead of discarding it. Useful for post-mortem debugging of an HLS failure. |
-| `--skip-hls-based-on-mtime` | Reuse a task's existing Verilog when it is newer than its extracted C++, skipping that task's HLS run. Speeds up iteration when only some tasks changed. |
+| `--skip-hls-based-on-mtime` | Reuse a task's existing Verilog when it is newer than every file listed in `rewritten/.tapa-tree-manifest` and the manifest itself. Mirrored headers and owned-file set changes therefore invalidate the cache; unrelated files in `rewritten/` do not. |
 | `--other-hls-configs TCL` | Extra Tcl appended verbatim to every generated HLS script. |
 
 ### Example

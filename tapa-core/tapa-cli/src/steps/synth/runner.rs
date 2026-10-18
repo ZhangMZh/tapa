@@ -468,6 +468,11 @@ mod tests {
         fs_err::write(rewritten.join("Add.cpp"), "void Add() {}\n").expect("write Add.cpp");
         fs_err::write(rewritten.join("VecAdd.cpp"), "void VecAdd() {}\n")
             .expect("write VecAdd.cpp");
+        fs_err::write(
+            rewritten.join(".tapa-tree-manifest"),
+            "tapa-tree-ownership-v1\nAdd.cpp\nVecAdd.cpp\n",
+        )
+        .expect("write rewritten-tree ownership manifest");
 
         // Two HLS invocations: the leaf `Add` and the upper-task shell
         // `VecAdd`. Iteration order is `BTreeMap` alphabetical order,
