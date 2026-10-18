@@ -201,6 +201,46 @@ void AttrTop(tapa::mmap<const float> a, tapa::mmap<float> c,
             std::string::npos);
 }
 
+// A task whose whole DEFINITION -- signature included -- is spelled by one
+// macro invocation: the guard's signature-only stub is written from the
+// spelled signature text, which a macro-owned signature does not have, so
+// the stub would collapse to a bare `;` and lose the declaration. The shape
+// is rejected before anything is emitted, naming the task; a macro-defined
+// helper referencing the task (no guard, no stub) stays a supported
+// construct and adds no diagnostic of its own.
+TEST(MacroRewrite, WholeMacroDefinitionIsRejected) {
+  const std::string code = std::string(R"tapa(
+#define DEF_TASK                                \
+void MacroTask(tapa::istream<float>& q,         \
+               tapa::mmap<float> c) {           \
+  c[0] = q.read();                              \
+}
+#define DEF_HELPER                              \
+void Helper() { (void)&MacroTask; }
+DEF_TASK
+DEF_HELPER
+)tapa") + kProdTask +
+                           R"tapa(
+void DefTop(tapa::mmap<const float> a, tapa::mmap<float> c,
+            unsigned long long n) {
+  tapa::stream<float, 2> q;
+  tapa::task().invoke(Prod, q, n).invoke(MacroTask, q, c);
+}
+)tapa";
+  const TreePipelineRun run =
+      test_support::RunTreePipeline({VirtualTu{"/proj/src/def.cpp", code}},
+                                    "DefTop", TempRoot("def"), {"-std=c++17"});
+  // One diagnostic: the macro-defined task. The helper referencing it is
+  // not itself an error, and no tree is materialized from a failed run.
+  ASSERT_EQ(run.diags.size(), 1u)
+      << (run.diags.empty() ? "" : run.diags.front());
+  EXPECT_TRUE(Contains(run.diags.front(),
+                       "task 'MacroTask' is defined by a macro invocation"))
+      << run.diags.front();
+  EXPECT_FALSE(run.ok);
+  EXPECT_TRUE(run.files.empty());
+}
+
 // (a) A task invocation wrapped in a user macro (the multi-file app's
 // INVOKE_CONSUME shape): the graph sees through the macro, and the top's
 // rewritten shell needs no splice.

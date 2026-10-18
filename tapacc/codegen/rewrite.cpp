@@ -504,6 +504,24 @@ void RewriteTreeFiles(const Program& program, SynthTarget default_target,
       [&](const TaskModel& model, const clang::FunctionDecl* func, bool is_top,
           const Backend& backend, const std::vector<std::string>& defines,
           bool rewrite_signature) {
+        const clang::SourceRange definition = DefinitionRange(func, edits);
+        // The stub branch is the spelled signature text (RewrittenSignature).
+        // A definition whose signature is macro-owned -- the whole definition
+        // spelled by one invocation, not merely its body, which the splice
+        // machinery rewrites through -- has no spelled text: the stub would
+        // collapse to a bare `;` and lose the declaration. Reject the shape
+        // before emitting anything.
+        if (definition.getBegin().isMacroID()) {
+          ReportCustomDiag(ctx, clang::DiagnosticsEngine::Error,
+                           definition.getBegin(),
+                           "task '%0' is defined by a macro invocation: its "
+                           "signature has no spelled source text for the "
+                           "guard's signature-only stub (a macro may spell "
+                           "the body, not the whole definition); spell the "
+                           "definition outside the macro")
+              .AddString(model.name);
+          return;
+        }
         edits.Describe("signature of task '" + model.name + "'");
         if (rewrite_signature) backend.RewriteSignature(model, is_top, edits);
         // Signature text is shared by the full definition and stub branches.
@@ -511,7 +529,6 @@ void RewriteTreeFiles(const Program& program, SynthTarget default_target,
         // the guarded full-definition branch below.
         RemoveParamAttrs(func, edits);
         RemoveFuncAttrs(func, edits);
-        const clang::SourceRange definition = DefinitionRange(func, edits);
         const std::string stub =
             RewrittenSignature(func, definition.getBegin(), edits);
 
