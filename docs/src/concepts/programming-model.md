@@ -4,10 +4,9 @@
 
 **Prerequisites:** [Installation](../start/installation.md)
 
-TAPA bridges familiar sequential C++ to FPGA hardware parallelism. Rather than
-requiring users to write RTL directly, it lets them express computation as a
-graph of concurrently-running tasks communicating through typed streams and
-shared memory interfaces.
+TAPA uses C++ to express a task-parallel dataflow design. You describe the
+concurrency explicitly as a graph of tasks connected by typed streams and
+memory interfaces; TAPA does not infer parallelism from a sequential program.
 
 ---
 
@@ -32,7 +31,7 @@ interfaces. Scalars are passed as function arguments.
 Host
  │  tapa::invoke(TopTask, bitstream, mmap_args...)
  ▼
-Top-level task  ← no computation; spawns all leaf tasks
+Top-level task  ← orchestrates child tasks
  ├── spawns ──> Leaf task A  (writes to stream S)
  │                            stream S
  ├── spawns ──> Leaf task B  (reads stream S, writes to stream T)
@@ -43,12 +42,12 @@ Top-level task  ← no computation; spawns all leaf tasks
 
 - The **host** calls `tapa::invoke`, passing the kernel function, a bitstream
   path (empty for software simulation), and the kernel arguments.
-- The **top-level task** is the entry point synthesized by `tapa compile`. It
-  declares streams as local objects, then spawns all leaf tasks and passes
-  streams to them by reference. It contains no computation of its own.
+- The **top-level task** is the entry point selected by `tapa compile --top`.
+  For the default `xilinx-vitis` target, it is an upper-level task that declares
+  channels and launches children without doing computation itself.
 - **Leaf tasks** perform the actual computation. One leaf writes to a stream;
-  another reads from it. Streams flow *between* leaf tasks — the top-level task
-  is never the producer or consumer of stream data.
+  another reads from it. In this upper-level shape, streams flow between leaf
+  tasks rather than through the orchestration body.
 
 All child tasks spawned by `tapa::task().invoke(...)` run **concurrently**. The
 top-level task returns only after every child task has finished.
@@ -84,6 +83,9 @@ the kernel arguments. When the bitstream path is empty (the default), TAPA runs
 software simulation:
 
 ```cpp
+#include <cstdint>
+#include <vector>
+
 #include <gflags/gflags.h>
 #include <tapa.h>
 
@@ -92,6 +94,7 @@ DEFINE_string(bitstream, "", "Path to XO or xclbin file. Empty = software simula
 int main(int argc, char* argv[]) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
+  const uint64_t n = 1024;
   std::vector<float, tapa::aligned_allocator<float>> a(n), b(n), c(n);
   // ... fill a and b ...
 
@@ -106,29 +109,30 @@ int main(int argc, char* argv[]) {
 
 The `--bitstream` flag is what controls which backend runs:
 - Omitted or empty → software simulation
-- `.xo` → fast cosimulation
+- `.xo` or `.zip` → fast cosimulation
+- `.hw_emu.xclbin` → Vitis hardware emulation
 - `.hw.xclbin` → on-board execution
 
 ---
 
 ## Rules
 
-- Host code and kernel code **must live in separate files**. The kernel file is
-  compiled to RTL; the host file is compiled to a CPU executable.
-- The kernel file must contain **exactly one top-level task** — the function
-  passed as `--top` to `tapa compile`.
+- Keep host and kernel code in separate translation units in the normal flow.
+  Pass only kernel sources to `tapa compile`; build the host with `tapa g++`.
+- Each compilation selects exactly one top-level task with `--top`. The source
+  may also contain the child tasks and unrelated helper functions.
 - The top-level task is **called via `tapa::invoke` from the host**; never
   called directly.
-- An upper-level task body **must contain only** stream declarations,
-  `tapa::task().invoke(...)` chains, and scalar/mmap argument forwarding — no
-  computation.
+- An upper-level task body **must contain only** channel declarations and
+  `tapa::task().invoke(...)` chains. Scalar and mmap arguments may be forwarded
+  to children, but the upper task performs no computation.
 - Streams are passed **by reference** (`tapa::istream<T>&`,
   `tapa::ostream<T>&`), and so is `tapa::async_mmap<T>&`. Passing a stream or
   `async_mmap` by value is a compile error.
 - mmap arguments are passed **by value** (`tapa::mmap<T>`), not by reference.
-- Scalar arguments (plain C++ types such as `int`, `float`, `uint64_t`) are passed
-  by value and are **read-only to the kernel**. The kernel cannot communicate a
-  result back to the host through a scalar parameter; use an mmap or stream instead.
+- Scalar arguments (plain C++ types such as `int`, `float`, `uint64_t`) are
+  passed by value. A task may modify its local copy, but that modification is
+  not returned to the host or parent; use an mmap or stream for results.
   Integer constant expressions passed through task `.invoke(...)`, including
   named `constexpr` and constant-initialized `const` integers, are converted to
   the child scalar parameter type, including numeric conversion to `float` and
@@ -150,8 +154,8 @@ The `--bitstream` flag is what controls which backend runs:
 ### Wrong: calling the top-level task directly from host code
 
 ```cpp
-// WRONG — bypasses the TAPA runtime entirely; streams are not initialized,
-// hardware execution cannot be dispatched.
+// WRONG as a host entry point — bypasses backend selection, device buffer
+// setup, and kernel-time reporting.
 VecAdd(tapa::mmap<const float>(a.data()), /* ... */);
 ```
 
@@ -167,8 +171,9 @@ tapa::invoke(VecAdd, FLAGS_bitstream,
 ```
 
 `tapa::invoke` examines the bitstream path at runtime and dispatches to the
-correct backend: software simulation (empty path), RTL co-simulation (`.xo`),
-emulation (`.hw_emu.xclbin`), or on-board execution (`.hw.xclbin`).
+correct backend: software simulation (empty path), RTL cosimulation (`.xo`
+or `.zip`), Vitis hardware emulation (`.hw_emu.xclbin`), or on-board execution
+(`.hw.xclbin`).
 
 ---
 

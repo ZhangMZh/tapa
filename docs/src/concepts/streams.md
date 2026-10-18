@@ -18,8 +18,8 @@ unambiguous to both the programmer and the compiler.
 
 ## Mental model
 
-A stream instance lives in an upper-level task. Leaf tasks receive directional
-references to it:
+An inter-task stream instance lives in an upper-level task. Leaf tasks receive
+directional references to it:
 
 ```cpp
 // Upper-level task instantiates the stream and wires it to two leaf tasks
@@ -37,8 +37,8 @@ void Consumer(tapa::istream<float>& in)  { /* ... */ }
 ```
 
 The `stream<T, Depth>` template parameter controls the hardware FIFO depth
-(default: 2). A larger depth reduces the chance of stalls at the cost of FPGA
-BRAM resources.
+(default: 2). A larger depth can reduce stalls at the cost of additional FPGA
+resources.
 
 ---
 
@@ -62,18 +62,23 @@ in >> data;    // same as data = in.read()
 
 ## Non-blocking read and write
 
-To read from multiple streams or achieve an initiation interval of one, use the
-non-blocking variants that return a `bool` indicating success:
+Non-blocking variants report whether they transferred a token. Always check
+the result: a failed read consumes nothing, and a failed write sends nothing.
 
 ```cpp
-void Task(tapa::istream<int>& in, tapa::ostream<int>& out) {
-  int data;
-  bool ok = in.try_read(data);   // returns false if stream is empty
-  if (ok) {
-    out.try_write(data);         // returns false if stream is full
-  }
+int next_value = 42;
+if (out.try_write(next_value)) {
+  // next_value was written; compute the next token.
+}
+
+int data;
+if (in.try_read(data)) {
+  // data was consumed; keep it until every later write succeeds.
 }
 ```
+
+If a consumer must forward data through a full output stream, retain the value
+and retry the write before reading another input token.
 
 ---
 
@@ -101,8 +106,8 @@ if (valid && /* routing decision */) {
 
 ## End-of-Transaction (EoT)
 
-A producer signals the end of a data stream by calling `close()`. The consumer
-detects it with `try_eot()`:
+A producer marks the end of a transaction by calling `close()`. The consumer
+detects the marker with `try_eot()`, which inspects but does not consume it:
 
 ```cpp
 // Producer
@@ -123,6 +128,7 @@ void Stream2Mmap(tapa::istream<float>& stream, tapa::mmap<float> mem) {
       mem[i++] = stream.read(nullptr);
     }
   }
+  stream.open();  // consume the EoT marker before the next transaction
 }
 ```
 
@@ -141,13 +147,16 @@ void Consumer(tapa::istream<int>& in, tapa::ostream<int>& out) {
   TAPA_WHILE_NOT_EOT(in) {
     out.write(in.read(nullptr));
   }
+  in.open();
   out.close();
 }
 ```
 
 ```admonish tip
-A downstream task can reopen a closed stream with `stream.open()` to reuse it
-across multiple transactions.
+After observing EoT, the consumer calls `stream.open()` to consume the marker.
+`close()` and `open()` delimit transactions; they do not destroy and recreate
+the stream. Consume the marker before starting the next transaction or ending
+the task.
 ```
 
 ---
@@ -156,7 +165,8 @@ across multiple transactions.
 
 For parameterized designs, TAPA provides arrays of streams:
 
-- `tapa::streams<T, N>` — array of N streams (instantiation in upper-level task)
+- `tapa::streams<T, N, Depth>` — array of N streams (instantiation in an
+  upper-level task; `Depth` defaults to 2)
 - `tapa::istreams<T, N>&` / `tapa::ostreams<T, N>&` — directional array
   references in leaf task signatures
 
@@ -175,19 +185,22 @@ void InnerStage(int b, tapa::istreams<pkt_t, kN / 2>& in_q0,
 
 ## Rules
 
-- Always pass streams by reference: `istream<T>&`, `ostream<T>&`. Never by
-  value — the stream object is not copyable.
-- A parameter is never a `stream<T>`. `stream` declares a channel and belongs
-  in an upper-level task's body; a task that reads or writes one takes
-  `istream<T>&` or `ostream<T>&`. That applies to the top-level task too — a
-  kernel exposes an external stream port as `istream`/`ostream`.
+- Always pass TAPA task stream ports by reference: `istream<T>&`,
+  `ostream<T>&`. Passing one by value is rejected.
+- A TAPA task port uses `istream<T>&` or `ostream<T>&`, not `stream<T>`.
+  `stream` declares a channel; an upper-level task declares inter-task channels
+  in its body. A top-level kernel likewise exposes external stream ports as
+  `istream`/`ostream`.
 - Each stream instance must have exactly one reader and exactly one writer.
-- TAPA software simulation respects stream depth: a full stream blocks the
-  writer, matching hardware behavior.
+- With `tapa::stream<T, Depth>`, software simulation enforces `Depth`: a full
+  stream blocks the writer, matching hardware behavior. The compatibility
+  alias `tapa::hls::stream<T, Depth>` is the exception: its simulation depth is
+  effectively infinite while its hardware depth remains `Depth`.
 - Stream depth is a hardware FIFO size. The FPGA resource used depends on depth:
-  - **Depth < 128**: synthesised from SRL shift-registers (no BRAM cost).
-  - **Depth ≥ 128**: mapped to BRAM.
-  - **Depth ≥ 4096 and element width ≥ 36 bits**: mapped to URAM.
+  - **Depth = 1**: a one-element fall-through register.
+  - **1 < Depth < 128**: synthesised from SRL shift-registers (no BRAM cost).
+  - **Depth ≥ 128**: mapped to BRAM, except that **depth ≥ 4096 and element
+    width ≥ 36 bits** takes precedence and maps to URAM.
 - Default depth is 2, which costs only SRL resources.
 
 Without floorplanning, a shallow FIFO becomes full at its configured depth,
@@ -197,7 +210,8 @@ even when its physical SRL storage has a minimum of four slots.
 
 ## Common mistakes
 
-**Wrong** — stream passed by value (drops the reference, triggers a copy):
+**Wrong** — stream passed by value (loses the required endpoint identity and
+is rejected by TAPA):
 
 ```cpp
 void Leaf(tapa::istream<float> in) { /* ... */ }  // missing &

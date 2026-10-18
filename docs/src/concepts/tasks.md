@@ -32,8 +32,8 @@ Each level has a distinct role:
 
 - **Leaf task** — performs computation: loops, arithmetic, stream reads/writes.
   May call ordinary C++ functions. Must NOT invoke other TAPA tasks.
-- **Upper-level task** — orchestrates execution. Its body may only instantiate
-  streams and invoke child tasks with `tapa::task().invoke(...)`. It contains
+- **Upper-level task** — orchestrates execution. Its body may only declare
+  channels and invoke child tasks with `tapa::task().invoke(...)`. It contains
   no computation of its own.
 - **Top-level task** — the kernel entry point invoked from the host via
   `tapa::invoke`. For the `xilinx-vitis` target (the default), the top-level
@@ -94,7 +94,7 @@ terminate on program completion.
 
 - Leaf tasks receive streams by reference (`istream<T>&`, `ostream<T>&`) and
   mmap interfaces by value (`mmap<T>`).
-- An upper-level task body must contain only stream instantiations and
+- An upper-level task body must contain only channel declarations and
   `.invoke(...)` calls — no loops, arithmetic, or other computation.
 - `async_mmap` channel operations (`read_addr`, `read_data`, etc.) are
   leaf-task-only.

@@ -30,15 +30,12 @@ task graph JSON
     ▼  tapa synth     (can run remotely, parallelizable with -j)
 per-task RTL (Verilog)
     │
-    ▼  tapa floorplan (optional; multi-SLR devices only)
+    ▼  tapa floorplan (optional; supported multi-SLR devices)
 placement + timing constraints
     │
-    ▼  tapa pack      (can run remotely)
-.xo file
-    ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ (TAPA boundary) ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-    │
-    ▼  v++ --link     (Vitis, not TAPA)
-.xclbin
+    ▼  tapa pack      (XO packaging can run remotely)
+    ├─ .xo (xilinx-vitis) ─v++ --link (Vitis)→ .xclbin
+    └─ .zip (xilinx-hls) → fast cosim or a downstream RTL flow
 ```
 
 **`tapa analyze`** — Runs `tapacc` locally, one process over every input
@@ -48,19 +45,22 @@ cflags, so tasks may be defined in any input and invoked from any other.
 and stores the task graph in `tapa.json`. No vendor tools are required for
 this step.
 
-**`tapa synth`** — Invokes Vitis HLS for each task to produce per-task
-Verilog RTL. This is the most time-consuming step. With `-j N`, up to N tasks
-are synthesized in parallel. With `--remote-host`, synthesis runs on a remote
-Linux machine that has Vitis HLS installed.
+**`tapa synth`** — Invokes Vitis HLS for each task, harvests per-task Verilog,
+and generates the connected RTL tree. This is usually the most time-consuming
+step. With `-j N`, up to N tasks are synthesized in parallel. With
+`--remote-host`, synthesis runs on a remote Linux machine that has Vitis HLS
+installed.
 
-**`tapa floorplan`** *(optional)* — Assigns tasks to SLRs on a multi-die
-device, balances resource usage across them, and inserts pipeline registers on
-the channels that cross SLR boundaries. It writes `floorplan.xdc`, which
-`pack` picks up automatically. Skip it if your design already meets timing;
-see [Performance Tuning](../howto/performance-tuning.md) for when it helps.
+**`tapa floorplan`** *(optional)* — Assigns tasks to SLRs on a supported
+multi-die device, balances resource usage across them, and inserts pipeline
+registers on channels that cross SLR boundaries. It writes `floorplan.xdc`,
+which `pack` picks up automatically. Skip it if your design already meets
+timing; see [Performance Tuning](../howto/performance-tuning.md) for when it
+helps.
 
-**`tapa pack`** — Combines the per-task RTL into a single Xilinx IP package
-(`.xo` file) suitable for `v++ --link`.
+**`tapa pack`** — Combines the generated RTL into an `.xo` for the default
+`xilinx-vitis` target or a `.zip` for `xilinx-hls`. An XO feeds `v++ --link`;
+the ZIP is for direct RTL consumers and fast cosimulation.
 
 **Shortcut:** `tapa compile` runs analyze, synth, and pack in the correct
 order in a single command. It does not floorplan — for that, run the steps
@@ -128,9 +128,10 @@ tapa --work-dir work.out pack \
 ## Rules
 
 - `tapa analyze` **always runs locally**, even when `--remote-host` is set.
-- `tapa synth` and `tapa pack` run on the remote host when `--remote-host` is
-  provided, as does `tapa floorplan` when it is measuring an implementation
-  (`--run-impl` / `--dse`).
+- `tapa synth` and Vitis XO packaging run on the remote host when
+  `--remote-host` is provided, as does `tapa floorplan` when it is measuring an
+  implementation (`--run-impl` / `--dse`). Planning-only floorplanning and HLS
+  ZIP assembly remain local.
 - `tapa compile` is the shortcut for analyze, synth, and pack, and handles
   stage ordering automatically. Floorplanning requires running the steps
   separately.
@@ -169,9 +170,9 @@ tapa compile --top VecAdd --part-num xcu250-figd2104-2L-e \
 ## Note about v++ link
 
 ```admonish note
-The `v++ --link` step that produces `.xclbin` is performed by Xilinx Vitis,
-not TAPA. TAPA's output is the `.xo` file. See
-[Build & Run on Board](../howto/build-and-run.md) for the full linking
+For the `xilinx-vitis` target, the `v++ --link` step that produces `.xclbin`
+is performed by Xilinx Vitis, not TAPA. TAPA's input to that step is the `.xo`
+file. See [Build & Run on Board](../howto/build-and-run.md) for the full linking
 workflow.
 ```
 

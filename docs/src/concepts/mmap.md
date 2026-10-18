@@ -10,8 +10,8 @@
 
 FPGA designs need to read from and write to off-chip DRAM. `tapa::mmap<T>`
 provides an array-like interface that TAPA compiles to AXI4 memory-mapped
-transactions. It is simpler to use than `async_mmap` and is the right choice
-when latency hiding is not required or when access patterns are straightforward.
+transactions. It is simpler to use than `async_mmap` and is a good choice
+when you do not need to control outstanding requests explicitly.
 
 ---
 
@@ -67,18 +67,18 @@ Note that `mmap` is passed by value (no `&`).
 
 ## Host-side wrappers
 
-On the host, the direction of host-to-kernel data transfer is declared in the
-`tapa::invoke` call using wrapper types:
+On the host, wrappers in the `tapa::invoke` call describe what the kernel does
+with each buffer and therefore which transfers the runtime performs:
 
-- `tapa::read_only_mmap<T>(vec)` — host sends data to the kernel; kernel reads
-- `tapa::write_only_mmap<T>(vec)` — kernel writes; host receives data back
-- `tapa::read_write_mmap<T>(vec)` — bidirectional transfer
+| Wrapper | Kernel view | Host-to-device before execution | Device-to-host after execution |
+|---------|-------------|---------------------------------|--------------------------------|
+| `tapa::read_only_mmap<T>(vec)` | Reads the buffer | Yes | No |
+| `tapa::write_only_mmap<T>(vec)` | Writes the buffer | No | Yes |
+| `tapa::read_write_mmap<T>(vec)` | Reads and writes | Yes | Yes |
 
-```admonish warning
-`read_only_mmap` and `write_only_mmap` describe the **host-to-kernel transfer
-direction**, not the kernel's internal access pattern. The kernel task always
-receives a plain `mmap<T>` parameter regardless of which wrapper was used.
-```
+The kernel task still receives a plain `mmap<T>` or `mmaps<T, N>` parameter.
+These wrappers control runtime transfers; they do not add C++ access
+restrictions beyond the element type's constness.
 
 From the vector-add host code:
 
@@ -105,7 +105,8 @@ std::vector<float, tapa::aligned_allocator<float>> b(n);
 std::vector<float, tapa::aligned_allocator<float>> c(n);
 ```
 
-This eliminates the extra copy and suppresses XRT alignment warnings.
+This allows XRT to use the allocation without an alignment-related copy and
+suppresses the corresponding warnings.
 
 ---
 
@@ -139,8 +140,8 @@ repository.
 
 ```admonish warning
 When a mmap is shared across tasks, the programmer is responsible for memory
-consistency. Concurrent accesses to the same addresses will produce undefined
-results.
+consistency. Unordered accesses to the same addresses can produce inconsistent
+results. Partition the buffer or add an explicit synchronization protocol.
 ```
 
 ---
@@ -170,11 +171,12 @@ void VecAdd(tapa::mmaps<float, M> a, tapa::mmaps<float, M> b,
 
 ## Rules
 
-- Kernel task signatures: `mmap<T>` must be passed **by value** (no `&`); passing by reference is a compile error. This
-  is the opposite of streams.
-- `mmap` can only be used as a function parameter, not as a local variable.
-- `read_only_mmap` / `write_only_mmap` describe host-to-kernel transfer
-  direction only; they do not constrain kernel access patterns.
+- Kernel task signatures: `mmap<T>` must be passed **by value** (no `&`);
+  passing by reference is a compile error. This is the opposite of streams.
+- Within a kernel task body, `mmap` is a function-parameter interface, not a
+  local variable to allocate.
+- Host wrappers describe the kernel's buffer access and select the required
+  host/device transfers; they do not change the kernel parameter types.
 
 ---
 
