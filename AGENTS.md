@@ -28,9 +28,12 @@ not derivable from those authorities → stop and ask.
 ## Pipeline
 
 ```text
-C++ source ─tapacc (Clang frontend)→ task graph/JSON
-         ─tapa-core (Rust)→ IR → Floorplan → Codegen → RTL (.xo)
-         ─v++→ bitstream        C++ source ─frt→ software simulation
+C++ kernel ─tapa analyze (tapacc)→ task graph/JSON
+         ─tapa synth (HLS + codegen)→ RTL
+         ─tapa floorplan (optional)→ placement/constraints
+         ─tapa pack→ .xo/.zip ─v++ (XO only)→ .xclbin
+
+C++ kernel + host ─tapa-lib/frt→ software simulation / cosim / XRT
 ```
 
 - `tapacc/` — Clang-based frontend extracting the task graph.
