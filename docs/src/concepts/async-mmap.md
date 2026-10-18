@@ -74,29 +74,12 @@ response in the same clock cycle.
 
 ---
 
-## Runtime burst detection
+## Sequential accesses and bursts
 
-TAPA's generated bridge coalesces eligible sequential element addresses into
-AXI bursts at runtime. You issue element indices; the bridge merges adjacent
-requests when AXI constraints, such as the 4 KiB boundary rule, allow it.
-This provides burst efficiency for sequential patterns without explicit burst
-programming in your kernel code.
-
----
-
-## Example resource comparison
-
-Resource usage depends on the design and tool version. The following 300 MHz
-comparison illustrates the trade-off reported for one design; it is not a
-general guarantee for either interface:
-
-| Memory Interface             | Clock (MHz) | LUT  | FF   | BRAM | URAM | DSP |
-|------------------------------|-------------|------|------|------|------|-----|
-| `#pragma HLS interface m_axi` | 300        | 1189 | 3740 | 15   | 0    | 0   |
-| `async_mmap`                  | 300        | 1466 | 162  | 0    | 0    | 0   |
-
-In this example, `async_mmap` uses more LUTs but fewer flip-flops and no BRAM.
-Use your own HLS and post-synthesis reports when choosing an interface.
+TAPA can coalesce eligible sequential element addresses into AXI bursts.
+You issue element indices; adjacent requests are merged when AXI constraints
+allow it. This provides burst efficiency for sequential patterns without
+explicit burst programming in your kernel code.
 
 ---
 

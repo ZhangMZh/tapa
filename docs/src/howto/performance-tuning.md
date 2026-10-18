@@ -85,8 +85,6 @@ TAPA needs a resource estimate for each task to balance the design across SLRs d
 
 - **Post-RTL-synthesis estimates (with `--enable-synth-util`).** This runs an additional out-of-context Vivado synthesis pass per task on the generated RTL, producing materially more accurate resource counts. **Prefer this whenever the estimates matter** — i.e. before floorplanning a tight design or when interpreting the utilization report. It costs one extra Vivado synth per task.
 
-When `--enable-synth-util` has run, `report.json`/`report.yaml` mark `area.source: "synth"`; otherwise `area.source: "hls"`.
-
 ## Improving Fmax with `tapa floorplan`
 
 The checks above improve *throughput* (II, memory, FIFO depth). To improve *clock frequency* (Fmax) on a multi-SLR device, run `tapa floorplan` between `synth` and `pack`. It assigns tasks to SLRs, balances resource usage across them, adds pipeline registers on the channels that cross SLR boundaries, and generates the placement and timing constraints for `pack`.

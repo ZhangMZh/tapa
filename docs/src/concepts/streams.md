@@ -196,15 +196,9 @@ void InnerStage(int b, tapa::istreams<pkt_t, kN / 2>& in_q0,
   stream blocks the writer, matching hardware behavior. The compatibility
   alias `tapa::hls::stream<T, Depth>` is the exception: its simulation depth is
   effectively infinite while its hardware depth remains `Depth`.
-- Stream depth is a hardware FIFO size. The FPGA resource used depends on depth:
-  - **Depth = 1**: a one-element fall-through register.
-  - **1 < Depth < 128**: synthesised from SRL shift-registers (no BRAM cost).
-  - **Depth ≥ 128**: mapped to BRAM, except that **depth ≥ 4096 and element
-    width ≥ 36 bits** takes precedence and maps to URAM.
-- Default depth is 2, which uses the SRL implementation (no BRAM or URAM).
-
-Without floorplanning, a shallow FIFO becomes full at its configured depth,
-even when its physical SRL storage has a minimum of four slots.
+- Stream depth affects FPGA resource usage. Start with the default depth of
+  2 and increase it only when a measured burst or rate mismatch requires
+  more storage. Check the synthesis resource report after changing it.
 
 ---
 

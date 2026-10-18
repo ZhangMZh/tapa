@@ -86,14 +86,9 @@ in.open();                     // consume EoT marker
 TAPA_WHILE_NOT_EOT(in) { ... } // loop until EoT
 ```
 
-Stream depth and FPGA resource:
-
-| Depth | Resource |
-|-------|----------|
-| 1 | One-element fall-through register |
-| 1 < depth < 128 | SRL shift-register (no BRAM) |
-| ≥ 128 | BRAM |
-| ≥ 4096 and element width ≥ 36 b | URAM (takes precedence over BRAM) |
+Stream depth defaults to 2. Increasing it provides more buffering but uses
+more FPGA resources. Start with the default and tune it from backpressure
+observations and the synthesis resource report.
 
 ---
 

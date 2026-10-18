@@ -64,7 +64,8 @@ task& invoke(Func&& func, tapa::executable exe, Args&&... args);
 All `.invoke()` calls in a `tapa::task()` chain start concurrently. Kernels that receive a `tapa::executable` each get their own cosim process; kernels without one run as software coroutines.
 
 ```admonish note
-`tapa::executable` must be provided before any argument that is a direct stream reader or writer.  The runtime uses the executable path to bind the right simulation backend before it can connect streams.
+Pass `tapa::executable` immediately after the kernel function, before the
+kernel's other arguments.
 ```
 
 ---

@@ -23,7 +23,7 @@ hiding memory latency. This is especially useful for random access or custom
 scheduling. It does not guarantee higher throughput for every design, so
 compare synthesis reports and measurements. See
 [Memory Access: async_mmap](../concepts/async-mmap.md) for the channel layout
-and an example resource comparison.
+and usage rules.
 
 ---
 
@@ -104,8 +104,7 @@ Use the non-blocking operations unless you have analyzed the dependencies.
 ```
 
 ```admonish tip
-For the full API reference and an example resource comparison with the Vitis
-HLS `m_axi` interface, see
+For the full API reference and channel semantics, see
 [Memory Access: async_mmap](../concepts/async-mmap.md).
 ```
 
