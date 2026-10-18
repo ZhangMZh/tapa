@@ -1,227 +1,177 @@
 # Architecture
 
-```admonish note
-This page is the **architecture charter** for the TAPA compiler's Rust
-toolchain. It describes the component map, the layer rule, and the charter
-of each crate — it is a standing reference, not a changelog. Read it before
-adding a crate, moving code across crates, or introducing a new
-cross-component contract.
-```
+This page describes the compiler and runtime as they are organized today.
+Read it before moving code between components or changing a cross-component
+schema. User-facing pipeline commands are covered in
+[The Compile Pipeline](../concepts/compile-pipeline.md).
 
-## Component Map
+## Component map
 
-The compiler pipeline has three parts: the C++ frontend `tapacc`, the Rust
-toolchain workspace under `tapa-core/`, and the separate `fpga-runtime`
-workspace that ships the simulation and on-board runtime.
+TAPA has three main implementation areas:
 
-```text
-tapacc (C++/Clang) ──TaskGraph JSON──┐
-                                     ▼
-tapa-protocol   tapa-ir ──────────────── schema + transforms
-     │           ▲  ▲
-     │           │  └────────────── tapa-rtl (Verilog parse / mutate / emit; tree-sitter + nom)
-     ▼           │
-tapa-floorplan (device/graph/partition/pipeline/route/solver/xdc + DSE)
-tapa-codegen (RTL assembly of the top module; flat pass modules)
-     ▲
-tapa-xilinx (HLS/Vitis/Vivado/XO-pack tools, local+remote runners, Vitis connectivity parser adapter)
-     ▲
-tapa-cli (steps: analyze → synth → floorplan → pack; chain, state via tapa.json, remote config)
-
-fpga-runtime (separate workspace): frt (FFI staticlib) ← tapa-lib/tapa/host/frt (C++ RAII)
-             frt-shm, frt-dpi{,-verilator,-xsim}, frt-cosim
-```
-
-`tapacc` emits the task graph as JSON; `tapa-ir` is the schema both sides
-agree on. The engines (`tapa-floorplan`, `tapa-codegen`) transform the IR
-into a floorplan and into RTL, `tapa-xilinx` drives the vendor tools, and
-`tapa-cli` orchestrates the steps and persists state in `tapa.json`.
-
-Within the runtime workspace, `frt-shm::config` owns the DPI configuration
-schema shared by the cosimulation writer and live DPI reader. Shared queues
-validate payload geometry and mapped extent on creation and attachment. DPI
-adapters use reusable scratch storage between padded host tokens and compact
-RTL buffers, retaining end-of-stream bytes and zeroing trailing padding.
-HLS FIFO framing derives its exact payload width from the DUT data ports,
-places EoT immediately above those bits, and keeps the host frame's EoT byte
-after the payload's object storage; missing widths and inconsistent peek
-widths are errors. Output payload storage and token padding are zero-filled.
-Resume reads the JSON once and reopens only buffers; its compatibility reader
-deliberately accepts missing live-stream metadata and reports missing stream bindings
-together. Resume has an explicit pending state with zero compute time;
-polling marks execution complete and `finish` performs scheduled readback.
-Simulation failures belong to the finished state and are reported by `finish`.
-XRT execution owns one compute event, enters the running state only after
-successful enqueue, and retains its completed event for readback and profiling.
-Kernel XML bodies use quick-xml Serde models for both grouped XO declarations
-and flat xclbin declarations. Argument resolution runs after the complete
-port table is available, independent of XML child order.
-Cosimulation AXI read responses capture each beat once and retain its data
-and ID until the VALID/READY handshake, including across concurrent writes
-to the same memory while a read is stalled. Verilator settles every driven
-input before accepting AXI and AXIS handshakes at each rising edge, including
-when response IDs select destinations with different readiness or stream
-readiness and payloads depend on newly driven inputs.
-
-For aligned incrementing AXI bursts, both cosimulation models use SIZE to
-advance the address and select the active bus lanes on each beat. Writes retain
-bytes disabled by WSTRB, including at a partial final bus beat. DPI transfers
-cover only the requested bytes and keep their strict mapped-buffer bounds.
-
-Blocked host stream operations recheck queue readiness after observing kernel
-completion, so a final transfer made during a scheduler yield remains usable.
-They abort only when the kernel has finished and the queue is still blocked.
-
-## Load-Bearing Contract Guards
-
-Several cross-component contracts are guarded in CI. These are the seams
-where two independent implementations have to agree, so a change that
-breaks one of them is a change that breaks the build — keep them green.
-
-- **Versioned work state.** The `tapa.json` state file is a versioned
-  schema: `WorkState` in `tapa-core/tapa-ir/src/work_state.rs` carries a
-  `VERSION` constant (currently `VERSION = 5`), so old state is detected
-  instead of silently misparsed. Both frontend and archived graphs pass
-  the same schema-version and invoke-literal validation in `tapa-ir`.
-  The original task hierarchy remains authoritative in the state; the
-  `flow.flatten_hierarchy` setting selects physical RTL lowering. Flat placement
-  and controller ownership are derived together from original invocations.
-  Earlier work directories require re-analysis because a flattened graph may
-  have lost its upper-task controller scopes.
-  Every invoke constant must bind to a declared scalar child port; missing
-  child-task or port metadata and non-scalar declarations are rejected.
-  Graph and state readers require one complete JSON document; trailing
-  whitespace is accepted, while additional JSON values or output are rejected.
-- **Atomic state writes.** All work-directory files are written through a
-  tempfile-then-rename dance in `tapa-core/tapa-cli/src/state/json.rs`, so
-  readers never observe a partially written state file.
-- **tapacc → IR conformance.** The task-graph schema has two
-  implementations that must agree: `tapacc` emits the JSON and `tapa-ir`
-  parses it with `deny_unknown_fields`.
-  Invocation arguments bind by position to parameter names from the owning
-  definition, including when a declaration in another source file uses
-  different names or omits them.
-  `tapa-core/tapa-cli/tests/tapacc_conformance.rs` runs the real `tapacc`
-  on a reference design and strict-parses its verbatim stdout, catching any
-  drift between the two sides.
-- **Generated-ABI drift check.** The C header for the `frt` runtime is
-  generated with cbindgen (`cargo run -p frt --example gen_c_api -- --check`);
-  `frt/tests/c_api_header_test.rs` fails if the checked-in header differs.
-
-## Layer Rule
-
-**Dependencies point down only.** Engines never depend on engines or on
-drivers; everything that travels cross-crate goes through `tapa-ir`
-contract types.
+- `tapacc/`: the C++/Clang frontend.
+- `tapa-core/`: the Rust compiler workspace.
+- `fpga-runtime/` and `tapa-lib/`: the Rust and C++ runtime used for software
+  simulation, cosimulation, and XRT execution.
 
 ```text
-L0 contracts : tapa-protocol (constants)        tapa-ir (schema, transforms, floorplan result types)
-L1 model     : tapa-rtl (verilog parse/mutate/emit)
-L2 engines   : tapa-floorplan ──> writes FloorplanResult │ tapa-codegen ──> reads FloorplanResult
-L3 drivers   : tapa-xilinx (tools/runners/platform)      tapa-xilinx/connectivity (Vitis parser adapter)
-L4 orchestr. : tapa-cli (typed pipeline, artifact registry, state)
-L5 runtime   : fpga-runtime (frt + cosim + dpi)  │ tapacc (C++ frontend)  — side contracts into L0
+C++ sources
+    │
+    ▼
+tapacc ──task-graph JSON──► tapa-cli
+                              │ analyze
+                              │ synth
+                              │ floorplan (optional)
+                              │ pack
+                              ▼
+                         .xo or .zip
+
+tapa-ir       typed graph, work state, bindings, and floorplan results
+tapa-rtl      Verilog parsing, transformation, and emission
+tapa-codegen  connected RTL and artifact manifests
+tapa-xilinx   Xilinx tool drivers, packaging, and remote transport
+tapa-floorplan placement, routing, pipelining, DSE, and XDC
+
+tapa-lib      C++ task/stream/mmap API and host runtime
+frt           execution backends and C ABI used by tapa-lib
+frt-cosim     archive metadata, testbenches, and simulator runners
+frt-shm       shared-memory queues and DPI configuration
+frt-dpi-*     xsim and Verilator DPI adapters
 ```
 
-`tapacc` and `fpga-runtime` sit at L5 as side contracts into L0: they
-exchange data with the toolchain only through the versioned schemas defined
-in `tapa-ir` and `tapa-protocol`, never by sharing implementation.
+`tapacc` extracts the task graph. `tapa-cli` orchestrates compilation and
+persists typed state from `tapa-ir`. The engines produce floorplans and RTL;
+`tapa-xilinx` drives Xilinx tools and packages their outputs.
 
-## Crate Charters
+## Pipeline stages
 
-- **tapa-protocol** — shared naming and handshake contracts. One ordered M-AXI
-  catalog owns emitted ports, widths, directions, and compact membership;
-  channel and suffix views derive from it. Codegen retains catalog descriptors
-  when resolving numeric or symbolic widths and port directions. Packaging additionally recognizes
-  REGION attributes, which generated fabric never emits or wires.
-- **tapa-ir** — vendor-neutral schema plus pure transforms. No I/O
-  adapters, no tool logic. It owns the JSON wire format the C++ frontend
-  and the Rust toolchain agree on, and the typed `FloorplanResult` that
-  connects the two engines. `Port::kernel_arg_names` owns ordered kernel
-  argument expansion for packaging and simulation; target adapters retain
-  protocol selection and synthesized RTL interface overrides. `Task::port`
-  resolves exact channel declarations before array bases for both engines;
-  borrowed binding views share child-port and FIFO endpoint resolution.
-  External ends stay distinct from declared references with incomplete metadata.
-  RTL signal widths remain the codegen backend's responsibility.
-  `MemoryGeometry` validates merged mmap widths and hmap channel shapes once;
-  plain and single-channel hmap layouts stay distinct without changing the
-  serialized port schema.
-- **tapa-rtl** — the only place Verilog text is parsed, mutated, or
-  emitted (tree-sitter + nom). Other crates never manipulate Verilog
-  source as text. Activity queries inspect a transient tree-sitter CST and
-  prove only unconditional, full-width literal-zero drivers inactive. Module
-  body boundaries also come from the CST, preserving original body text and
-  any modules or trailing text after the first independently of header and
-  declaration layout.
-- **tapa-floorplan** — turns `(design, device)` into a serialized
-  `FloorplanResult`. Placements, slot usage, and planned routes use typed
-  coordinates; finalization renders region strings for the persisted schema.
-  A flat projection from `tapa-ir` supplies physical leaves and their original
-  invocation owners. Upper-task controllers share the top controller's placement;
-  leaves remain independently placeable.
-  It knows nothing about RTL text or the CLI.
-- **tapa-codegen** — a pure function
-  `(Design, Option<FlatProjection>, Option<FloorplanResult>, modules) → ArtifactManifest` whose
-  manifest is the complete file set: generated RTL, template files, FSM
-  files, and embedded assets. Packaging is then a copy operation for the
-  caller. Child mmap routes are direct, crossbar, or pipelined variants; only
-  crossbar bindings carry slave indices and paired child/wire ID widths.
-  Flat emission uses the projection for data connections and the source graph
-  for scoped control and upper-task argument forwarding.
-  Control payload preparation requires a scalar binding for every declared scalar
-  child port, including original upper scopes, before mutating RTL.
-- **tapa-xilinx** — every external tool invocation, discovery, versioning,
-  and transport (local and remote runners) lives here. Static Tcl, XML, and
-  shell templates in the compiler crates use typed Askama contexts, checked
-  at compile time; template sources live in each crate’s `templates/` directory.
-  Local runners use duct to feed input and drain both outputs concurrently;
-  a timeout covers process exit and I/O completion and kills the process group.
-  No other crate shells out to vendor tools. It also owns remote configuration defaults
-  and path normalization. `ToolValue` distinguishes literal command text from
-  local paths, including paths within flags and environment values; remote
-  execution relocates only those explicit paths into its staging tree. Each
-  remote attempt owns cleanup of that tree, including failed transfers.
-  The CLI overlays host options on parsed YAML
-  before decoding the mapping directly into `RemoteConfig`.
-- **tapa-cli** — no domain logic. Orchestration, state persistence, the
-  artifact registry, and UX only. Steps declare what they read and write
-  over the artifact registry.
+1. **Analyze.** `tapa analyze` runs `tapacc` locally. The frontend rewrites
+   the required source tree and emits the task graph. The CLI stores a typed
+   `WorkState` in `<work-dir>/tapa.json` and keeps raw `tapacc` output in
+   `tapacc.json` for debugging.
+2. **Synthesize.** `tapa synth` runs Vitis HLS for each non-ignored task,
+   collects reports and Verilog, and asks `tapa-codegen` for the connected RTL
+   tree. Work can run locally or through the remote tool runner.
+3. **Floorplan (optional).** `tapa floorplan` reads the synthesized graph and
+   per-task areas. It places and routes the design, inserts pipeline stages,
+   stores the typed floorplan in `tapa.json`, and publishes `floorplan.xdc`.
+   Planning uses the external CBC solver. Implementation feedback (`--run-impl`
+   or `--dse`) additionally invokes Vitis/Vivado.
+4. **Pack.** `tapa pack` creates an XO for `xilinx-vitis` or a ZIP for
+   `xilinx-hls`. Packaging includes generated RTL, metadata, and any accepted
+   custom-RTL overlays. XO packaging can use the remote runner; ZIP assembly
+   is local.
 
-## Conventions
+`tapa compile` composes analyze, synth, and pack. Floorplanning is a separate
+step between synth and pack.
 
-- **Naming disambiguation.** Where crate types collide, alias once at the
-  consuming module instead of importing ambiguous names at each use
-  site: `tapa_ir::Port as IrPort` versus `tapa_rtl::Port as RtlPort`
-  (as done in `tapa-codegen`'s RTL state);
-  `tapa_cli::remote_config` (config/flag overlay) versus
-  `tapa_xilinx::runtime::remote` (transport).
-- **Error taxonomy.** Each crate defines its domain errors with
-  `thiserror` in one `error.rs` per crate. Engines return structured
-  errors; only the CLI renders user-facing prose.
-- **State.** `tapa.json` is the only inter-step persistence. All new
-  persisted fields go through the versioned `WorkState` schema — never
-  ad-hoc JSON between steps.
-- **File-size budgets.** Soft budget of ~800 lines per file; `lib.rs` is
-  re-exports only, ≤ ~100 lines. When a module family grows past three
-  files it moves into a directory. Budgets are enforced in review, not CI.
-- **Test placement.** Unit tests live in-source next to the code;
-  behavior and conformance suites live in `tests/`; golden comparisons are
-  normalized (sorted, trimmed) so refactors stay cheap.
+## Crate responsibilities and layer rule
 
-## Public API Surface Audit
+Dependencies point toward contracts and models, not sideways between engines
+or up into the CLI. Cross-component data uses typed values rather than
+string-keyed maps or ad hoc JSON.
 
-CI gates on `cargo public-api` over the L0/L1 crates (`tapa-protocol`,
-`tapa-ir`, `tapa-rtl`), diffing the generated listing against blessed
-baselines under `docs/api/`. Drift blocks the branch: either revert the accidental change
-or, for an intentional API change, re-bless the baseline in the same
-PR. To regenerate a baseline:
+| Component | Owns | Must not own |
+|---|---|---|
+| `tapa-protocol` | Port names, directions, widths, and handshake constants | Compiler state or vendor-tool policy |
+| `tapa-ir` | Task-graph and work-state schemas, bindings, transforms, clock/area types, `FloorplanResult` | File layout, RTL text, tool invocation |
+| `tapa-rtl` | Verilog CST/parsing, typed mutation, and emission | Task graph orchestration or packaging |
+| `tapa-floorplan` | Device models, placement, routing, pipelining, DSE, and XDC rendering | Verilog rewriting or CLI policy |
+| `tapa-codegen` | Conversion from IR and parsed modules to a complete RTL artifact manifest | Process execution and output packaging |
+| `tapa-xilinx` | Xilinx tool discovery and invocation, platform/XML handling, XO packaging, local/remote runners, SSH transport | Vendor-neutral transforms or floorplan algorithms |
+| `tapa-cli` | Command parsing, step ordering, work-directory layout, state I/O, reports, and user-facing errors | Duplicate engine algorithms |
+
+The external CBC process used by `tapa-floorplan` is intentionally separate
+from the Xilinx tool drivers in `tapa-xilinx`. Likewise, `tapacc` is a frontend
+process, not a Xilinx tool invocation.
+
+## Work-state and frontend contracts
+
+### One typed state document
+
+`<work-dir>/tapa.json` is the only JSON task-graph and flow state file shared
+between compiler steps. `WorkState` has a version stamp, and the nested
+`TaskGraph` has its own frontend schema version. Readers reject unsupported
+versions instead of attempting to interpret stale data.
+
+The original task hierarchy remains authoritative. `flow.flatten_hierarchy`
+selects physical RTL lowering without replacing that semantic graph. Generated
+RTL, constraints, reports, and metadata are fixed-name artifacts around the
+state file, not additional task-graph schemas.
+
+The CLI writes the state file and its small JSON side artifacts atomically
+through `tapa-core/tapa-cli/src/state/json.rs`. Vendor tools still write their
+own reports and projects directly.
+
+### `tapacc` ↔ `tapa-ir` conformance
+
+The C++ frontend and Rust IR must agree on every schema field and invocation
+binding. `tapa-ir` uses strict deserialization, including unknown-field
+rejection and full-document validation.
+
+`//tapa-core:tapacc_conformance_test` runs the real frontend on reference
+kernels and parses its output with the production Rust types. This catches
+schema drift that hand-written fixtures cannot detect.
+
+## Runtime boundaries
+
+The C++ public API lives in `tapa-lib`. For host execution, it uses the `frt`
+C ABI for artifact-specific execution while retaining the same task, stream,
+and mmap interfaces for software simulation.
+
+- `frt-shm` owns shared-memory queue geometry and the DPI configuration
+  exchanged with simulator processes.
+- `frt-cosim` reads the packed `WorkState`, derives kernel argument and stream
+  metadata, generates testbenches, and launches xsim or Verilator.
+- `frt-dpi`, `frt-dpi-xsim`, and `frt-dpi-verilator` marshal AXI and stream
+  transfers between simulator signal layouts and host tokens.
+- `frt` selects fast-cosim or XRT execution from the artifact path and tracks
+  buffer transfer, execution, completion, and timing.
+
+`frt-cosim` depends on `tapa-ir` as its contract crate, so archive schema
+changes are checked by Rust types across the two Cargo workspaces. It does not
+depend on compiler engines or the CLI.
+
+The generated C header is another guarded boundary:
+`frt/tests/c_api_header_test.rs` compares the checked-in `c_api.h` with fresh
+cbindgen output. To check it manually:
 
 ```bash
-rustup toolchain install nightly-2026-07-30 --profile minimal --component rust-docs-json
-cargo +nightly-2026-07-30 install cargo-public-api --locked --version 0.52.0
-cd tapa-core
-cargo +nightly-2026-07-30 public-api --package tapa-ir > ../docs/api/tapa-ir.public-api.txt
+cd fpga-runtime
+cargo run -p frt --example gen_c_api -- \
+  --check ../tapa-lib/tapa/host/frt/c_api.h
 ```
 
-(repeat for `tapa-protocol` and `tapa-rtl`).
+## Implementation conventions
+
+- Keep reusable logic in one typed home; do not copy adapters between crates.
+- Alias colliding type names once at the consuming module, such as
+  `tapa_ir::Port as IrPort` and `tapa_rtl::Port as RtlPort`.
+- Use structured domain errors. Engines return errors; the CLI renders
+  user-facing diagnostics.
+- Keep unit tests next to implementation, functional behavior in
+  `tests/functional/`, and larger design regressions in `tests/regression/`.
+  Golden outputs are semantic references and require semantic review.
+- Treat the roughly 800-line file budget and small-module goal as review
+  guidance, not as a reason to add new abstractions.
+
+## Public API surface audit
+
+The development-branch CI runs `cargo public-api` for `tapa-protocol`,
+`tapa-ir`, and `tapa-rtl`, then diffs the output against `docs/api/`. Revert
+accidental changes or re-bless intentional API changes in the same pull
+request.
+
+Use the pinned toolchain from the CI workflow when regenerating a baseline:
+
+```bash
+rustup toolchain install nightly-2026-07-30 \
+  --profile minimal --component rust-docs-json
+cargo +nightly-2026-07-30 install cargo-public-api --locked --version 0.52.0
+
+cd tapa-core
+for crate in tapa-protocol tapa-ir tapa-rtl; do
+  cargo +nightly-2026-07-30 public-api --package "$crate" \
+    > "../docs/api/$crate.public-api.txt"
+done
+```
