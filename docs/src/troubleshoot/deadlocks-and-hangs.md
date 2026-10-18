@@ -15,7 +15,7 @@ blocked on one channel for 10 seconds with nothing it polls clearing, TAPA
 logs:
 
 ```text
-W tapa: no stream progress for 10s; blocked on channel 'fifo_A' (empty). ...
+... no stream progress for 10s; blocked on channel 'fifo_A' (empty). ...
 ```
 
 `empty` means a consumer is starved, `full` means a producer is backed up —
@@ -29,23 +29,26 @@ Fast cosim has no equivalent: use `-cosim_timeout_seconds` (see
 
 ## Diagnosis checklist
 
-Work through the following causes in order — they are listed from most to least common.
+Work through the following causes, using the stall warning and a small input
+to guide you.
 
-### 1. Stream depth too shallow
+### 1. A finite burst exceeds the FIFO capacity
 
-A producer fills the FIFO and blocks waiting for the consumer to drain it. If the consumer is itself waiting for data from another stream, neither task can make progress and the simulation hangs.
-
-**Fix:** Increase the stream depth by providing the second template argument.
+Backpressure is normal: a full FIFO is supposed to stall its producer until
+the consumer catches up. A shallow FIFO can, however, be too small for a
+finite burst in an otherwise correct protocol. Increasing depth provides more
+storage through the second template argument:
 
 ```cpp
-// Default depth of 2 — may deadlock under backpressure
-tapa::stream<int> s("s");
-
-// Larger depth gives the producer room to run ahead
-tapa::stream<int, 32> s("s");
+tapa::stream<int> s("s");       // default depth: 2
+tapa::stream<int, 32> s("s");  // more room for a bursty producer
 ```
 
-Start at the default depth of 2 and increase to 16 or 32 when you observe backpressure. In hardware, deeper FIFOs consume more BRAM, so avoid over-provisioning depth once correctness is confirmed.
+Increasing depth cannot repair an element-count mismatch or a circular
+protocol dependency; it only postpones backpressure. Check those causes
+below before paying for a larger FIFO. Deeper FIFOs also consume more FPGA
+resources, not necessarily BRAM—the implementation depends on depth and
+width.
 
 ### 2. Missing loop termination or element count mismatch
 
@@ -90,7 +93,10 @@ pointer saying "5 beats" while the RTL still emits 1139.
 
 Task A waits for output from Task B before it can write to Task B's input. Task B waits for input from Task A before it can produce output. Neither can make progress.
 
-**Fix:** Redesign the data flow to eliminate the cycle. If a feedback path is genuinely required, use `try_read` / `try_write` so that a task can make progress even when the channel is empty or full.
+**Fix:** Redesign the protocol to guarantee progress. If a feedback path is
+genuinely required, define its initial state, storage, and drain order
+explicitly. Non-blocking `try_read`/`try_write` can be part of that design,
+but they do not remove a logical cycle by themselves.
 
 ### 4. `async_mmap` write responses not drained
 
@@ -121,13 +127,19 @@ Splitting writes and response drain into separate loops risks deadlock: if `writ
 
 ## Isolation strategy
 
-Run with `TAPA_CONCURRENCY=1` to serialize all tasks into a single coroutine thread. This makes a hang deterministic and easier to reproduce and attach a debugger to.
+Run with `TAPA_CONCURRENCY=1` to use one coroutine worker. This simplifies
+the scheduling interleaving and can make a hang easier to reproduce and debug;
+tasks still interleave at blocking points rather than running to completion
+one by one.
 
 ```bash
 TAPA_CONCURRENCY=1 ./vadd
 ```
 
-If the hang disappears at concurrency 1 but reappears at the default concurrency, the issue is a scheduling race rather than a structural deadlock. Look for assumptions about task ordering that do not hold under concurrent scheduling.
+If the failure changes with worker count, look for ordering or timing
+assumptions that are not enforced by stream or memory handshakes. This is
+only a diagnostic clue, not proof of a scheduler bug or of a particular
+deadlock cause.
 
 ---
 
@@ -147,7 +159,11 @@ Let the binary run until it hangs, then interrupt it:
 (gdb) thread apply all bt
 ```
 
-The backtrace will show the call stack for every coroutine. Look for a frame inside a `read` or `write` call on a TAPA stream — the stream name in that frame identifies where flow has stopped.
+Backtraces show the currently running coroutine on each worker thread;
+suspended coroutines are not separate native threads. Look for frames in
+TAPA stream reads, writes, or scheduler polling. Use the channel named by the
+stall warning to identify the blocked endpoint when optimized frames do not
+show it.
 
 ---
 
@@ -162,35 +178,39 @@ Run cosim with a persistent work directory and waveform capture enabled so you c
   1000
 ```
 
-If the simulation hangs, press Ctrl-C to terminate it, then open the waveform in Vivado:
+After stopping the simulation, open the saved `wave.wdb` in Vivado's waveform
+viewer. Its default xsim location is
+`./cosim_work/run/cosim.sim/sim_1/behav/xsim/wave.wdb`. Do not rerun
+`run_cosim.tcl` just to inspect the old waveform; that starts a new
+simulation.
 
-```bash
-vivado -mode gui -source ./cosim_work/run_cosim.tcl
-```
-
-Inspect the AXI and stream signals to identify which channel is stalled. A valid signal held high with a ready signal held low indicates backpressure; a ready signal high with no valid indicates the producer has stopped sending.
+Inspect AXI and stream handshakes to identify the stalled channel. Valid held
+high with ready low indicates backpressure; ready high with valid low
+indicates that the producer is not sending.
 
 ---
 
 ```admonish tip
-Set `TAPA_STREAM_LOG_DIR=/tmp/stream_logs` before running. TAPA logs each value written to a stream into a file under that directory:
+Set `TAPA_STREAM_LOG_DIR` to an existing directory before running. TAPA logs
+each value written to a named stream:
 
-    TAPA_STREAM_LOG_DIR=/tmp/stream_logs ./vadd
+    mkdir -p /tmp/tapa-stream-logs
+    TAPA_STREAM_LOG_DIR=/tmp/tapa-stream-logs ./vadd
 
-Each named stream gets its own log file. A stream with an empty or truncated log identifies where data flow stops.
+Each named stream gets its own log file; unnamed streams are not logged.
+Compare producer log counts with the consumer's expected counts to find where
+data flow stops.
 ```
 
 ---
 
 ## Stream depth tuning reference
 
-| Symptom | Starting depth | Suggested increase |
-|---------|---------------|-------------------|
-| Hang with 2 tasks in a pipeline | 2 (default) | 16 |
-| Hang with deep pipeline (>4 stages) | 16 | 32–64 |
-| Correctness issue, no hang | Any | Try 2 first to expose races |
-
-Increasing depth lets producers run further ahead of consumers and resolves backpressure-induced deadlocks. In hardware, each entry in a stream FIFO consumes flip-flops or BRAM. Once the design is functionally correct, profile resource usage and reduce depths where headroom allows.
+Start with the default depth of 2 to stress the handshake protocol. Increase
+depth only to accommodate a measured burst or rate mismatch, and check the
+resulting resource report. A larger FIFO provides storage; it does not prove
+that the protocol is correct or resolve a structural deadlock. Re-run with a
+small depth after fixes to expose lingering count and backpressure bugs.
 
 ---
 

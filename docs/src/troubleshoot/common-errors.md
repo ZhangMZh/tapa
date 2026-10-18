@@ -10,7 +10,9 @@ Symptom descriptions and fixes for the most common compile-time and runtime erro
 
 **Symptom:** Compile error mentioning a deleted copy constructor, or that `istream`/`ostream` is not CopyConstructible.
 
-**Cause:** The stream parameter is declared without `&`. Streams are non-copyable objects — they represent live communication channels between tasks, not data values.
+**Cause:** The stream parameter is declared without `&`. A TAPA task port
+must preserve the endpoint's reference identity; passing it by value is
+rejected.
 
 **Fix:** Always pass streams by reference.
 
@@ -94,7 +96,7 @@ void Task(tapa::async_mmap<int>& mem) { ... }
 void TopLevel(int n, tapa::mmap<int> mem) {
   tapa::stream<int> s("s");
   tapa::task()
-    .invoke(Task1, s, mem, n * 2)
+    .invoke(Task1, s, mem, n)
     .invoke(Task2, s, n * 2);
 }
 ```
@@ -133,9 +135,10 @@ tapa::task().invoke(Task, data_q[0], mem[0])
             .invoke(Task, data_q[1], mem[1]);
 
 // Right
-tapa::streams<int, 4> data_q;
-tapa::mmaps<int, 4> mem;
-tapa::task().invoke<tapa::join, 4>(Task, data_q, mem);
+void Top(tapa::mmaps<int, 4> mem) {
+  tapa::streams<int, 4> data_q;
+  tapa::task().invoke<tapa::join, 4>(Task, data_q, mem);
+}
 ```
 
 ---
@@ -237,7 +240,9 @@ tapa::task().invoke(Task).invoke(Task);
 
 In software simulation `counter` reaches 2 (one shared variable, incremented twice). In hardware each instance has its own `counter`, so both instances end at 1.
 
-**Fix:** Avoid static variables inside tasks. Pass state between tasks using stream or mmap arguments.
+**Fix:** Avoid function-static variables inside tasks. Use automatic state
+where possible, or pass explicit state through streams or mmaps so each task
+instance has well-defined behavior.
 
 ---
 
@@ -256,16 +261,14 @@ If a parameter type mismatch error is confusing, work through this checklist:
 **Symptom:** `v++ --link` fails with
 `ERROR: [v++ 60-1299] The specified platform is not supported. Platform '<name>.xpfm' (version <year>) is not supported by the current tool version`.
 
-**Cause:** Vitis supports a platform for the remainder of its release
-calendar year plus the following calendar year, after which `v++` rejects
-it — for example the U250 platform `xilinx_u250_gen3x16_xdma_4_1_202210_1`
-under Vitis 2025.2. TAPA's `compile`, `synth`, and `floorplan` steps accept
-the platform because they only need the FPGA part from it, so the rejection
-first surfaces at the `v++` link step.
+**Cause:** The installed `v++` does not support the selected platform. TAPA
+can still read the platform and synthesize for its FPGA part, so the failure
+may not appear until `v++ --link`.
 
-**Fix:** Re-run `tapa compile` with a platform your Vitis version still
-supports (for example `xilinx_u55c_gen3x16_xdma_3_202210_1`) and link
-against that platform.
+**Fix:** Choose a platform supported by both your Vitis installation and your
+target board, then use that same platform for `tapa compile` and `v++ --link`.
+Do not switch to a platform for a different board merely to bypass the
+error.
 
 ---
 

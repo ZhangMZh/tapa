@@ -8,7 +8,11 @@
 
 If fast cosim fails (`FAIL!` or hangs) but software simulation passes, the most common causes are:
 
-- **Scheduling differences can expose races not visible in software simulation.** Software simulation runs tasks as cooperatively-scheduled coroutines; RTL runs every task truly in parallel, cycle by cycle. A race that cooperative scheduling happens to resolve one way in software simulation may resolve the other way in cosim. Fix: remove any assumption about task ordering that is not enforced by stream synchronization.
+- **Scheduling differences can expose missing synchronization.** Software
+  simulation interleaves coroutines over one or more workers; RTL advances
+  every task in parallel each cycle. An ordering assumption that happens to
+  hold in one software run may not hold in RTL. Fix: enforce ordering with
+  stream or memory handshakes rather than relying on scheduling.
 
 - **Blocking `async_mmap` operations inside pipelined loops.** A blocking call inside a pipelined loop can stall the pipeline in RTL in ways that software simulation does not model. Fix: use non-blocking reads/writes and manually handle the response FIFOs, or switch to `tapa::mmap` to simplify the memory access model while debugging.
 
@@ -67,7 +71,11 @@ Check that the `.xo` file was produced by a successful `tapa compile` run. A par
 
 ### Segfault inside xsim
 
-This is typically a Vivado bug. Try switching to a different Vitis/Vivado version. Versions tested by the TAPA CI pipeline are listed in the TAPA repository's CI configuration.
+Check the xsim and DPI logs for malformed RTL, a failing custom module, or a
+tool crash. Verify that the XO completed packaging successfully and that any
+custom RTL passes independent lint/simulation. If the evidence points to the
+simulator itself, retry with a supported Vitis/Vivado version; the repository
+CI configuration lists the versions TAPA tests.
 
 ---
 
@@ -116,19 +124,22 @@ Run with waveform capture and a persistent work directory so you can inspect the
   1000
 ```
 
-Then open the waveform in Vivado GUI:
+Then open
+`./cosim_work/run/cosim.sim/sim_1/behav/xsim/wave.wdb` in Vivado's
+waveform viewer. Do not source `run_cosim.tcl` merely to inspect an old
+waveform; that starts a new simulation.
 
-```bash
-vivado -mode gui -source ./cosim_work/run_cosim.tcl
-```
-
-In the waveform viewer, add the AXI memory interface signals and compare the expected vs actual data on each transaction. Look for read data that does not match what the host wrote, or write transactions that target unexpected addresses.
+Add AXI memory signals and compare expected and actual data on each
+transaction. Look for read data that does not match host input or writes to
+unexpected addresses.
 
 ---
 
 ## Stream diagnostics
 
-The DPI runtime reports stream progress periodically when a stream stalls (empty on read or full on write). These messages appear on stderr and include the port name and queue state:
+After repeated stalled operations, the DPI runtime can report stream
+progress roughly every 10 seconds. These messages appear on stderr and
+include the port name and queue state:
 
 ```
 frt-dpi: progress[a_fifo_s]: read_ok=16 read_empty=40M write_ok=0 write_full=0 q_head=8 q_tail=8
@@ -155,7 +166,10 @@ FRT_STREAM_DEBUG=1 ./vadd --bitstream=vadd.xo 1000
 
 - **`q_tail=0`** on a consumer port: the producer never wrote to this stream. Check that the producer's xsim started and that stream arguments are bound correctly.
 - **`q_head == q_tail` but `read_ok < expected`**: all produced elements were consumed but not enough were produced. The producer may have exited before flushing all writes.
-- **`write_full` growing**: the consumer is not draining fast enough. Check for deadlocks or increase `TAPA_CONCURRENCY`.
+- **`write_full` growing**: the consumer is not draining the queue fast
+  enough, or the queue is too small for the burst. Check the consumer and
+  stream protocol. `TAPA_CONCURRENCY` controls host workers, not simulator
+  speed, so increasing it is not a general fix.
 
 ---
 
