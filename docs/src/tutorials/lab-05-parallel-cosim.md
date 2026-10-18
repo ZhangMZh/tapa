@@ -1,25 +1,35 @@
 # Lab 5: Parallel RTL Emulation
 
-**Goal:** Compile cycle-sensitive kernel modules to RTL and simulate them concurrently, reducing total cosim time while preserving cycle-accurate behavior where it matters.
+**Goal:** Compile kernel modules to RTL and simulate them concurrently while
+software-modeled queues carry data between them.
 
 **Prerequisites:** [Lab 1: Vector Addition](lab-01-vadd.md) and [Fast Hardware Simulation](../howto/fast-cosim.md).
 
-After this lab you will understand how to use `tapa::executable` to assign per-kernel RTL targets, compile each kernel to its own `.xo`, run the simulations in parallel, and prevent work-directory collisions between concurrent instances.
+After this lab you will understand how to use `tapa::executable` to assign
+per-kernel RTL targets, compile each kernel to its own archive, run the
+simulations in parallel, and prevent work-directory collisions.
 
 ---
 
 ## When to use this
 
-RTL cosimulation gives you cycle-accurate behavior for the logic inside each kernel — pipeline depths, stall conditions, hazards, and II violations that software simulation cannot catch. However, not everything needs this level of fidelity:
+Each kernel's own RTL is simulated cycle by cycle, which can expose pipeline
+and handshake bugs that software simulation misses. Two important parts of
+the system remain abstract:
 
-- **FIFOs between kernels** are modeled as shared-memory queues, not cycle-accurate RTL. The latency across kernel boundaries is not representative of hardware.
-- **Memory accesses** (mmap, async_mmap) are similarly abstracted; memory latency is not cycle-accurate.
+- **FIFOs between kernels** are shared-memory queues, so inter-kernel latency
+  is not representative of hardware.
+- **Memory accesses** (mmap and async_mmap) use functional models rather than
+  cycle-accurate memory timing.
 
-Parallel RTL emulation is therefore most valuable for validating the **cycle-sensitive internals** of each kernel in isolation — compute pipelines, II, resource usage — rather than end-to-end timing across the full datapath.
+Use parallel RTL emulation for per-kernel RTL validation and inter-kernel
+dataflow, not end-to-end timing or resource measurement.
 
-Running one cosim process per kernel and launching them concurrently reduces wall-clock time compared to simulating everything in a single process or sequentially. Use it when:
+Running one cosim process per kernel concurrently can reduce wall-clock time
+compared with running them sequentially, at the cost of additional CPU and
+memory use. Use it when:
 
-- Your design contains multiple kernels with non-trivial compute pipelines that need cycle-accurate validation.
+- Your design contains multiple kernels with non-trivial compute pipelines that need RTL validation.
 - You want to catch pipeline hazards, incorrect II, or RTL-level bugs in each kernel before the expensive bitstream link step.
 - The kernels can be compiled and simulated independently.
 
@@ -31,12 +41,14 @@ In a standard single-kernel design, one top-level function compiles to one `.xo`
 
 ```
 tapa::task()
-  .invoke(KernelA, tapa::executable(FLAGS_a_bitstream), ...)  ──▶  cosim process A (cycle-accurate)
-  .invoke(KernelB, tapa::executable(FLAGS_b_bitstream), ...)  ──▶  cosim process B (cycle-accurate)
-  .invoke(KernelC, tapa::executable(FLAGS_c_bitstream), ...)  ──▶  cosim process C (cycle-accurate)
+  .invoke(KernelA, tapa::executable(FLAGS_a_bitstream), ...)  ──▶  kernel RTL process A
+  .invoke(KernelB, tapa::executable(FLAGS_b_bitstream), ...)  ──▶  kernel RTL process B
+  .invoke(KernelC, tapa::executable(FLAGS_c_bitstream), ...)  ──▶  kernel RTL process C
 ```
 
-The streams connecting the processes are shared-memory FIFOs managed by the host runtime — latency-insensitive data transfer that lets each cosim process run at its own pace. Each kernel's internal cycle behavior is faithfully simulated; the inter-kernel communication is not.
+Shared-memory FIFOs managed by the host runtime connect the processes and
+let each simulator run at its own pace. They preserve dataflow and
+backpressure, but not inter-kernel timing.
 
 ---
 
@@ -61,9 +73,9 @@ void Gather(tapa::mmap<float> matrix,
 The top-level function declares the shared streams and assembles the task graph using `tapa::executable`:
 
 ```cpp
-DEFINE_string(scatter_bitstream, "", "XO for Scatter; empty = software simulation");
-DEFINE_string(proc_elem_bitstream, "", "XO for ProcElem; empty = software simulation");
-DEFINE_string(gather_bitstream, "", "XO for Gather; empty = software simulation");
+DEFINE_string(scatter_bitstream, "", "RTL archive for Scatter; empty = software simulation");
+DEFINE_string(proc_elem_bitstream, "", "RTL archive for ProcElem; empty = software simulation");
+DEFINE_string(gather_bitstream, "", "RTL archive for Gather; empty = software simulation");
 
 void Cannon(tapa::mmap<const float> a_vec, tapa::mmap<const float> b_vec,
             tapa::mmap<float> c_vec, uint64_t n) {
@@ -85,32 +97,47 @@ When a `FLAGS_*_bitstream` flag is empty, that invocation falls back to software
 
 ## Step 2: Compile each kernel separately
 
-Each kernel function is compiled independently with its own `tapa compile --top` invocation:
+Each function in this example is a leaf task. The default `xilinx-vitis`
+target rejects a leaf top, so compile with `xilinx-hls` and produce a separate
+ZIP archive and work directory for each kernel:
 
 ```bash
-tapa compile --top Scatter  --part-num xcu250-figd2104-2L-e --clock-period 3.33 \
-  -f cannon.cpp -o scatter.xo
+tapa --work-dir work.out/scatter compile \
+  --target xilinx-hls --top Scatter \
+  --part-num xcu250-figd2104-2L-e --clock-period 3.33 \
+  -f cannon.cpp -o scatter.zip
 
-tapa compile --top ProcElem --part-num xcu250-figd2104-2L-e --clock-period 3.33 \
-  -f cannon.cpp -o proc-elem.xo
+tapa --work-dir work.out/proc-elem compile \
+  --target xilinx-hls --top ProcElem \
+  --part-num xcu250-figd2104-2L-e --clock-period 3.33 \
+  -f cannon.cpp -o proc-elem.zip
 
-tapa compile --top Gather   --part-num xcu250-figd2104-2L-e --clock-period 3.33 \
-  -f cannon.cpp -o gather.xo
+tapa --work-dir work.out/gather compile \
+  --target xilinx-hls --top Gather \
+  --part-num xcu250-figd2104-2L-e --clock-period 3.33 \
+  -f cannon.cpp -o gather.zip
 ```
 
-The three compilations read the same source file but each targets a different top function. The outputs are independent `.xo` files with no knowledge of each other.
+The three compilations read the same source file but select different top
+functions. The independent ZIP archives contain only their own kernel
+interfaces. Do not use the default Vitis target for these leaf-top kernels.
 
 ---
 
 ## Step 3: Run parallel emulation
 
-Pass all three `.xo` files to the host binary. All cosim processes start concurrently:
+Build the host from `tests/functional/parallel-emulation/`, then pass all
+three ZIP files to it. The cosim processes start concurrently:
+
+```bash
+tapa g++ -- cannon.cpp ../../apps/cannon/cannon-host.cpp -o cannon-host
+```
 
 ```bash
 ./cannon-host \
-    --scatter_bitstream=scatter.xo \
-    --proc_elem_bitstream=proc-elem.xo \
-    --gather_bitstream=gather.xo
+    --scatter_bitstream=scatter.zip \
+    --proc_elem_bitstream=proc-elem.zip \
+    --gather_bitstream=gather.zip
 ```
 
 ### Preventing work-directory collisions
@@ -119,9 +146,9 @@ By default each cosim process uses a temporary directory that is deleted at exit
 
 ```bash
 ./cannon-host \
-    --scatter_bitstream=scatter.xo \
-    --proc_elem_bitstream=proc-elem.xo \
-    --gather_bitstream=gather.xo \
+    --scatter_bitstream=scatter.zip \
+    --proc_elem_bitstream=proc-elem.zip \
+    --gather_bitstream=gather.zip \
     -cosim_work_dir ./cosim_work \
     -cosim_work_dir_parallel
 ```
@@ -130,13 +157,16 @@ TAPA creates `./cosim_work/XXXXXX/` per instance so the simulations do not inter
 
 ### Controlling host-side concurrency
 
-`TAPA_CONCURRENCY` sets the number of worker threads the host runtime uses for its task coroutines (default: the host's physical core count). Setting it to 1 makes host scheduling deterministic, which helps when reproducing a failure:
+`TAPA_CONCURRENCY` sets the number of worker threads the host runtime uses
+for its task coroutines (default: the host's physical core count). Setting it
+to 1 simplifies the scheduling interleaving, which can help reproduce a
+failure:
 
 ```bash
 TAPA_CONCURRENCY=1 ./cannon-host \
-    --scatter_bitstream=scatter.xo \
-    --proc_elem_bitstream=proc-elem.xo \
-    --gather_bitstream=gather.xo
+    --scatter_bitstream=scatter.zip \
+    --proc_elem_bitstream=proc-elem.zip \
+    --gather_bitstream=gather.zip
 ```
 
 ```admonish warning
