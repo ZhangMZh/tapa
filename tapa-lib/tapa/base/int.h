@@ -1071,6 +1071,10 @@ class range_ref {
     return int_base<W2, S2>(value());
   }
 
+  template <typename T, typename = internal::enable_if_integral<T>>
+  range_ref& operator=(T value) {
+    return *this = typename internal::to_base<T>::type(value);
+  }
   // The low hi-lo+1 bits of @p bits land in bits [lo, hi]; bits above the
   // 64-bit source are cleared.
   range_ref& operator=(uint64_t bits) {
@@ -1163,6 +1167,10 @@ class concat_ref {
 
   u<W1 + W2> value() const { return concat_value(hi_, lo_); }
 
+  template <typename T, typename = internal::enable_if_integral<T>>
+  concat_ref& operator=(T value) {
+    return *this = typename internal::to_base<T>::type(value);
+  }
   concat_ref& operator=(uint64_t bits) {
     for (int d = 0; d < W1 + W2; ++d) {
       const bool bit = d < 64 ? ((bits >> d) & 1) != 0 : false;

@@ -381,6 +381,23 @@ TEST(IntTest, RangeWriteClearsAllSelectedBits) {
   EXPECT_EQ(tapa::u<64>(a(99, 64)), 3);
 }
 
+TEST(IntTest, SignedNativeProxyAssignmentsExtendPast64Bits) {
+  tapa::u<128> sliced = 0;
+  sliced(127, 0) = -1;
+  EXPECT_TRUE(sliced.and_reduce());
+  sliced(127, 0) = ~uint64_t(0);
+  EXPECT_EQ(tapa::u<64>(sliced(127, 64)), 0);
+  EXPECT_EQ(tapa::u<64>(sliced(63, 0)), ~uint64_t(0));
+
+  tapa::u<64> hi = 0, lo = 0;
+  (hi, lo) = -1;
+  EXPECT_TRUE(hi.and_reduce());
+  EXPECT_TRUE(lo.and_reduce());
+  (hi, lo) = ~uint64_t(0);
+  EXPECT_EQ(hi, 0);
+  EXPECT_EQ(lo, ~uint64_t(0));
+}
+
 namespace {
 
 // Mirrors the slice of ap_int_base's interface the vendor bridge uses, so
