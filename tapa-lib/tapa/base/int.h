@@ -68,9 +68,11 @@ struct rtype {
   using mod = kind < W1<kModW2 ? W1 : kModW2, S1>;
   using logic = kind<kPlusW, kSigned>;
   using arg1 = kind<W1, S1>;
-  // The common width division and remainder compute at: one bit wider than
-  // both operands, so INT_MIN / -1 fits.
-  using common = kind<(W1 > W2 ? W1 : W2) + 1, kSigned>;
+  // Division and remainder convert to one bit wider than both operands, so
+  // INT_MIN / -1 fits. As in the vendor's ap_private, the wider operand's
+  // signedness wins; equal-width operands are signed if either one is.
+  static constexpr bool kCommonSigned = W1 > W2 ? S1 : W2 > W1 ? S2 : S1 || S2;
+  using common = kind<(W1 > W2 ? W1 : W2) + 1, kCommonSigned>;
 };
 
 namespace internal {
@@ -842,9 +844,14 @@ class int_base {
           q.set_bit(bit, true);
         }
       }
-      if (negative() != d.negative()) q.negate();
+      // A negative signed operand converted to an unsigned common type can
+      // have its top bit set; that bit is not a sign unless the common type is
+      // signed.
+      const bool dividend_negative = S && negative();
+      const bool divisor_negative = S && d.negative();
+      if (dividend_negative != divisor_negative) q.negate();
       if (rem_out != nullptr) {
-        if (negative()) r.negate();
+        if (dividend_negative) r.negate();
         *rem_out = r;
       }
     } else if (rem_out != nullptr) {

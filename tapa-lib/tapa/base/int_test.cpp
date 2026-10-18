@@ -95,6 +95,21 @@ TEST(IntTest, DivisionByUnsignedWorks) {
   EXPECT_EQ(a % b, 1);
 }
 
+TEST(IntTest, MixedSignDivisionUsesWiderOperandSignedness) {
+  // The wider unsigned operand makes the common type unsigned: the signed
+  // dividend becomes 2**14 - 37 = 16347 before division.
+  tapa::i<8> signed_narrow = -37;
+  tapa::u<13> unsigned_wide = 4674;
+  EXPECT_EQ(signed_narrow / unsigned_wide, 3);
+  EXPECT_EQ(signed_narrow % unsigned_wide, 21);
+
+  // The same rule applies when the unsigned dividend is the wider operand.
+  tapa::u<65> wide_dividend = 123;
+  tapa::i<64> signed_divisor = -1;
+  EXPECT_EQ(wide_dividend / signed_divisor, 0);
+  EXPECT_EQ(wide_dividend % signed_divisor, 123);
+}
+
 TEST(IntTest, NegativeShiftReverses) {
   tapa::u<8> a = 0b100;
   tapa::i<8> minus_one = -1;
