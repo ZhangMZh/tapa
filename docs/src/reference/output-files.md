@@ -1,153 +1,95 @@
 # Output Files
 
-## Output Artifacts
+TAPA writes a final RTL archive and, by default, keeps intermediate results in
+`work.out/`. Use the same work directory for every stage of one design; use a
+different directory for independent designs.
 
-The artifact produced by `tapa` depends on the target selected with `--target`.
+## Final artifacts
 
-**Xilinx Vitis target** (`--target xilinx-vitis`, the default)
+The `--target` selected during analysis determines the output format.
 
-Produces an `.xo` object file. This is passed to the Vitis `v++` compiler for bitstream generation. An XO file is a ZIP archive; you can unzip it to inspect or manually edit the RTL it contains, then re-zip it before passing it to `v++`.
+### `xilinx-vitis` (default)
 
-**Xilinx HLS target** (`--target xilinx-hls`)
+`tapa pack` produces an `.xo` file. Use it for fast cosimulation or pass it to
+`v++ --link` to build an `hw_emu.xclbin` or `hw.xclbin`.
 
-Produces a `.zip` RTL archive instead of an `.xo` file. The archive contains the same RTL files and metadata but without the Vitis shell wrapper. Use this when the RTL is consumed directly by a downstream EDA tool.
+### `xilinx-hls`
 
-The archive layout is:
+`tapa pack` produces a `.zip` file for fast cosimulation or a downstream RTL
+flow. A typical archive contains:
 
 ```text
 work.zip
-├── rtl/                    # the generated RTL tree
-├── report/TASK/            # per-task HLS `_csynth.rpt` files
-├── report.yaml             # when `tapa synth` emitted one
-└── tapa.json               # compile metadata (see below)
+├── rtl/                    # generated RTL
+├── report/TASK/            # per-task HLS reports, when available
+├── report.yaml             # synthesis summary, when available
+└── tapa.json               # kernel interface and build metadata
 ```
 
-The archive's `tapa.json` is derived from the work directory's
-[`tapa.json`](#file-and-directory-descriptions), then stamped with the cosim
-port metadata needed to bind arguments (including external stream depths and
-async-mmap address widths). The work-directory file is not modified. The
-archive is self-describing: the cosim runtime reads the top task's ports from
-`graph` and the part number from `flow`.
+Both formats are ZIP-based archives that you can inspect with standard archive
+tools. To replace a task's RTL, prefer the supported
+[`--custom-rtl`](cli.md#tapa-pack) workflow over editing a packed artifact by
+hand.
 
 ## Reproducibility
 
-TAPA strips timestamps, absolute paths, and random IDs from both `.xo` and
-`.zip` artifacts before writing them to disk. Given the same sources, compiler
-options, and tool versions, repeated invocations produce byte-identical
-output. This makes the artifacts suitable for CI and release attestation
-workflows.
+TAPA removes timestamps, absolute paths, and random IDs from final artifacts.
+Given the same sources, compiler options, and tool versions, repeated builds
+produce byte-identical output. Vendor-tool upgrades can change the artifact
+contents even when your source does not change.
 
-```admonish note
-Byte identity holds only within the same vendor tool version. Upgrading Vitis HLS or Vivado will typically change internal artifact content even for identical source inputs.
-```
+## Work-directory contents
 
-## Intermediate Files
-
-When `--work-dir` is specified (recommended), TAPA writes intermediate files to that directory. The structure is:
+The exact files depend on the selected options:
 
 ```text
 work.out/
-├── rewritten/
-├── hls/
-│   └── TASK/
-│       ├── report/
-│       ├── verilog/
-│       └── project/        # with --keep-hls-work-dir
-├── rtl/
-├── report/                    # with --enable-synth-util
-├── template/                  # when a task targets "ignore"
-├── dse/                       # with `tapa floorplan --dse`
-├── tapa.json
-├── tapacc.json
-├── templates_info.json        # when a task targets "ignore"
-├── report.json
-├── report.yaml
-├── floorplan.xdc              # after `tapa floorplan`
+├── rewritten/                 # sources prepared for synthesis
+├── hls/TASK/                  # per-task HLS results
+│   ├── report/
+│   ├── verilog/
+│   └── project/               # with --keep-hls-work-dir
+├── rtl/                       # RTL prepared for packaging
+├── report/                    # detailed utilization, with --enable-synth-util
+├── report.json                # synthesis summary
+├── report.yaml                # synthesis summary
+├── template/                  # custom-RTL module shells, when needed
+├── templates_info.json        # custom-RTL port information, when needed
+├── tapa.json                  # compiler state shared between stages
+├── tapacc.json                # raw frontend output for debugging
+├── floorplan.xdc              # with tapa floorplan
 ├── floorplan-metrics.json     # with --run-impl or --dse
-└── floorplan-timing.rpt       # with --run-impl or --dse
+├── floorplan-timing.rpt       # with --run-impl or --dse
+└── dse/                       # with tapa floorplan --dse
 ```
 
-### File and directory descriptions
+### Files to use during development
 
-**`rewritten/`**
+| Path | What you use it for |
+|---|---|
+| `hls/TASK/report/` | HLS scheduling, initiation interval, latency, and estimated area for one task. |
+| `hls/TASK/project/` | Full Vitis HLS project retained by `--keep-hls-work-dir` for debugging an HLS failure. |
+| `report.json` / `report.yaml` | Timing and resource summaries after a successful `tapa synth`. These contain the same data in JSON and YAML formats. |
+| `report/` | Detailed per-task utilization reports produced by `--enable-synth-util`. |
+| `template/` and `templates_info.json` | Port shells and interface information for a task marked `[[tapa::target("ignore")]]`; used with `--custom-rtl`. |
+| `floorplan-metrics.json` | Frequency and utilization information for the selected floorplan after `--run-impl` or `--dse`. |
+| `floorplan-timing.rpt` | Post-implementation timing report used to produce those metrics. |
+| `dse/candidates.json` | Summary of all candidates explored by `--dse`. |
 
-The rewritten C++ source tree written by `tapacc` during `tapa analyze`. It mirrors your own layout: every file in the include closure of the input translation units that was reached through a normal (non-`-isystem`) include is mirrored, keeping its path relative to the common ancestor of the inputs; files pulled in from outside that root land at `_external/<digest8>/<basename>`. Files under `-isystem` paths (TAPA's headers, vendor HLS headers) are not mirrored — Vitis HLS resolves them through its own include path. Quoted includes that resolved to an out-of-root mirrored file are rewritten to its `_external` spelling so the tree stays self-consistent; angle includes are never touched.
+### Files TAPA manages for you
 
-Task definitions are wrapped in a guard, so one tree serves every task:
+- **`rewritten/`** contains the sources used for synthesis. Regenerate it with
+  `tapa analyze` after changing kernel sources instead of editing it manually.
+- **`rtl/`** contains the RTL prepared for packaging. Custom RTL overlays are
+  applied here by `tapa pack --custom-rtl`.
+- **`tapa.json`** carries the task graph and compilation settings between
+  stages. Keep it with the rest of the work directory and do not edit it
+  manually. If TAPA reports an incompatible version, rerun `tapa analyze`.
+- **`tapacc.json`** is raw frontend output retained for diagnostics. Later
+  stages do not read it, so editing it has no effect.
+- **`floorplan.xdc`** contains the constraints produced by `tapa floorplan`.
+  `tapa pack` applies it automatically; you normally do not need to edit it.
 
-```cpp
-#ifdef TAPA_TASK_DEF_<task>
-/* the task's fully rewritten definition */
-#else
-/* a signature-only stub */
-#endif
-```
-
-The signature-only stub is written from the signature as spelled in your source, so a macro may spell a task's *body* — the invocation is replaced by its rewritten expansion — but not its whole definition: a macro-owned signature has no spelled text to build the stub from, and `tapacc` rejects that shape with an error naming the task rather than emitting a tree missing the declaration.
-
-Non-task rewrites (helper adjustments, TAPA attributes lowered to vendor pragmas) are emitted unconditionally — they are identical for every task variant. Macro invocations that contain no rewritten construct keep their original spelling; only those a rewrite lands inside are replaced by their expansion, and `#ifdef` blocks are never evaluated away. After any edit that changes line counts, a `#line` directive re-snaps positions so HLS diagnostics point at your source files, and an edited file opens with `#line 1 "<original path>"` so its untouched head cites the original source instead of the mirror. Existing user `#line` directives remain authoritative: re-snap markers preserve their presumed file and line for following user text, keeping `__FILE__` and `__LINE__` stable. Text TAPA itself inserts — interface preambles, stubs, wrappers, guards — carries the synthetic identity `tapa:<original path>` pinned to the presumed line it anchors, so a diagnostic inside it names the construct it belongs to while saying the text is TAPA's, not yours; the re-snap after the span restores the original numbering. Files needing no edits are copied byte-identical.
-
-The rewritten directory also contains `.tapa-tree-manifest`, which records the files TAPA wrote. On reuse, only stale files from that list are pruned; unrelated files in an existing `-emit-dir` are left alone. If a destination already exists but is not recorded as TAPA-owned, `tapacc` reports a collision instead of overwriting it. `tapa synth` requires this metadata and rejects a missing or malformed manifest rather than falling back to an incomplete source list. HLS and post-synthesis freshness checks use exactly the listed files plus the manifest itself, so header-only edits and owned-file additions or removals invalidate cached outputs while unrelated files do not.
-
-Each task in `tapa.json` carries a source manifest (`srcs`, `include_dirs`, `defines`) whose paths are relative to this tree: `srcs` lists every input translation unit — the same list for every task, the guard define selects each task's variant — `include_dirs` holds the tree root (the empty string) plus any `_external` buckets, and `defines` holds the task's guard. `tapa synth` verifies that these translation units are TAPA-owned and exist, resolves them to absolute paths, and hands only this list to `vitis_hls` as `add_files` with the include dirs and guard define as cflags. These rewritten-tree include directories precede the original user include paths, so quoted includes and unchanged angle includes resolve to mirrored headers instead of same-named originals. Because the source manifest references this tree, `tapa.json` alone is not self-contained: the work directory — the JSON plus `rewritten/` — is the analyze artifact.
-
-
-**`hls/`**
-
-Contains one directory per synthesized task. Each task directory has the HLS reports under `report/` and the harvested Verilog under `verilog/`. Passing `--keep-hls-work-dir` also retains the complete Vitis project under `project/` for debugging.
-
-**`rtl/`**
-
-Contains the complete generated RTL tree: harvested HLS modules, connected upper-task wrappers, control modules, and TAPA infrastructure RTL.
-
-**`report/`**
-
-Created by `--enable-synth-util`. Contains per-task `<task>.hier.util.rpt` files produced by out-of-context Vivado synthesis.
-
-**`template/` / `templates_info.json`**
-
-For tasks annotated with `[[tapa::target("ignore")]]`, `template/` contains generated Verilog module shells for implementing replacement RTL. `templates_info.json` records the expected port metadata used when checking `--custom-rtl` overlays.
-
-**`tapa.json`**
-
-The single JSON task-graph and flow state file shared between pipeline
-steps. The pipeline also consumes generated RTL, constraints, and metadata
-files, but no second task-graph state file. `tapa.json` is pretty-printed so
-work directories stay readable and diffable. It has three top-level keys:
-
-- **`version`** — schema version of this file. `tapa` refuses a work directory stamped with a version it does not recognise, telling you to re-run `tapa analyze` rather than failing with an obscure parse error.
-- **`graph`** — all contents and metadata of the input design, including the
-  original task hierarchy, retained through flat RTL emission and
-  floorplanning. Its own `schema_version` versions the frontend task-graph
-  format. Written by `tapa analyze` from the `tapacc` output, with the flow
-  `target` and kernel `cflags` added. Each task's C++ lives outside the JSON,
-  in the `rewritten/` tree named by its `srcs` manifest. `tapa synth` then
-  annotates each task with its post-synthesis `clock_period` and `self_area`;
-  `total_area` is populated or derived when reports and topology consumers
-  need it.
-- **`flow`** — compilation settings shared across pipeline steps (the `flatten_hierarchy` RTL emission choice, part number, clock period, platform, and whether synthesis has run). Analyze records the emission choice; synth resolves the tool settings; pack reads them back so options need not be repeated on the command line. The flow `target` is deliberately not duplicated here: it lives in `graph.target` alone.
-
-```admonish note
-`clock_period` appears in both blocks and means different things: `flow.clock_period` is the clock period you *requested*, while a task's `graph.tasks.<TASK>.clock_period` is the period HLS *estimated* for it. Both are whole picoseconds — `3330` is 3.33 ns — so a period is one number rather than text a reader has to parse. `report.json` prints nanoseconds, since that is what its readers recognise.
-```
-
-**`tapacc.json`**
-
-The raw, unmodified output of `tapacc`, saved verbatim by `tapa analyze` for provenance and debugging — including when it fails to parse. Nothing in the pipeline reads it back; `tapa.json` is the only state. Edits to this file have no effect.
-
-**`report.json` / `report.yaml`**
-
-Timing and resource-utilisation report, written after `tapa synth` completes
-successfully. Both files contain the same data in JSON and YAML encoding. Without `--enable-synth-util`, areas come from HLS estimates; with it, child-task totals are replaced by out-of-context Vivado utilization and the underlying `.hier.util.rpt` files are written under `report/`.
-
-**`floorplan.xdc`**
-
-Written by `tapa floorplan`. Contains the pblock definitions for every slot and pipeline stage, the pipeline-stage cell matches, and the reset-distribution timing cuts. `tapa pack` picks it up automatically once the floorplan marker is present in `tapa.json` and wires it into the generated bitstream script as `OPT_DESIGN.TCL.PRE`, so `v++ --link` applies it. See the [`tapa floorplan` CLI reference](cli.md#tapa-floorplan) for what it emits.
-
-**`floorplan-metrics.json` / `floorplan-timing.rpt`**
-
-Written only when `tapa floorplan` runs an implementation (`--run-impl` or `--dse`). `floorplan-metrics.json` records the achieved kernel frequency and the utilization cap of the winning plan; `floorplan-timing.rpt` is the post-implementation timing report it came from.
-
-**`dse/`**
-
-Written only by `tapa floorplan --dse`. Holds one subdirectory per explored utilization cap, each with a `candidate.json` describing that attempt, plus a top-level `candidates.json` summarising every candidate so you can see the whole sweep rather than just the winner.
+The final archive includes the interface metadata needed by fast cosimulation,
+so you can move the `.xo` or `.zip` to another machine without also copying the
+work directory.

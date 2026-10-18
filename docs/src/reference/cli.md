@@ -42,7 +42,8 @@ These options must appear before the subcommand name.
 
 ## tapa compile
 
-Run the full compilation pipeline (analyze → synth → pack) in a single command. Its flag surface is the union of `tapa analyze`, `tapa synth`, and `tapa pack` — every flag documented for those three is accepted here too.
+Run analyze, synth, and pack in a single command. It accepts the options
+documented for those three stages.
 
 ### Required flags
 
@@ -62,7 +63,7 @@ Run the full compilation pipeline (analyze → synth → pack) in a single comma
 | `--cflags FLAG` / `-c FLAG` | Compiler flag for the kernel (e.g., `-Iinclude`). Repeat the flag for multiple. |
 | `--target {xilinx-vitis,xilinx-hls}` | Output target (default: `xilinx-vitis`). |
 | `-j N` / `--jobs N` | Number of parallel HLS jobs. |
-| `--custom-rtl PATH` | Custom RTL file or directory to include in the XO. Repeatable. |
+| `--custom-rtl PATH` | Custom RTL file or directory to include in the output archive. Repeatable. |
 | `--connectivity FILE` | Vitis link config with memory `sp=` bank assignments. |
 
 ### Example
@@ -80,7 +81,9 @@ tapa compile \
 
 ## tapa analyze
 
-Parse C++ source and extract the task graph to `tapa.json` in the work directory, alongside the rewritten C++ source tree that `tapa synth` compiles (see [Output Files](output-files.md)). One `tapacc` process parses every `--input` translation unit with the shared cflags, so tasks may be defined in any input file and invoked from any other. This stage always runs locally and does not require vendor tools.
+Parse C++ sources and record the task graph in the work directory. Repeat
+`--input` for multi-file programs; all files use the same compiler flags.
+This stage always runs locally and does not require vendor tools.
 
 ### Required flags
 
@@ -95,18 +98,9 @@ Parse C++ source and extract the task graph to `tapa.json` in the work directory
 |------|-------------|
 | `--cflags FLAG` / `-c FLAG` | Compiler flag passed through to the kernel frontend, such as an include path. Repeat the flag for multiple. |
 | `--target {xilinx-vitis,xilinx-hls}` | Output target (default: `xilinx-vitis`). Controls the synthesis flow. |
-| `--flatten-hierarchy` | Emit flat RTL with every leaf directly under the top, preserving kernel stream names and original upper-task control behavior. The stored task graph retains its original hierarchy. |
-| `--keep-hierarchy` | Emit the task hierarchy as written when compiling without floorplanning. This is the default. |
+| `--flatten-hierarchy` | Emit flattened RTL while preserving task behavior. The stored task graph remains hierarchical. |
+| `--keep-hierarchy` | Preserve the task hierarchy. This is the default. |
 
-Flattening appends ancestor paths to promoted explicitly named leaf instances,
-for example `worker_west_Top` and `worker_east_Top`. Explicit names directly
-under the top task are preserved; unnamed leaves use their task name and index
-in the flattened top. FIFO names that collide after scope qualification are
-rejected because merging them would change connectivity.
-
-Child instances within one task must have distinct generated RTL identifiers.
-Compilation rejects explicit or automatic names that become identical after
-replacing characters unsupported in RTL identifiers, and reports both names.
 
 ### Example
 
@@ -133,7 +127,8 @@ spelling (see the [API reference](api.md)).
 
 ## tapa synth
 
-Run Vitis HLS on each task to produce per-task Verilog RTL. Reads the task graph produced by `tapa analyze` from the work directory. Each task is compiled from the `rewritten/` source tree: HLS receives the task's `srcs` file list together with the tree's include directories and the task's guard define as cflags. Can run on a remote host via `--remote-host`.
+Run Vitis HLS using the task graph produced by `tapa analyze` and generate
+the design's RTL. This stage can run on a remote host via `--remote-host`.
 
 ### Required flags
 
@@ -150,7 +145,7 @@ Run Vitis HLS on each task to produce per-task Verilog RTL. Reads the task graph
 | `-j N` / `--jobs N` | Number of parallel HLS and post-synthesis jobs (default: the host's available parallelism). |
 | `--enable-synth-util` | Run out-of-context Vivado synthesis per task for accurate area numbers instead of the coarser HLS estimates. Costs one extra Vivado run per task. |
 | `--keep-hls-work-dir` | Keep each task's Vitis HLS project under `hls/<task>/project` instead of discarding it. Useful for post-mortem debugging of an HLS failure. |
-| `--skip-hls-based-on-mtime` | Reuse a task's existing Verilog when it is newer than every file listed in `rewritten/.tapa-tree-manifest` and the manifest itself. Mirrored headers and owned-file set changes therefore invalidate the cache; unrelated files in `rewritten/` do not. |
+| `--skip-hls-based-on-mtime` | Reuse existing Verilog when the kernel sources and headers are unchanged. Useful for iterating on other parts of a design. |
 | `--other-hls-configs TCL` | Extra Tcl appended verbatim to every generated HLS script. |
 
 ### Example
@@ -166,14 +161,10 @@ tapa --work-dir work.out synth \
 
 ## tapa floorplan
 
-Floorplan a design for a multi-die (multi-SLR) FPGA. Run it between `synth` and `pack` to assign tasks to SLRs, balance resource usage across them, and add pipeline registers on channels that cross SLR boundaries. It writes placement and timing constraints (`floorplan.xdc`) that `pack` picks up automatically.
-
-Floorplanning places leaf tasks independently, including leaves inside upper
-tasks. The generated RTL retains each upper task's launch, join, and detach
-behavior through scope controllers placed with the top controller. The original
-task hierarchy remains in `tapa.json`.
-
-Run it **after** `tapa synth` (it needs each task's resource estimate) and **before** `tapa pack`. The partitioner solves a wire-crossing-minimizing ILP with the local `cbc` solver.
+Floorplan a design for a supported multi-die (multi-SLR) FPGA. Run it after
+`synth` and before `pack` to place tasks, balance resource usage, and pipeline
+connections between SLRs. It writes `floorplan.xdc`, which `pack` applies
+automatically.
 
 ### Supported devices
 
@@ -193,16 +184,13 @@ HLS; only floorplanning has this restricted device table.
 
 ### Synthesizing with `--platform`, not `--part-num`
 
-If the top task has direct M-AXI ports, run `tapa synth` with `--platform` naming the exact platform in the table above — not with `--part-num`. Floorplanning a design with external memory has to place each M-AXI port next to the shell interface that reaches its bank, and those locations are properties of one specific platform, so the planner refuses to guess:
+When the top task has direct M-AXI ports, synthesize with the exact
+`--platform` shown in the table rather than `--part-num`. Memory-bank
+placement is platform-specific, and a different platform is rejected.
+`--part-num` is sufficient only when there are no direct M-AXI ports.
 
-```
-tapa: floorplan error: external-memory floorplanning requires platform
-`xilinx_u250_gen3x16_xdma_4_1_202210_1`; rerun synthesis with `--platform`
-```
-
-Naming a different platform is rejected the same way, with `platform ... does not match floorplan device platform ...`. `--part-num` alone is enough only for a design with no direct M-AXI ports, where there is nothing to anchor.
-
-This applies to every floorplan run, not just the `--run-impl` and `--dse` flows below — those need `--platform` for a further reason, that they invoke `v++ --link`.
+The `--run-impl` and `--dse` flows also require the `xilinx-vitis` target and
+a platform accepted by the installed `v++`.
 
 ### Optional flags (planning)
 
@@ -210,17 +198,9 @@ This applies to every floorplan run, not just the `--run-impl` and `--dse` flows
 |------|-------------|
 | `--connectivity FILE` | Vitis link `sp=` config mapping each direct M-AXI port to a memory bank. Required when the kernel has direct M-AXI ports (HBM/DDR pinning) — without it the planner cannot tell which bank a port reaches, and it stops with `floorplanning direct M-AXI ports requires --connectivity with sp=...`, naming every port it wants a line for. See [Connectivity file](#connectivity-file) for the exact syntax. |
 | `--usage-limit FRAC` | Per-slot resource utilization target for a non-DSE plan; raised on infeasibility (default `0.7`). |
-| `--partition-strategy {auto,flat,multi-level}` | Placement schedule (default `auto`). `flat` places directly into atomic slots with one ILP; `multi-level` places into rows (SLRs) first, then refines into atomic slots. `auto` picks between them with a built-in heuristic. |
-| `--pp-scheme {single,double,single_h_double_v}` | How pipeline registers distribute across a crossing's route (default `double`). |
-| `--max-seconds N` | ILP wall-clock limit in seconds (default `600`). |
-
-The schemes distribute Body registers between separate Head and Tail stages.
-`single` places one Body register in each intermediate route slot; `double`
-places one on each side of every boundary. `single_h_double_v` starts with
-`single` and adds one register at each endpoint of every vertical boundary.
-A slot shared by two vertical boundaries receives one extra register for each.
-For example, two consecutive vertical boundaries produce five Body registers,
-three in the middle slot.
+| `--partition-strategy {auto,flat,multi-level}` | Placement strategy (default `auto`, recommended for most designs). |
+| `--pp-scheme {single,double,single_h_double_v}` | Pipeline-register distribution across SLR crossings (default `double`). |
+| `--max-seconds N` | Time limit for one planning solve in seconds (default `600`). |
 
 ### Connectivity file
 
@@ -233,11 +213,11 @@ sp=VecAdd.b:HBM[1]
 sp=VecAdd.c:HBM[2]
 ```
 
-The left-hand side is `<compute-unit>.<argument>`. TAPA names the compute unit after the top task — its generated bitstream script passes `--connectivity.nk VecAdd:1:VecAdd` — so the name is the bare top task, **not** the `VecAdd_1` form Vitis defaults to when the kernel is instantiated without `nk`. The argument is the top task's parameter name, as it appears in the C++ signature. Bank targets are `HBM[n]` or `DDR[n]`.
+The left-hand side is `<top-task>.<parameter>`, using the names from your
+C++ signature. Use the bare top-task name, such as `VecAdd`, without a numeric
+suffix. Bank targets are `HBM[n]` or `DDR[n]`.
 
-For a `tapa::mmaps<T, N>` parameter (an array of `N` memory channels) the
-argument uses bracket indices, matching the port names in
-`work.out/tapa.json` — **not** the `chan_0` form of the generated RTL ports:
+For a `tapa::mmaps<T, N>` parameter, use bracket indices for the channels:
 
 ```ini
 [connectivity]
@@ -258,14 +238,6 @@ These run the floorplanned design through `v++ --link` to measure Fmax. On top o
 | `--dse-min FRAC` / `--dse-max FRAC` / `--dse-step FRAC` | DSE cap range and step (defaults `0.55` / `0.9` / `0.03`; require `--dse`). The sweep starts at `--dse-max` and steps down. |
 | `--dse-jobs N` | Max candidate package/link jobs to run concurrently (default `1`; requires `--dse`). |
 | `--vivado-threads N` | Per-link Vivado synthesis jobs (`--vivado.synth.jobs`, default `2`). Lower it on memory-constrained hosts. |
-
-### What the floorplan XDC emits
-
-`tapa floorplan` writes `floorplan.xdc`, sourced by `pack`/`v++` as `OPT_DESIGN.TCL.PRE`. It contains:
-
-- **Pblocks** for every slot and pipeline stage (`IS_SOFT 1`, `CONTAIN_ROUTING 0`). On DFX/shell platforms Vivado may force `IS_SOFT=0` for hierarchical-flow children — this is expected and is what drops routing congestion.
-- **Pipeline-stage cell matches** (`TAPA_HS_HEAD/BODY/TAIL`) constrained to their route cells, with `USER_SLL_REG` on vertical-boundary bodies.
-- **Reset-distribution timing cuts**: `set_false_path` on the reset net (TAPA's `__tapa_control_fabric_reset_n` and the platform `peripheral_aresetn`), both `-quiet`. Reset deassertion is not a per-cycle setup concern; cutting it removes the dominant cross-SLR reset wall.
 
 ### Example
 
@@ -295,16 +267,9 @@ produced by `tapa synth`.
 | Flag | Description |
 |------|-------------|
 | `--output FILE` / `-o FILE` | Output file path (default: `work.xo` for the Vitis target, `work.zip` for other targets). |
-| `--custom-rtl PATH` | Custom RTL file or directory to include in the XO. Repeat the flag for multiple paths. Not available after `tapa floorplan`. |
+| `--custom-rtl PATH` | Custom RTL file or directory to include in the output archive. Repeat the flag for multiple paths. Not available after `tapa floorplan`. |
 | `--connectivity FILE` | Memory connectivity `.ini` with the Vitis `sp=` bank assignments. When set, the emitted bitstream script passes it to `v++ --link` as a `--config`, binding each M-AXI port to its bank — required for HBM/DDR designs. |
 | `--bitstream-script FILE` / `-s FILE` | Write the generated bitstream-generation script to this path. |
-
-The generated script passes XO, floorplan, connectivity, and platform paths
-literally to `v++`, including paths containing spaces or apostrophes.
-
-If a custom RTL source and its destination in `<work-dir>/rtl` refer to the
-same file, packaging leaves it untouched and continues. This also applies
-to symbolic links and hard links to that file.
 
 ### Example
 
@@ -348,7 +313,9 @@ tapa version
 
 ## tapa update
 
-Update TAPA to the latest release, replacing the current installation in place. `tapa upgrade` is an alias. It detects the install root from the running binary (`<root>/usr/bin/tapa`, so `/opt/tapa` and `~/.tapa` installs both work, including via the `/usr/local/bin` symlinks) and needs the same write permission the original install took — use `sudo` for a system-wide install.
+Update TAPA to the latest release, replacing the current installation in
+place. `tapa upgrade` is an alias. You need write permission for the
+installation directory; use `sudo` for a system-wide install.
 
 ```bash
 tapa update
