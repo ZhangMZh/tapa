@@ -3,9 +3,9 @@
 ```admonish note
 This guide is for **developers** contributing to or extending TAPA,
 or **advanced users** building TAPA from source for custom OS support.
-For FPGA accelerator development with TAPA, refer to the
-[User Documentation](../start/installation.md). This is also the recommended way to install
-TAPA for all users.
+For FPGA accelerator development with TAPA, use the release installer in
+[Installation](../start/installation.md) unless you specifically need a
+source build.
 ```
 
 ```admonish tip
@@ -40,6 +40,7 @@ curl -fsSL https://releases.bazel.build/bazel-release.pub.gpg \
 echo "deb [arch=amd64 signed-by=/usr/share/keyrings/bazel-archive-keyring.gpg] \
     https://storage.googleapis.com/bazel-apt stable jdk1.8" \
   | sudo tee /etc/apt/sources.list.d/bazel.list
+sudo apt-get update
 sudo apt-get install bazel
 
 # Install Rust (rustup honors the version pinned in rust-toolchain.toml)
@@ -66,6 +67,7 @@ To get started with building TAPA from source, you'll need to clone the reposito
 
 ```bash
 git clone https://github.com/tuna/tapa.git
+cd tapa
 ```
 
 If you are contributing to TAPA, fork the repository and clone your fork
@@ -75,23 +77,19 @@ changes back to the main repository.
 
 ## Modify the Build Configuration
 
-You may need to modify the `VARS.bzl` file in the repository's root directory
-to specify the correct Vivado installation paths and versions. The build script
-currently assumes default installation paths at
-`/opt/tools/xilinx/Vivado/2024.2` for Vivado, and
-`/opt/tools/xilinx/Vitis/2024.2` for Vitis.
+Create a git-ignored `VARS.local.bzl` in the repository root for local
+overrides; do not edit `VARS.bzl`, which holds the shared defaults. The
+default tool installation is `/opt/tools/xilinx` with version `2024.2`, so
+the expected paths are `/opt/tools/xilinx/Vivado/2024.2` and
+`/opt/tools/xilinx/Vitis/2024.2`.
 
-If your Xilinx tools are installed in non-standard locations, please modify
-the `XILINX_TOOL_PATH` variable to reference the correct base installation
-directory for your Vivado and Vitis installations. You should also update
-`XILINX_TOOL_VERSION` to specify the version of the latest Xilinx tools
-you have installed. With these settings properly configured, the system
-will expect your Vivado installation to be located at
-`{XILINX_TOOL_PATH}/Vivado/{XILINX_TOOL_VERSION}`.
-
-If your system does not have the Xilinx Runtime (XRT) installed, you can
-modify the `HAS_XRT` variable in the `VARS.bzl` file to `False`. This
-will prevent the tests to fail due to the absence of XRT.
+If your tools are elsewhere, set `XILINX_TOOL_PATH` and
+`XILINX_TOOL_VERSION` in `VARS.local.bzl`. Both classic
+`<root>/<Tool>/<version>` and AMD unified `<root>/<version>/<Tool>` layouts
+are probed. If XRT is unavailable, set `HAS_XRT = False` there to mark
+XRT-dependent test targets incompatible instead of failing them. See
+`bazel/vars.bzl` for the override mechanism and `VARS.bzl` for all available
+settings.
 
 ## Build TAPA from Source
 
@@ -112,7 +110,8 @@ libstdc++ shared libraries. Retained auxiliary LLVM programs keep their
 upstream runtime dependencies.
 Generated programs still use the system's C and C++ headers and libraries;
 this is not a bundled sysroot. Other execution platforms use the distributions
-selected by `toolchains_llvm`. See the
+selected by `toolchains_llvm`. The LLVM source dependency used to build
+`tapacc` is pinned separately in `MODULE.bazel` (currently 22.1.8). See the
 [toolchain details](https://github.com/tuna/tapa/tree/main/tools/llvm-toolchain)
 for archive provenance and the optional source build.
 
@@ -131,10 +130,10 @@ bazel build //tapa-core:tapa
 To view all available targets, run `bazel query //...`.
 ```
 
-To skip building for the tests, you could use:
+To skip targets under `tests/`, use:
 
 ```bash
-bazel build //... -- -//tests/...
+bazel build -- //... -//tests/...
 ```
 
 After the build process completes, you can find the compiled binaries in the
@@ -150,7 +149,8 @@ considerable time to build. Bazel will cache it after the initial build.
 ## Use the Built TAPA
 
 ```admonish important
-Remember to source the Vivado settings script before running the TAPA compiler.
+Source the Vitis/Vivado settings script before commands that invoke those
+tools. It is not needed for `tapa analyze` or software simulation.
 ```
 
 Once TAPA is built, you can use the compiled TAPA compiler to compile your
@@ -247,36 +247,26 @@ a consistent build environment across different systems.
 
 ### Configuration
 
-Before running `act`, set up the following configuration files:
+Create a git-ignored `.ci-secrets` file in the repository root (the filename
+already referenced by `.actrc`):
 
-1. Create a `.secrets` file in the repository root with the following content:
+```text
+UBUNTU_PRO_TOKEN=[YOUR_UBUNTU_PRO_TOKEN]
+MAC_ADDRESS=de:ed:be:ef:ca:fe
+```
 
-   ```text
-   UBUNTU_PRO_TOKEN=[YOUR_UBUNTU_PRO_TOKEN]
-   MAC_ADDRESS=de:ed:be:ef:ca:fe
-   ```
-
-   Replace `[YOUR_UBUNTU_PRO_TOKEN]` with your Ubuntu Pro token (available
-   free for personal use) and `de:ed:be:ef:ca:fe` with your Vivado license
-   MAC address.
-
-2. Update the `.actrc` file in the repository root:
-
-   ```text
-   --secret-file .secrets
-   ```
-
-3. If your Vivado license and installation locations differ from the defaults
-   (`/share/software/licenses/xilinx-ci.lic` and
-   `/share/software/tools` respectively), update
-   `.github/actions/run-docker/action.yml` accordingly.
+Replace the placeholders with your Ubuntu Pro token and the MAC address used
+by your Vivado license. If your license and installation locations differ
+from the defaults (`/share/software/licenses/xilinx-ci.lic` and
+`/share/software/tools`), adjust them for your local run without committing
+those local changes.
 
 ### Running Containerized Tests
 
 To test TAPA in the containerized environment:
 
 ```bash
-act -j test
+act -W .github/workflows/dev-branches.yml -j test
 ```
 
 This method often provides more consistent results than local testing due to
@@ -295,12 +285,11 @@ for testing your changes.
 To create a binary distribution of TAPA:
 
 ```bash
-act -j build
+act -W .github/workflows/staging-build.yml -j build
 ```
 
-The resulting binary distribution is saved in the `artifacts.out` directory
-in the repository root (e.g., `artifacts.out/1/tapa/tapa.tar.gz` for the
-first build).
+Act writes uploaded artifacts under `artifacts.out`; inspect its output for
+the exact `tapa.tar.gz` path.
 
 ### Installing the Binary Distribution
 
@@ -311,5 +300,5 @@ To install the binary distribution:
    location:
 
    ```bash
-   TAPA_LOCAL_PACKAGE=./artifacts.out/1/tapa/tapa.tar.gz ./install.sh
+   TAPA_LOCAL_PACKAGE=/path/to/tapa.tar.gz ./install.sh
    ```

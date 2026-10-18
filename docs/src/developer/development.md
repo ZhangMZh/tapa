@@ -41,10 +41,9 @@ The TAPA codebase is organized into several key directories:
 
 - `fpga-runtime/`: Provides the FPGA runtime library.
 
-  The FPGA runtime library is used to interact with simulator or FPGA based
-  on provided bitstream. It uses fast lightweight simulator for cosimulation
-  with XO object file, and interacts with XRT library for Vitis simulation or
-  on-board testing with XCLBIN file.
+  The runtime executes a design from the supplied artifact. It drives fast
+  cosimulation from an XO or ZIP and uses XRT for Vitis hardware emulation or
+  on-board execution from an XCLBIN.
 
 - `tapa-lib/`: Houses the TAPA runtime library.
 
@@ -83,9 +82,9 @@ The TAPA codebase is organized into several key directories:
 
 - `tests/`: Includes test cases for the TAPA compiler and runtime library.
 
-  The folder includes various TAPA applications. It includes microbenchmarks
-  under `apps/` for basic functionality testing, and `regression/` for
-  performance evaluation of TAPA compiled designs.
+  The tree includes small applications under `apps/`, focused end-to-end
+  feature tests under `functional/`, and larger real designs under
+  `regression/`.
 
 ## Test Coverage
 
@@ -101,17 +100,9 @@ The `open_cosim_verilator` end-to-end tests are skipped because they need
 the `libfrt_dpi_verilator` shared library that only the Bazel runfiles
 tree stages; run them through `bazel test //fpga-runtime:cargo_test`.
 
-Baseline (2026-08-08, report-only — informational, not a CI gate):
-
-| Workspace      | Line coverage | Weakest files                                  |
-| -------------- | ------------- | ---------------------------------------------- |
-| `tapa-core`    | 89.8%         | `tapa-xilinx` `runtime/remote/transport.rs` 29.0%, `runtime/ssh.rs` 54.1% |
-| `fpga-runtime` | 64.8%         | `frt` `shm_ffi.rs` 0.0%, `xrt/device.rs` 5.2%, `ffi.rs` 12.5% |
-
-What is uncovered is mostly what cannot run here: the SSH/remote transport
-needs a remote host, and the XRT and FFI paths need a board. Treat the totals
-as a trend rather than a target — raising them means either hardware in the
-loop or seams that let those paths be driven from a test.
+Coverage is informational, not a project target or CI gate. Remote SSH and
+XRT paths may require a remote host or board, so use the Bazel integration
+tests for those paths when the required resources are available.
 
 ## Update Dependencies
 
@@ -120,17 +111,9 @@ how to update these dependencies.
 
 ### General Version Bump Process
 
-When bumping versions, follow this general workflow:
-
-1. Clear existing lock files.
-
-2. Update dependency declarations.
-
-3. Regenerate lock files.
-
-4. Test the build.
-
-5. Commit changes.
+When bumping versions, update the dependency declarations, regenerate only
+the affected lock data, review the resulting changes, and run the required
+tests. Do not clear every lock file by default.
 
 ### Bazel Dependencies
 
@@ -142,28 +125,22 @@ For Bazel dependencies:
    for latest versions, and update the `bazel_dep` entries in
    `MODULE.bazel` accordingly.
 
-3. Remove `MODULE.bazel.lock` to force regeneration.
+3. Run the build so Bazel refreshes `MODULE.bazel.lock` as needed. Remove
+   the lock file only when a clean regeneration is specifically required.
 
 ### LLVM Version Updates
 
-To update the LLVM version:
+TAPA has two separate LLVM configurations:
 
-1. Find the latest stable release of LLVM on
-   [LLVM GitHub releases](https://github.com/llvm/llvm-project/releases).
-
-2. Update the version numbers in `MODULE.bazel`:
-
-   ```starlark
-   LLVM_VERSION_MAJOR = 20
-   LLVM_VERSION_MINOR = 1
-   LLVM_VERSION_PATCH = 4
-   ```
-
-3. Update the SHA256 checksum after downloading the new version:
-
-   ```starlark
-   LLVM_SHA256 = "<new_sha256_checksum>"
-   ```
+- The `tapacc` source dependency uses `LLVM_VERSION_MAJOR`,
+  `LLVM_VERSION_MINOR`, `LLVM_VERSION_PATCH`, and `LLVM_SHA256` in
+  `MODULE.bazel` (currently 22.1.8). Update these together, review the local
+  patches under `bazel/patches/tapa-llvm-project/`, and verify the new source
+  archive hash.
+- The Bazel C/C++ action toolchain uses the archives and `toolchains_llvm`
+  settings near the top of `MODULE.bazel` (currently 22.1.7). Follow
+  `tools/llvm-toolchain/README.md` when changing that toolchain; its version
+  need not be identical to the `tapacc` source dependency.
 
 ### Docker Images
 
@@ -176,8 +153,8 @@ For the Docker testing and building environments:
 
    ```dockerfile
    RUN apt-get update && \
-       # Update the following line to the latest date for retriggering the docker build
-       echo "Installing system dependencies as of 20250505" && \
+       # Update the following line to retrigger the Docker build
+       echo "Installing system dependencies as of <current-date>" && \
        apt-get upgrade -y
    ```
 
@@ -193,13 +170,18 @@ pre-commit autoupdate
 
 After updating dependencies:
 
-1. Remove the lock file: `rm MODULE.bazel.lock`
+1. Review the dependency and lock-file changes.
 
-2. Run a full build: `bazel build //...`
+2. Run `bazel test //...`.
 
-3. Run the pre-commit checks: `pre-commit run --all-files`
+3. Run `pre-commit run --all-files`.
 
-4. Commit the changes: `git commit -a -m "build(deps): bump versions"`
+4. Commit with a Conventional subject and the required trailer, for example:
+
+   ```bash
+   git commit -a -m "build(deps): bump versions" \
+     -m "Co-Authored-By: Kimi K3 (1M) <noreply@moonshot.ai>"
+   ```
 
 ```admonish note
 This section provides guidance on updating all types of dependencies in the

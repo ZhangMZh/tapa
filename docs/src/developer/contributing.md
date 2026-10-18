@@ -3,18 +3,23 @@
 ## Pull Request Process
 
 1. Fork the TAPA repository and create a new branch for your feature or bug fix.
-2. Ensure all tests pass and pre-commit hooks run successfully.
-3. Write a clear and concise description of your changes in the pull request.
-4. Request a review from the TAPA maintainers.
+2. Make small, atomic commits with Conventional subjects (for example,
+   `fix(tapa-ir): reject invalid stream depths`). Include the required
+   `Co-Authored-By: Kimi K3 (1M) <noreply@moonshot.ai>` trailer in every
+   commit.
+3. Ensure all tests pass and pre-commit hooks run successfully.
+4. Write a clear and concise description of your changes in the pull request.
+5. Request a review from the TAPA maintainers.
 
 ### Continuous Integration
 
-TAPA uses GitHub Actions for continuous integration. The CI pipeline:
+TAPA uses GitHub Actions for continuous integration:
 
-1. Builds binary distributions on Ubuntu 18.04 self-hosted runners.
-2. Performs code quality checks using pre-commit hooks on every commit.
-3. Runs functional and integration tests via staging workflows across a matrix
-   of platforms and Vitis versions for every main branch push.
+1. Development-branch pushes run pre-commit, Bazel tests, the documentation
+   build, and the public-API audit.
+2. Pushes to `main` build a release artifact and run the staging test matrix
+   across supported operating systems and Vitis versions.
+3. Release builds package the binary distribution on self-hosted runners.
 
 ### Documentation
 
