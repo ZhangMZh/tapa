@@ -83,7 +83,8 @@ tapa compile \
 
 Parse C++ sources and record the task graph in the work directory. Repeat
 `--input` for multi-file programs; all files use the same compiler flags.
-This stage always runs locally and does not require vendor tools.
+This stage always runs locally and does not require vendor tools. See
+[Multi-File Designs](../howto/multi-file.md) for a complete example.
 
 ### Required flags
 

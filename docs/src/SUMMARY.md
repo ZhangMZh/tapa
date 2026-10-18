@@ -20,6 +20,7 @@
 # How-To Guides
 
 - [Software Simulation](howto/software-simulation.md)
+- [Multi-File Designs](howto/multi-file.md)
 - [Fast Hardware Simulation](howto/fast-cosim.md)
 - [Parallel RTL Emulation](howto/parallel-rtl-emulation.md)
 - [Vitis Cosimulation](howto/vitis-cosim.md)

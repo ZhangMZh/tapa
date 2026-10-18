@@ -41,7 +41,9 @@ placement + timing constraints
 **`tapa analyze`** — Parses the input C++ files and records the task graph
 in the work directory. Each `-f` is one translation unit; all inputs use the
 same compiler flags, so tasks may be defined in one input and invoked from
-another. No vendor tools are required for this step.
+another. No vendor tools are required for this step. See
+[Multi-File Designs](../howto/multi-file.md) for source organization and
+commands.
 
 **`tapa synth`** — Runs Vitis HLS and produces the design's RTL. This is
 usually the most time-consuming step. With `-j N`, up to N tasks are

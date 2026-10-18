@@ -119,6 +119,7 @@ The `--bitstream` flag is what controls which backend runs:
 
 - Keep host and kernel code in separate translation units in the normal flow.
   Pass only kernel sources to `tapa compile`; build the host with `tapa g++`.
+  For larger programs, see [Multi-File Designs](../howto/multi-file.md).
 - Each compilation selects exactly one top-level task with `--top`. The source
   may also contain the child tasks and unrelated helper functions.
 - The top-level task is **called via `tapa::invoke` from the host**; never

@@ -24,7 +24,7 @@ under software simulation with no FPGA and no vendor tools.
 
 ```admonish tip
 `tests/functional/` holds smaller single-feature designs used as regression
-tests — `shared-mmap`, `detached`, `eot`, `peek`, `custom-rtl`,
+tests — `shared-mmap`, `detached`, `eot`, `peek`, `custom-rtl`, `multi-file`,
 `parallel-emulation`, and others. They are the shortest working reference
 for one specific feature.
 ```

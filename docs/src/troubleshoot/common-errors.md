@@ -171,7 +171,8 @@ Run `tapa compile --help` for the full option list.
 
 **Cause:** The translation unit that defines the task was not passed to `tapa analyze`. If a function with the same name but a different signature exists, the message points at it — the declaration and the definition must match.
 
-**Fix:** Pass every translation unit of the program, one per `-f`. A single `tapacc` process parses all inputs with the same cflags, so a task may be defined in any input file (or a header) and invoked from any other.
+**Fix:** Pass every translation unit of the program, one per `-f`. A single `tapacc` process parses all inputs with the same cflags, so a task may be defined in any input file (or a header) and invoked from any other. See
+[Multi-File Designs](../howto/multi-file.md) for the complete workflow.
 
 ---
 
