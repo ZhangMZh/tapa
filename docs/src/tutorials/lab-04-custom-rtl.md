@@ -101,7 +101,8 @@ For stream ports, a write transfers data on a rising clock edge only when
 both `*_write` and `*_full_n` are asserted. A producer may hold a pending
 write while `*_full_n` is low; keep its data stable until the write is
 accepted. A read consumes data only when both `*_read` and `*_empty_n` are
-asserted. Backpressure must preserve data that has already been accepted.
+asserted. A consumer must accept each token exactly once; applying backpressure must
+not drop or reorder queued data.
 
 ### Step 6: Repack with custom RTL
 
@@ -110,7 +111,7 @@ Two workflows are available depending on whether you are iterating on the RTL se
 **Option A — Two-step workflow** (compile once, iterate on RTL separately):
 
 ```bash
-tapa pack \
+tapa --work-dir work.out pack \
   -o work.out/pipeline.xo \
   --custom-rtl ./rtl/
 ```

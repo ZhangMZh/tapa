@@ -2,7 +2,6 @@
 // All rights reserved. The contributor(s) of this file has/have agreed to the
 // RapidStream Contributor License Agreement.
 
-#include <hls_vector.h>
 #include <tapa.h>
 #include "assert.h"
 
@@ -12,16 +11,16 @@
 
 #define DATA_SIZE 4096
 
-void load_input(tapa::mmap<hls::vector<uint32_t, NUM_WORDS>> in,
-                tapa::ostream<hls::vector<uint32_t, NUM_WORDS>>& inStream,
+void load_input(tapa::mmap<tapa::vec_t<uint32_t, NUM_WORDS>> in,
+                tapa::ostream<tapa::vec_t<uint32_t, NUM_WORDS>>& inStream,
                 int size) {
   size /= NUM_WORDS;
   [[tapa::pipeline(1)]] for (int i = 0; i < size; i++) { inStream << in[i]; }
 }
 
-void compute_add(tapa::istream<hls::vector<uint32_t, NUM_WORDS>>& in1_stream,
-                 tapa::istream<hls::vector<uint32_t, NUM_WORDS>>& in2_stream,
-                 tapa::ostream<hls::vector<uint32_t, NUM_WORDS>>& out_stream,
+void compute_add(tapa::istream<tapa::vec_t<uint32_t, NUM_WORDS>>& in1_stream,
+                 tapa::istream<tapa::vec_t<uint32_t, NUM_WORDS>>& in2_stream,
+                 tapa::ostream<tapa::vec_t<uint32_t, NUM_WORDS>>& out_stream,
                  int size) {
   size /= NUM_WORDS;
   [[tapa::pipeline(1)]] for (int i = 0; i < size; i++) {
@@ -29,8 +28,8 @@ void compute_add(tapa::istream<hls::vector<uint32_t, NUM_WORDS>>& in1_stream,
   }
 }
 
-void store_result(tapa::mmap<hls::vector<uint32_t, NUM_WORDS>> out,
-                  tapa::istream<hls::vector<uint32_t, NUM_WORDS>>& out_stream,
+void store_result(tapa::mmap<tapa::vec_t<uint32_t, NUM_WORDS>> out,
+                  tapa::istream<tapa::vec_t<uint32_t, NUM_WORDS>>& out_stream,
                   int size) {
   size /= NUM_WORDS;
   [[tapa::pipeline(1)]] for (int i = 0; i < size; i++) {
@@ -40,12 +39,12 @@ void store_result(tapa::mmap<hls::vector<uint32_t, NUM_WORDS>> out,
 
 extern "C" {
 
-void vadd(tapa::mmap<hls::vector<uint32_t, NUM_WORDS>> in1,
-          tapa::mmap<hls::vector<uint32_t, NUM_WORDS>> in2,
-          tapa::mmap<hls::vector<uint32_t, NUM_WORDS>> out, int size) {
-  tapa::stream<hls::vector<uint32_t, NUM_WORDS>> in1_stream("input_stream_1");
-  tapa::stream<hls::vector<uint32_t, NUM_WORDS>> in2_stream("input_stream_2");
-  tapa::stream<hls::vector<uint32_t, NUM_WORDS>> out_stream("output_stream");
+void vadd(tapa::mmap<tapa::vec_t<uint32_t, NUM_WORDS>> in1,
+          tapa::mmap<tapa::vec_t<uint32_t, NUM_WORDS>> in2,
+          tapa::mmap<tapa::vec_t<uint32_t, NUM_WORDS>> out, int size) {
+  tapa::stream<tapa::vec_t<uint32_t, NUM_WORDS>> in1_stream("input_stream_1");
+  tapa::stream<tapa::vec_t<uint32_t, NUM_WORDS>> in2_stream("input_stream_2");
+  tapa::stream<tapa::vec_t<uint32_t, NUM_WORDS>> out_stream("output_stream");
 
   tapa::task()
       .invoke(load_input, in1, in1_stream, size)

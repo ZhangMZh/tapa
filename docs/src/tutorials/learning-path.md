@@ -22,7 +22,8 @@ These labs walk through the TAPA programming model from first principles to adva
 
 **Need HBM throughput** — Work through Lab 2 (async\_mmap) for memory throughput.
 
-**Building a multi-kernel pipeline** — Lab 5 covers parallel RTL emulation, which lets you validate inter-kernel dataflow at RTL level before the bitstream link step.
+**Building a multi-kernel pipeline** — Lab 5 covers parallel RTL emulation:
+per-kernel RTL validation with software-modeled streams between kernels.
 
 ## Background reading
 

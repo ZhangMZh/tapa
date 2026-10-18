@@ -11,20 +11,19 @@ After this lab you will understand:
 
 ---
 
-## The problem: one request at a time
+## When explicit request scheduling matters
 
-With a plain `mmap<T>` argument, each read or write is a blocking operation. The loop below looks innocuous, but every iteration stalls waiting for data to return from DRAM before the next address is issued:
+With `mmap<T>`, Vitis HLS schedules memory accesses for you. It may pipeline
+and burst suitable patterns, but you cannot directly issue an address and
+then continue independent work while waiting for its response.
 
-```cpp
-// Problematic: one outstanding request at a time
-for (int i = 0; i < n; i++) {
-  result[i] = mem[i];  // blocks until data returns
-}
-```
-
-Off-chip DRAM latency is typically 100–200 ns. At a 300 MHz clock that is 30–60 idle cycles per element. For sequential access patterns the HLS tool's burst inference may help, but for random-access patterns or when you need explicit control over request depth, `mmap` leaves most of the available bandwidth unused.
-
-`async_mmap` solves this by exposing the five AXI channels directly as streams. You can issue many read addresses before any data returns, keeping dozens of requests in flight and hiding the per-request latency behind the steady flow of data. See [Memory Access: async_mmap](../concepts/async-mmap.md) for the channel layout and area comparison.
+`async_mmap` exposes the five AXI channels as streams. You can issue multiple
+read addresses before consuming the responses, keeping requests in flight and
+hiding memory latency. This is especially useful for random access or custom
+scheduling. It does not guarantee higher throughput for every design, so
+compare synthesis reports and measurements. See
+[Memory Access: async_mmap](../concepts/async-mmap.md) for the channel layout
+and an example resource comparison.
 
 ---
 
@@ -33,8 +32,10 @@ Off-chip DRAM latency is typically 100–200 ns. At a 300 MHz clock that is 30�
 The idiomatic TAPA read pattern uses two counters in a single pipelined loop:
 
 ```cpp
-void ReadKernel(tapa::async_mmap<float>& mem, float* result, uint64_t n) {
-  [[tapa::pipeline(1)]] for (int64_t i_req = 0, i_resp = 0; i_resp < (int64_t)n;) {
+void ReadKernel(tapa::async_mmap<float>& mem, tapa::mmap<float> result,
+                uint64_t n) {
+  [[tapa::pipeline(1)]]
+  for (uint64_t i_req = 0, i_resp = 0; i_resp < n;) {
     if (i_req < n && mem.read_addr.try_write(i_req)) ++i_req;
     float val;
     if (mem.read_data.try_read(val)) {
@@ -63,7 +64,8 @@ Writes require coordinating three channels: `write_addr`, `write_data`, and `wri
 ```cpp
 void WriteKernel(tapa::async_mmap<float>& mem,
                  tapa::istream<float>& data, uint64_t n) {
-  [[tapa::pipeline(1)]] for (int64_t i_req = 0, i_resp = 0; i_resp < (int64_t)n;) {
+  [[tapa::pipeline(1)]]
+  for (uint64_t i_req = 0, i_resp = 0; i_resp < n;) {
     if (i_req < n && !data.empty() &&
         !mem.write_addr.full() && !mem.write_data.full()) {
       mem.write_addr.try_write(i_req);
@@ -89,16 +91,22 @@ Key points:
 ## Rules for using async_mmap
 
 - Pass `async_mmap<T>` **by reference** (`async_mmap<T>&`). Passing by value is an error.
-- Only use `try_read`/`try_write` inside pipelined loops. Blocking `read`/`write` stalls the pipeline and will cause deadlock when combined with other non-blocking channels.
+- In the two-counter pipelined pattern, use `try_read`/`try_write` on the
+  `async_mmap` channels so one blocked channel does not prevent the others
+  from progressing.
 - Always drain `write_resp`, even if you discard the burst-length value.
 - An `mmap<T>` argument can be passed to an `async_mmap<T>&` parameter in a child task without changing the caller.
 
 ```admonish warning
-Never use blocking `read`/`write` on `async_mmap` channels inside a pipelined loop. Because the five AXI channels are decoupled, blocking on one channel prevents progress on the others and causes the kernel to hang.
+A blocking `read`/`write` on an `async_mmap` channel inside this pipelined
+pattern can prevent progress on the other channels and deadlock the kernel.
+Use the non-blocking operations unless you have analyzed the dependencies.
 ```
 
 ```admonish tip
-For the full API reference and the area comparison table showing how `async_mmap` compares to the Vitis HLS `m_axi` interface, see [Memory Access: async_mmap](../concepts/async-mmap.md).
+For the full API reference and an example resource comparison with the Vitis
+HLS `m_axi` interface, see
+[Memory Access: async_mmap](../concepts/async-mmap.md).
 ```
 
 ---

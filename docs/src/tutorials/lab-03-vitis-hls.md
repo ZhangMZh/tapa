@@ -75,8 +75,8 @@ than one call, split it or accept the wider scope.
 ```admonish warning
 Two vendor constructs have no portable form, and `tapa analyze` says so
 rather than suggesting one: `#pragma HLS stream ... off` (a stream that is
-not a FIFO) and `#pragma HLS dataflow` *inside* a leaf task. Keep them and
-expect the remark.
+not a FIFO) and `#pragma HLS dataflow` *inside* a leaf task. They must remain
+vendor-specific, so portability is limited; expect the remark.
 ```
 
 ```admonish note title="An unqualified `reg` becomes ambiguous"
@@ -105,11 +105,14 @@ The full before and after files are at [example_1_before.cpp](code/vitis-hls/exa
 ```diff
 -#include <hls_stream.h>
 -#include <hls_vector.h>
-+#include <hls_vector.h>
 +#include <tapa.h>
 ```
 
-TAPA provides its own stream types, so `hls_stream.h` is no longer needed. Other HLS headers such as `ap_int.h` and `hls_vector.h` are still supported and can be included as usual.
+The migrated example uses `tapa::vec_t` and TAPA streams, so it builds for
+both synthesis and self-contained software simulation. Vendor headers remain
+available to Vitis HLS, but using them prevents the host build from being
+vendor-independent; `tapa analyze` reports recognized vendor constructs as
+remarks.
 
 ### Step 2: Replace pointer arguments with `tapa::mmap<T>`
 
@@ -117,7 +120,7 @@ Vitis HLS uses raw pointers annotated with `#pragma HLS INTERFACE m_axi` to indi
 
 ```diff
 -void load_input(hls::vector<uint32_t, NUM_WORDS>* in,
-+void load_input(tapa::mmap<hls::vector<uint32_t, NUM_WORDS>> in,
++void load_input(tapa::mmap<tapa::vec_t<uint32_t, NUM_WORDS>> in,
 ```
 
 ```diff
@@ -127,24 +130,25 @@ Vitis HLS uses raw pointers annotated with `#pragma HLS INTERFACE m_axi` to indi
 -#pragma HLS INTERFACE m_axi port = in1 bundle = gmem0
 -#pragma HLS INTERFACE m_axi port = in2 bundle = gmem1
 -#pragma HLS INTERFACE m_axi port = out bundle = gmem0
-+  tapa::mmap<hls::vector<uint32_t, NUM_WORDS>> in1,
-+  tapa::mmap<hls::vector<uint32_t, NUM_WORDS>> in2,
-+  tapa::mmap<hls::vector<uint32_t, NUM_WORDS>> out, int size) {
++  tapa::mmap<tapa::vec_t<uint32_t, NUM_WORDS>> in1,
++  tapa::mmap<tapa::vec_t<uint32_t, NUM_WORDS>> in2,
++  tapa::mmap<tapa::vec_t<uint32_t, NUM_WORDS>> out, int size) {
 ```
 
 `tapa::mmap<T>` supports element-indexed reads and writes (`mem[i]`) just like a pointer, so the body of each task usually does not need to change.
 
 ### Step 3: Replace `hls::stream<T>&` with directional TAPA streams
 
-Vitis HLS `hls::stream<T>&` is bidirectional — the same type is used whether the stream is read or written. TAPA makes direction explicit:
+Vitis HLS `hls::stream<T>&` is direction-agnostic—the same type is used for
+a producer or consumer parameter. TAPA makes the endpoint direction explicit:
 
 ```diff
 -void compute_add(hls::stream<hls::vector<uint32_t, NUM_WORDS>>& in1_stream,
 -                 hls::stream<hls::vector<uint32_t, NUM_WORDS>>& in2_stream,
 -                 hls::stream<hls::vector<uint32_t, NUM_WORDS>>& out_stream,
-+void compute_add(tapa::istream<hls::vector<uint32_t, NUM_WORDS>>& in1_stream,
-+                 tapa::istream<hls::vector<uint32_t, NUM_WORDS>>& in2_stream,
-+                 tapa::ostream<hls::vector<uint32_t, NUM_WORDS>>& out_stream,
++void compute_add(tapa::istream<tapa::vec_t<uint32_t, NUM_WORDS>>& in1_stream,
++                 tapa::istream<tapa::vec_t<uint32_t, NUM_WORDS>>& in2_stream,
++                 tapa::ostream<tapa::vec_t<uint32_t, NUM_WORDS>>& out_stream,
 ```
 
 Use `tapa::istream<T>&` for streams the task reads from, and `tapa::ostream<T>&` for streams the task writes to. The `read()` and `<<` operators work the same as in Vitis HLS.
@@ -157,9 +161,9 @@ Local streams declared inside the top-level function become `tapa::stream<T>`:
 -  hls::stream<hls::vector<uint32_t, NUM_WORDS>> in1_stream("input_stream_1");
 -  hls::stream<hls::vector<uint32_t, NUM_WORDS>> in2_stream("input_stream_2");
 -  hls::stream<hls::vector<uint32_t, NUM_WORDS>> out_stream("output_stream");
-+  tapa::stream<hls::vector<uint32_t, NUM_WORDS>> in1_stream("input_stream_1");
-+  tapa::stream<hls::vector<uint32_t, NUM_WORDS>> in2_stream("input_stream_2");
-+  tapa::stream<hls::vector<uint32_t, NUM_WORDS>> out_stream("output_stream");
++  tapa::stream<tapa::vec_t<uint32_t, NUM_WORDS>> in1_stream("input_stream_1");
++  tapa::stream<tapa::vec_t<uint32_t, NUM_WORDS>> in2_stream("input_stream_2");
++  tapa::stream<tapa::vec_t<uint32_t, NUM_WORDS>> out_stream("output_stream");
 ```
 
 `tapa::stream<T>` accepts a name string for the same debugging purpose as `hls::stream<T>`. To set a custom depth, use `tapa::stream<T, DEPTH>`. For stream arrays, use `tapa::streams<T, ARRAY_SIZE, DEPTH>`.
@@ -207,16 +211,19 @@ for (int i = 0; i < size; i++) {
 }
 ```
 
-TAPA does not allow computation in upper-level tasks. A top-level TAPA task may only declare streams and invoke child tasks — it cannot contain loops or arithmetic. The solution is to move the loop into each child task:
+TAPA does not allow computation in upper-level tasks. When the top is an
+upper-level task, as required by `xilinx-vitis`, it cannot contain the loop
+or `size /= NUM_WORDS`. Move the loop and the size calculation into each child
+task:
 
 ```cpp
 // TAPA: loop lives in the child tasks
-void load_input(tapa::mmap<hls::vector<uint32_t, NUM_WORDS>> in,
-                tapa::ostream<hls::vector<uint32_t, NUM_WORDS>>& inStream,
+void load_input(tapa::mmap<tapa::vec_t<uint32_t, NUM_WORDS>> in,
+                tapa::ostream<tapa::vec_t<uint32_t, NUM_WORDS>>& inStream,
                 int size) {
   size /= NUM_WORDS;
+  [[tapa::pipeline(1)]]
   for (int i = 0; i < size; i++) {
-#pragma HLS pipeline II = 1
     inStream << in[i];
   }
 }
@@ -238,29 +245,31 @@ void vadd(...) {
 }
 ```
 
-The child tasks stream data to each other for the full duration; no synchronization is needed between iterations because each task has its own loop that runs from start to finish.
+Each child runs its own loop for the full transaction, so there is no
+outer-loop barrier to reproduce. Stream handshakes still synchronize data
+production and consumption.
 
 ---
 
 ## HLS-compat helpers for incremental migration
 
-If you have a large existing codebase, TAPA provides `tapa::hls::stream<T>` as a drop-in replacement for `hls::stream<T>`. Unlike `tapa::stream<T>`, it uses effectively infinite depth in software simulation, so producers never block. This lets you keep direction-agnostic stream passing patterns while still running software simulation.
-
-`tapa::hls::stream<T>` is available via `#include <tapa.h>` — no additional include is needed.
+`tapa::hls::stream<T, N>` aliases `tapa::stream<T, N>` with effectively
+infinite depth in software simulation. Its hardware depth remains `N`
+(default 2). It is useful when migrating local Vitis dataflow code before you
+have tuned queue depths. The complete
+[example_1_hls_compat.cpp](code/vitis-hls/example_1_hls_compat.cpp) shows the
+same migrated design with this alias for its three local channels.
 
 ```cpp
-// Before (Vitis HLS):
-hls::stream<float>& s
-
-// After (TAPA compat, passes software simulation without depth tuning):
-tapa::hls::stream<float>& s
+// Finite depth in hardware; effectively infinite in software simulation.
+tapa::hls::stream<float> s("s");
 ```
 
-Use this as a stepping stone: get software simulation passing with `tapa::hls::stream`, then replace with directional `tapa::istream<T>&` / `tapa::ostream<T>&` before shipping.
-
-```admonish note
-`tapa::hls::stream` synthesizes correctly — the generated RTL FIFO is identical to `tapa::stream<T, N>`. The reason to replace it before hardware build is that the infinite simulation depth hides backpressure bugs. Switching to directional streams with a tuned depth catches those bugs during software simulation, before they appear on hardware.
-```
+This alias does not relax task-port rules. A TAPA task boundary still uses
+`tapa::istream<T>&` for a reader and `tapa::ostream<T>&` for a writer, not
+`tapa::hls::stream<T>&`. There is no need to replace local compatibility
+channels before synthesis. To test hardware backpressure during software
+simulation, change them to `tapa::stream<T, N>` so the simulation enforces `N`.
 
 ---
 

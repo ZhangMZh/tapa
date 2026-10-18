@@ -18,7 +18,7 @@ under software simulation with no FPGA and no vendor tools.
 | gemv | Matrix-vector multiply | Stream reduction | `tests/apps/gemv` |
 | graph | Graph traversal | Large per-task local buffers | `tests/apps/graph` |
 | ignore | Custom-RTL placeholder | `[[tapa::target("ignore")]]` | `tests/apps/ignore` |
-| jacobi | Stencil computation | End-of-transmission (`close()`) | `tests/apps/jacobi` |
+| jacobi | Stencil computation | End-of-transaction (`close()`) | `tests/apps/jacobi` |
 | network | Packet switching | `peek`, detached tasks, hierarchical tasks | `tests/apps/network` |
 | templated | Parameterized kernels | Templated leaf tasks | `tests/apps/templated` |
 
