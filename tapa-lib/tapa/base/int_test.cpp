@@ -638,6 +638,11 @@ TEST(IntTest, IstreamParsesWithBasefieldAndPrefixes) {
   tapa::i<16> sv;
   prefixed >> sv;
   EXPECT_EQ(sv, -8);
+  std::istringstream plussed("+10 +0x2a");
+  plussed >> v;
+  EXPECT_EQ(v, 10);
+  plussed >> v;
+  EXPECT_EQ(v, 0x2a);
   // Wide values parse past 64 bits and truncate to W.
   tapa::u<100> wide;
   std::istringstream widetext("0xffffffffffffffffffffffffff");

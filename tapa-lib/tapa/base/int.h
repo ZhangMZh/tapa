@@ -996,7 +996,7 @@ inline std::string int_base<W, S>::to_string(int base, bool sign) const {
 
 /// Reads one token into @p x: the stream's basefield selects the radix,
 /// with 0x/0o/0b prefixes overriding it, like the vendor's operator>>.
-/// Values truncate to W bits; a leading '-' negates.
+/// Values truncate to W bits; a leading sign is accepted, and '-' negates.
 template <int W, bool S>
 inline std::istream& operator>>(std::istream& in, int_base<W, S>& x) {
   std::string str;
@@ -1008,8 +1008,8 @@ inline std::istream& operator>>(std::istream& in, int_base<W, S>& x) {
                                                : 10;
   size_t pos = 0;
   bool neg = false;
-  if (pos < str.size() && str[pos] == '-') {
-    neg = true;
+  if (pos < str.size() && (str[pos] == '-' || str[pos] == '+')) {
+    neg = str[pos] == '-';
     ++pos;
   }
   if (pos + 1 < str.size() && str[pos] == '0') {
