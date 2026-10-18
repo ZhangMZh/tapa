@@ -243,11 +243,13 @@ enum Work {
     RunFresh(HlsJob),
 }
 
-/// Per-task HLS cflags: the user's graph cflags, then the task
-/// manifest's tree-relative pieces — the rewritten tree root first,
-/// then one `-I` per include dir (the empty entry is the tree root
-/// itself, already covered), then one `-D` per guard define — then
-/// the shared vendor tail (`HlsRunOptions::cflags`). Staging has
+/// Per-task HLS cflags: the task manifest's rewritten-tree include
+/// roots (the tree root, then one `-I` per include dir; the empty
+/// entry is the tree root itself, already covered), then the user's
+/// graph cflags, one `-D` per guard define, and the shared vendor
+/// tail (`HlsRunOptions::cflags`). The rewritten roots must precede
+/// user include paths so quoted and unchanged angle includes resolve
+/// to mirrored headers instead of same-named originals. Staging has
 /// already asserted the include dirs and defines are Tcl-safe.
 ///
 /// The tail goes last on purpose: it ends with
@@ -258,13 +260,14 @@ enum Work {
 /// either: the external-bucket dirs the manifest emits would hit the same
 /// glue.
 fn task_cflags(user: &[String], tree_root: &Path, task: &Task, tail: &[String]) -> Vec<String> {
-    let mut flags = user.to_vec();
+    let mut flags = Vec::new();
     flags.push(format!("-I{}", tree_root.display()));
     for dir in &task.include_dirs {
         if !dir.is_empty() {
             flags.push(format!("-I{}", tree_root.join(dir).display()));
         }
     }
+    flags.extend_from_slice(user);
     for define in &task.defines {
         flags.push(format!("-D{define}"));
     }
@@ -404,13 +407,13 @@ mod tests {
         }
     }
 
-    /// The manifest→cflags contract: user cflags, then
-    /// tree root, one `-I` per include dir (empty = root, skipped),
-    /// one `-D` per guard, then the shared tail — whose closing
+    /// The manifest→cflags contract: tree root and one `-I` per
+    /// include dir (empty = root, skipped), then user cflags and one
+    /// `-D` per guard, then the shared tail — whose closing
     /// `-I<extra-runtime-include>` must remain the final token
     /// (Vitis glues tokens onto paths ending in `include`).
     #[test]
-    fn task_cflags_compose_user_tree_includes_defines_then_tail() {
+    fn task_cflags_compose_tree_includes_user_defines_then_tail() {
         let task = Task {
             include_dirs: vec![
                 String::new(),
@@ -432,15 +435,76 @@ mod tests {
         assert_eq!(
             flags,
             vec![
-                "-std=c++14".to_string(),
-                "-I/app".to_string(),
                 "-I/work/rewritten".to_string(),
                 "-I/work/rewritten/_external/ab12cd34".to_string(),
                 "-I/work/rewritten/common".to_string(),
+                "-std=c++14".to_string(),
+                "-I/app".to_string(),
                 "-DTAPA_TASK_DEF_Add".to_string(),
                 "-isystem/tapa-lib".to_string(),
                 "-I/extra-runtime-include".to_string(),
             ]
+        );
+    }
+
+    /// User `-I` paths previously won over the mirror. Exercise real
+    /// compiler lookup for both include spellings; tapacc deliberately
+    /// leaves the angle spelling unchanged.
+    #[test]
+    fn task_cflags_select_mirror_for_quoted_and_angle_includes() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let original_include = tmp.path().join("original/include");
+        let tree = tmp.path().join("rewritten");
+        let mirror_include = tree.join("include");
+        let mirror_src = tree.join("src");
+        fs::create_dir_all(&original_include).unwrap();
+        fs::create_dir_all(&mirror_include).unwrap();
+        fs::create_dir_all(&mirror_src).unwrap();
+
+        for (header, marker) in [("quoted.h", "MIRROR_QUOTED"), ("angle.h", "MIRROR_ANGLE")] {
+            fs::write(
+                original_include.join(header),
+                format!("#error \"original {header} selected\"\n"),
+            )
+            .unwrap();
+            fs::write(mirror_include.join(header), format!("#define {marker} 1\n")).unwrap();
+        }
+        let source = mirror_src.join("Add.cpp");
+        fs::write(
+            &source,
+            r#"#include "quoted.h"
+#include <angle.h>
+#if !defined(MIRROR_QUOTED) || !defined(MIRROR_ANGLE)
+#error "rewritten headers were not selected"
+#endif
+"#,
+        )
+        .unwrap();
+
+        let task = Task {
+            srcs: vec!["src/Add.cpp".to_string()],
+            include_dirs: vec![String::new(), "include".to_string()],
+            ..leaf_task("Add")
+        };
+        let flags = task_cflags(
+            &[format!("-I{}", original_include.display())],
+            &tree,
+            &task,
+            &[],
+        );
+        let output = Command::new("g++")
+            .arg("-fsyntax-only")
+            .args(&flags)
+            .arg(&source)
+            .output()
+            .expect("run C++ compiler for include-selection regression");
+        assert!(
+            output.status.success(),
+            "quoted and angle includes must select mirrored headers; flags: {flags:?}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
         );
     }
 
