@@ -56,7 +56,11 @@ tapa::task().invoke<tapa::join, 4>(Worker, channels, tapa::seq{});
 
 ### `tapa::executable`
 
-Wraps a path to an XO or bitstream file for use in `.invoke()`. When an `executable` is passed as the second argument to `.invoke()`, the task runs on hardware (via FRT) instead of in software simulation.
+Wraps a kernel path for the host-only `tapa::task().invoke()` overload. An
+empty path selects software simulation. A nonempty `.xo` or `.zip` starts
+fast cosimulation; an `.xclbin` requests XRT execution. Parallel RTL
+emulation uses XO or ZIP archives because the XRT path does not accept the
+external stream ports used to connect those kernel instances.
 
 ```cpp
 class executable {
@@ -79,7 +83,9 @@ Streams are the fundamental inter-task communication primitive. Each stream is a
 
 ### `tapa::stream<T, Depth>`
 
-Bidirectional FIFO that owns the underlying storage. Declared inside an upper-level task and passed to child tasks as `istream<T>&` (read end) or `ostream<T>&` (write end). The default depth is 2.
+Owner type for a point-to-point FIFO. Declare inter-task channels inside an
+upper-level task and pass directional views to children as `istream<T>&`
+(read end) or `ostream<T>&` (write end). The default depth is 2.
 
 ```cpp
 template <typename T, uint64_t Depth = 2>
@@ -104,13 +110,16 @@ Read-only view of a stream. Always passed by reference in task signatures: `tapa
 | `empty()` | no | no | Returns true if the stream contains no elements. |
 | `try_eot(bool& is_eot)` | no | no | Returns true if a head element is available, and sets `is_eot` to whether it is the end-of-transaction marker. This is the primitive the EoT loop macros are built on. |
 | `eot(bool& ok)` | no | no | Returns true if the head element is an end-of-transaction marker; sets `ok` to whether an element was available at all. Inverted argument order relative to `try_eot`. |
-| `open()` | yes | yes | Blocks until an EoT marker arrives, then consumes it. Used to receive stream closure. |
-| `try_open()` | no | yes | Non-blocking variant of `open()`; returns true if EoT was consumed. |
+| `open()` | yes | yes | Blocks until a token is available, then consumes it. The token must be EoT; call after draining the transaction's data tokens. |
+| `try_open()` | no | yes | Non-blocking variant of `open()`; consumes an available EoT token and returns true. |
 
 ```admonish warning
-`read()`, `read(bool&)`, `try_read()`, and `peek()` all abort on an EoT
-marker — they are for data elements only. Check `try_eot()` first, or use one
-of the `TAPA_WHILE_*_EOT` macros, when the producer closes the stream.
+`read()`, `read(bool&)`, `try_read()`, `try_peek()`, `peek(bool&)`, and
+`peek(nullptr)` are data-element operations: do not call them on an EoT
+marker. Software simulation treats that misuse as fatal, but other targets may
+not diagnose it. Check `try_eot()` first or use a `TAPA_WHILE_*_EOT` macro.
+Use `peek(bool&, bool&)` when you need to inspect both the value and the EoT
+flag.
 ```
 
 ### `tapa::ostream<T>`
@@ -168,7 +177,10 @@ class mmap {
 
 ### `tapa::async_mmap<T>`
 
-Decoupled memory access type. Instead of blocking on each memory operation, the kernel issues read/write requests and collects responses through five FIFO channels. This allows the kernel to pipeline memory operations. Passed **by reference** in task signatures: `tapa::async_mmap<T>&`.
+Decoupled memory access type. The kernel issues read/write requests and
+collects responses through five FIFO channels, giving it explicit control
+over outstanding memory operations. Passed **by reference** in task
+signatures: `tapa::async_mmap<T>&`.
 
 See [async_mmap channels](#async_mmap-channels) below for channel details.
 
@@ -197,7 +209,7 @@ Each form passes the same buffer addresses, element counts, and direction hints.
 | `tapa::read_only_mmap<T>` | Host writes, kernel reads |
 | `tapa::write_only_mmap<T>` | Kernel writes, host reads |
 | `tapa::read_write_mmap<T>` | Both read and write |
-| `tapa::placeholder_mmap<T>` | No direction hint |
+| `tapa::placeholder_mmap<T>` | No host/device transfer; for an unused buffer |
 | `tapa::read_only_mmaps<T, N>` | Array variant of `read_only_mmap` |
 | `tapa::write_only_mmaps<T, N>` | Array variant of `write_only_mmap` |
 | `tapa::read_write_mmaps<T, N>` | Array variant of `read_write_mmap` |
@@ -234,8 +246,7 @@ The kernel must drain `write_resp` to avoid deadlock. If the response channel fi
 ```cpp
 void Reader(tapa::async_mmap<float>& mem, tapa::ostream<float>& out, int n) {
   [[tapa::pipeline(1)]] for (int i_req = 0, i_resp = 0; i_resp < n;) {
-    if (i_req < n && !mem.read_addr.full()) {
-      mem.read_addr.write(i_req);
+    if (i_req < n && mem.read_addr.try_write(i_req)) {
       ++i_req;
     }
     float val;
@@ -322,7 +333,7 @@ class ufixed;  // unsigned
 
 | `tapa::o_mode` | vendor | meaning |
 |---|---|---|
-| `wrap` (default) | `AP_WRAP` | keep the low bits; `N` saturation bits are forced |
+| `wrap` (default) | `AP_WRAP` | keep the low bits; on overflow, apply the vendor's `N`-saturation-bit rule |
 | `wrap_sm` | `AP_WRAP_SM` | sign-magnitude wrap; signed types only |
 | `sat` | `AP_SAT` | clamp to the largest representable magnitude |
 | `sat_zero` | `AP_SAT_ZERO` | replace with zero |
@@ -457,8 +468,14 @@ Function-level inlining is driven by the `inline` keyword, not an attribute: a h
 
 ### `tapa::hls` sub-namespace
 
-`tapa::hls::stream<T>` is a stream type that behaves like `hls::stream<T>` in software simulation: it has effectively infinite depth, so producers never block in simulation. Use it when incrementally migrating a Vitis HLS design and you want software simulation to pass without tuning stream depths. `#include <tapa.h>` includes this automatically.
+`tapa::hls::stream<T, N>` is an alias for
+`tapa::stream<T, N, kStreamInfiniteDepth>`. Its hardware FIFO depth is `N`
+(default 2), but its software-simulation depth is effectively infinite. It is
+useful when migrating leaf-local Vitis dataflow code because producers do not
+block on a full software queue. `#include <tapa.h>` includes the alias.
 
-```admonish note
-`tapa::hls::stream` synthesizes to the same RTL FIFO as `tapa::stream<T, N>` with the declared depth `N`. The infinite depth only applies to software simulation. The practical reason to replace it before hardware build is that software simulation with `tapa::hls::stream` will not expose backpressure bugs — switching to `tapa::istream<T>&` / `tapa::ostream<T>&` with a tuned depth catches those bugs at simulation time rather than on hardware.
-```
+This alias does not change TAPA task-port rules: a task boundary still uses
+`tapa::istream<T>&` or `tapa::ostream<T>&`, not `stream` or `tapa::hls::stream`.
+It is not necessary to replace leaf-local uses before synthesis, but switching
+to `tapa::stream<T, N>` during debugging enforces the hardware depth in
+software simulation and can expose backpressure bugs.

@@ -50,7 +50,8 @@ int main(int argc, char* argv[]) {
 | `FLAGS_bitstream` value | Backend |
 |-------------------------|---------|
 | *(empty)* | Software simulation |
-| `kernel.xo` | Fast cosimulation |
+| `kernel.xo` or `kernel.zip` | Fast cosimulation |
+| `kernel.hw_emu.xclbin` | Vitis hardware emulation |
 | `kernel.hw.xclbin` | On-board execution |
 
 ---
@@ -89,9 +90,10 @@ Stream depth and FPGA resource:
 
 | Depth | Resource |
 |-------|----------|
-| < 128 | SRL shift-register (no BRAM) |
+| 1 | One-element fall-through register |
+| 1 < depth < 128 | SRL shift-register (no BRAM) |
 | ≥ 128 | BRAM |
-| ≥ 4096 and element width ≥ 36 b | URAM |
+| ≥ 4096 and element width ≥ 36 b | URAM (takes precedence over BRAM) |
 
 ---
 
@@ -108,7 +110,7 @@ for (int i = 0; i < n; ++i) out[i] = in[i];
 
 // async_mmap — overlapping reads (two-counter loop)
 [[tapa::pipeline(1)]] for (int64_t i_req = 0, i_resp = 0; i_resp < n;) {
-  if (i_req < n) mem.read_addr.try_write(i_req++);
+  if (i_req < n && mem.read_addr.try_write(i_req)) ++i_req;
   T val;
   if (mem.read_data.try_read(val)) result[i_resp++] = val;
 }
