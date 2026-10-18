@@ -17,11 +17,11 @@ struct task {
   task& invoke(Func&& func, Args&&... args);
 
   // Invoke func with an explicit mode (tapa::join or tapa::detach).
-  template <internal::InvokeMode mode, typename Func, typename... Args>
+  template <auto mode, typename Func, typename... Args>
   task& invoke(Func&& func, Args&&... args);
 
   // Invoke func N times with the given mode.
-  template <internal::InvokeMode mode, int N, typename Func, typename... Args>
+  template <auto mode, int N, typename Func, typename... Args>
   task& invoke(Func&& func, Args&&... args);
 };
 ```
@@ -231,7 +231,7 @@ tapa::invoke(MyKernel, bitstream, tapa::read_only_mmap<float>(buf), n);
 
 | Channel | Type | Direction | Description |
 |---------|------|-----------|-------------|
-| `read_addr` | `ostream<int64_t>` | kernel → memory | Write an element index to request a read. The framework converts the index to a byte offset internally. |
+| `read_addr` | `ostream<int64_t>` | kernel → memory | Write an element index (not a byte address) to request a read. |
 | `read_data` | `istream<T>` | memory → kernel | Read the data returned by a previously issued read request. |
 | `write_addr` | `ostream<int64_t>` | kernel → memory | Write an element index to request a write. |
 | `write_data` | `ostream<T>` | kernel → memory | Write the data to be written at the requested address. |
@@ -279,15 +279,16 @@ struct vec_t {
 
 Related free functions: `truncated<begin, end>(vec)`, `cat(v1, v2)`, `make_vec<N>(val)`.
 
-Scalar compound assignments evaluate the scalar once, before any element is
-updated. `shift(val)` discards the first element and appends the original value
-of `val`. Both operations accept a scalar that refers into the vector's own
-storage — an element, or a slice or bit of one — and use its value as read
-before the first write.
+Scalar compound assignments evaluate the scalar once before updating any
+element, including when the scalar refers to the same vector. `shift(val)`
+discards the first element and appends the value of `val` captured before the
+shift.
 
 ### `tapa::u<W>` / `tapa::i<W>`
 
-Vendor-agnostic arbitrary-width integers: `tapa::u<32>` is a 32-bit unsigned value, `tapa::i<32>` a 32-bit signed one. In software simulation they are self-implemented (no vendor headers needed); on the Xilinx HLS target they alias `ap_uint<W>`/`ap_int<W>`.
+Portable arbitrary-width integers: `tapa::u<32>` is a 32-bit unsigned value
+and `tapa::i<32>` a 32-bit signed one. Use the same types in software
+simulation and synthesis; no vendor header is needed on the host.
 
 ```cpp
 template <int W>
@@ -308,7 +309,11 @@ The full surface covers construction from builtins/floats, arithmetic and bitwis
 
 ### `tapa::fixed<W, I, Q, O, N>` / `tapa::ufixed<W, I, Q, O, N>`
 
-Vendor-agnostic fixed-point numbers, replacing `ap_fixed`/`ap_ufixed`. A value is a `W`-bit two's-complement integer scaled by `2^-(W - I)`: `I` bits above the binary point (the sign bit among them when signed), `W - I` below. Either count may exceed `W` or go negative. In software simulation they are self-implemented; on the Xilinx HLS target they alias the vendor types, because fixed-point arithmetic is something the HLS compiler implements natively.
+Portable fixed-point numbers, replacing `ap_fixed`/`ap_ufixed`. A value is a
+`W`-bit two's-complement integer scaled by `2^-(W - I)`: `I` bits above the
+binary point (including the sign bit for signed types), and `W - I` below.
+Either count may exceed `W` or go negative. The same types work in software
+simulation and synthesis.
 
 ```cpp
 template <int W, int I, q_mode Q = q_mode::trn, o_mode O = o_mode::wrap,
@@ -341,11 +346,17 @@ class ufixed;  // unsigned
 
 Arithmetic never quantizes: `+`, `-` and `*` widen so the result is exact, and the result type carries the *default* modes rather than the operands'. The raw pattern is the public member `V`, and `x(hi, lo)` / `x[i]` slice it, as on the vendor type.
 
-Two deliberate differences. `o_mode::wrap_sm` on an unsigned type is a compile error; the vendor rejects the same combination at run time. And comparison is transcribed from the vendor, which widens whichever side has the coarser fractional width and then compares the *raw* integers — so it inherits the integer conversion rules above rather than comparing exact values.
+Notable behavior: `o_mode::wrap_sm` on an unsigned type is a compile error.
+Comparisons follow TAPA's fixed-point conversion rules and can differ from a
+comparison of the exact real values.
 
 ### Intentional subset
 
-The portable types cover the surface the regression designs and typical kernels use. The vendor forms below are *not* implemented, so code that needs them fails to compile (loudly, never silently): `tapa::fixed` shift operators and its `&`/`|`/`^` against C integers, and the vendor's `to_string` hexfloat formatting for fixed-point. `tapa::u/i` additionally offer `x.to_string(base, sign)` and stream extraction (`in >> x`) matching the vendor's member forms.
+The portable types implement a commonly used subset. These vendor forms are
+not implemented and fail at compile time: `tapa::fixed` shift operators and
+its `&`/`|`/`^` against C integers, and the vendor's `to_string` hexfloat
+formatting for fixed-point. `tapa::u/i` additionally offer
+`x.to_string(base, sign)` and stream extraction (`in >> x`).
 
 ### `tapa::axis<T, WUser, WId, WDest>`
 
@@ -361,9 +372,10 @@ struct axis {
 };
 ```
 
-TDATA, TKEEP, TSTRB and TLAST are always present; TUSER, TID and TDEST are present exactly when their width is non-zero. Object size, alignment and every member offset match `ap_axiu`, which is what mmap element stride and stream element size depend on. A disabled signal still occupies its slot, so enabling one moves nothing.
-
-Unlike `tapa::u`/`tapa::i` this is one definition for every target rather than a vendor alias: its members are `tapa::u<W>`, which *is* `ap_uint<W>` when synthesizing. Reading or writing a signal the packet does not carry is inert, where the vendor throws; `operator==` and `operator<<` are additions the vendor packet has not.
+TDATA, TKEEP, TSTRB and TLAST are always present; TUSER, TID and TDEST are
+present exactly when their width is non-zero. The layout is compatible with
+`ap_axiu` for stream and mmap use. Accessing a disabled signal is inert.
+`operator==` and `operator<<` are also provided.
 
 The vendor's `EnableSignals` bit field, which turns TKEEP/TSTRB/TLAST off individually, has no portable form. `ap_axiu<W, U, I, D>` always has them.
 
@@ -371,7 +383,8 @@ The vendor's `EnableSignals` bit field, which turns TKEEP/TSTRB/TLAST off indivi
 
 Yields one clock cycle on synthesis targets (lowered to the vendor `ap_wait()`), or `n` cycles for the overload (`ap_wait_n(n)`). Both are no-ops in software simulation, where tasks run as coroutines without a clock. Use them in place of `ap_wait()` and `ap_wait_n()` to keep programs portable.
 
-The simulation no-op is contractual: call `tapa::wait()` bare, never inside `#ifdef __SYNTHESIS__` — the guard exists only for the vendor intrinsics, which the host headers deliberately do not declare.
+The simulation no-op is intentional: call `tapa::wait()` without a
+`__SYNTHESIS__` guard so the same source works in software and synthesis.
 
 ### `tapa::widthof<T>()`
 
@@ -459,7 +472,9 @@ pragma stays and `tapa analyze` reports it as a remark.
 ```
 
 ```admonish tip
-Function-level inlining is driven by the `inline` keyword, not an attribute: a helper marked `inline` gets `#pragma HLS inline` plus `__attribute__((always_inline))`, and one without it gets `inline off` plus `noinline`. Do not hand-write those pragmas.
+Function-level inlining is driven by the C++ `inline` keyword, not a TAPA
+attribute. Mark a helper `inline` to inline it; omit the keyword to prevent
+inlining. Do not hand-write HLS inline pragmas.
 ```
 
 ```admonish note
@@ -468,11 +483,10 @@ Function-level inlining is driven by the `inline` keyword, not an attribute: a h
 
 ### `tapa::hls` sub-namespace
 
-`tapa::hls::stream<T, N>` is an alias for
-`tapa::stream<T, N, kStreamInfiniteDepth>`. Its hardware FIFO depth is `N`
-(default 2), but its software-simulation depth is effectively infinite. It is
-useful when migrating leaf-local Vitis dataflow code because producers do not
-block on a full software queue. `#include <tapa.h>` includes the alias.
+`tapa::hls::stream<T, N>` has hardware FIFO depth `N` (default 2) but
+effectively infinite depth in software simulation. It is useful when
+migrating leaf-local Vitis dataflow code because producers do not block on a
+full software queue. `#include <tapa.h>` includes the alias.
 
 This alias does not change TAPA task-port rules: a task boundary still uses
 `tapa::istream<T>&` or `tapa::ostream<T>&`, not `stream` or `tapa::hls::stream`.

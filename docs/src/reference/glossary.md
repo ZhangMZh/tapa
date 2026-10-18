@@ -56,14 +56,17 @@ A sentinel value written to a stream to signal the end of a data sequence. The p
 
 TAPA's lightweight RTL cosimulation flow, distinct from Vitis hardware
 emulation. It is invoked by passing a `.xo` or `.zip` as the host executable's
-`--bitstream` argument. The Rust `libfrt` runtime prepares the simulation and
-launches xsim or Verilator without running Vitis implementation.
+`--bitstream` argument. The runtime launches xsim or Verilator without running
+Vitis implementation.
 
 ---
 
 **floorplan**
 
-The optional `tapa floorplan` step, run between `synth` and `pack`. It assigns tasks to SLRs on a multi-die device, balances resource usage across them, and inserts pipeline registers on the channels that cross SLR boundaries — trading a little latency for a shorter critical path. It writes `floorplan.xdc`, which `pack` picks up automatically. The partitioner solves a wire-crossing-minimizing ILP with the external `cbc` solver. This is the AutoBridge technique, now maintained as part of TAPA.
+The optional `tapa floorplan` step, run between `synth` and `pack`. It places
+tasks across SLRs, balances resource usage, and pipelines channels that cross
+SLR boundaries to improve timing. It writes `floorplan.xdc`, which `pack`
+applies automatically.
 
 ---
 

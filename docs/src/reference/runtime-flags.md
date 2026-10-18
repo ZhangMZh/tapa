@@ -17,12 +17,12 @@ is not a supported way to reconfigure execution.
 | `TAPA_STREAM_LOG_DIR` | (unset — logging disabled) | Existing directory for stream write logs. TAPA writes one file per named stream; unnamed streams are not logged. Useful for tracing data during software simulation. |
 | `TAPA_STREAM_LEFTOVER_LOG_COUNT` | `10` | Maximum number of leftover tokens printed for a nonempty stream when it is destroyed. Nonpositive values are invalid. |
 | `TAPA_STALL_WARN_SECONDS` | `10` | Warn when software simulation makes no successful stream progress for this many seconds, naming a blocked channel. Set `0` to disable. Suppressed while a kernel instance is running, since waiting on hardware or RTL is not a stall. |
-| `FRT_STREAM_DEBUG` | (unset) | When set, log every successful stream read and write in the DPI layer. Produces high-volume output; use only for targeted debugging. |
-| `FRT_COSIM_YIELD` | `1` (enabled) | When enabled, the DPI layer sleeps briefly on empty reads or full writes so other cosim processes can progress. Disable with `0` to busy-wait instead. |
+| `FRT_STREAM_DEBUG` | (unset) | Log every successful fast-cosim stream read and write. Produces high-volume output; use only for targeted debugging. |
+| `FRT_COSIM_YIELD` | `1` (enabled) | Yield CPU briefly on empty reads or full writes so other cosim processes can progress. Disable with `0` to busy-wait instead. |
 | `FRT_COSIM_TIMEOUT_SECONDS` | `0` (disabled) | Maximum wall-clock time for a fast-cosim simulator process. On expiry, TAPA terminates the simulator process group and reports a timeout. Set a positive integer to enable it. |
 | `FRT_XSIM_LEGACY` | `0` | Set to `1` to use the legacy xelab command-line format for older Vivado versions. |
 | `FRT_XOCL_BDF` | (unset) | PCIe Bus:Device:Function for XRT/OpenCL device selection. Equivalent to the `-xocl_bdf` gflag. |
-| `TAPA_HOME` | (unset) | TAPA installation prefix, e.g. `/opt/tapa`. Only needed as an override: cosim normally finds its DPI libraries through the library path `tapa g++` links into the host binary. `install.sh` sets it for you (`/etc/profile.d/tapa.sh` for a system-wide install, your shell profile otherwise). Set it by hand if you relocated the installation or copied a host binary to a machine without it. |
+| `TAPA_HOME` | (unset) | TAPA installation prefix used to locate runtime libraries. `install.sh` sets it automatically. Override it after relocating an installation or moving a host binary to a machine where the original path is unavailable. |
 
 ### Example: single-worker simulation
 

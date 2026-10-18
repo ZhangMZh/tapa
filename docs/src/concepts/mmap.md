@@ -112,10 +112,10 @@ suppresses the corresponding warnings.
 
 ## Shared mmap
 
-The same `mmap` argument can be passed to multiple child tasks. TAPA inserts
-an AXI interconnect so both tasks share the same AXI port. Here one buffer is
-split into regions by an `offset` argument, and two instances of the same leaf
-task read different regions of it:
+The same `mmap` argument can be passed to multiple child tasks. Give each
+task a disjoint region or add synchronization when sharing. Here one buffer
+is split into regions by an `offset` argument, and two instances of the same
+leaf task read different regions of it:
 
 ```cpp
 // Leaf task: reads the region starting at element n * offset.
