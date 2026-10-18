@@ -33,6 +33,40 @@
 
 namespace tapa {
 
+// The slice and bit proxies of the self-implemented integer layer
+// (base/int.h), forward-declared so their materialization overloads below
+// can precede vec_t. On targets that alias the vendor integers instead, the
+// declarations stay unused and never need a definition.
+template <int W, bool S>
+class range_ref;
+template <int W, bool S>
+class bit_ref;
+
+namespace internal {
+
+// A scalar operand of a vector compound assignment may be a proxy into the
+// vector's own storage: `v += v[0](7, 0)` passes a slice reference, and
+// copying it copies the reference, not the bits, so the elementwise loop
+// would read back its own writes. A proxy materializes here, into its
+// evaluated value, once and before the loop. Every other operand already
+// has value semantics and passes through unchanged, keeping its own width
+// in the elementwise expression (no cast to the vector's element type).
+template <typename T>
+inline const T& materialize(const T& value) {
+  return value;
+}
+template <int W, bool S>
+inline auto materialize(const range_ref<W, S>& proxy)
+    -> decltype(proxy.value()) {
+  return proxy.value();
+}
+template <int W, bool S>
+inline bool materialize(const bit_ref<W, S>& proxy) {
+  return static_cast<bool>(proxy);
+}
+
+}  // namespace internal
+
 template <typename T, int N>
 struct vec_t : protected std::array<T, N> {
  private:
@@ -117,7 +151,7 @@ struct vec_t : protected std::array<T, N> {
   template <typename T2>                                 \
   vec_t<T, N>& operator op##=(const T2 & rhs) {          \
     TAPA_VEC_INLINE;                                     \
-    const auto value = rhs;                              \
+    const auto value = internal::materialize(rhs);       \
     for (size_type i = 0; i < N; ++i) {                  \
       TAPA_VEC_UNROLL;                                   \
       set(i, get(i) op value);                           \

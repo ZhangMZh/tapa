@@ -1,5 +1,7 @@
 #include "tapa/host/vec.h"
 
+#include "tapa/base/int.h"
+
 #include <cmath>
 
 #include <sstream>
@@ -116,6 +118,105 @@ TEST(VecTest, ScalarCompoundAssignmentCapturesAnAliasedElement) {
     v += v[pos];
     EXPECT_TRUE(Equals(v, 1 + scalar, 2 + scalar, 3 + scalar, 4 + scalar));
   }
+}
+
+// A scalar operand that proxies the vector's own storage must be evaluated
+// once, before the loop writes any element: the loop's own writes (including
+// carries out of a partial slice, or a flipped bit) must not feed back into
+// later elements. Each expectation below is hand-computed against a snapshot
+// taken when the compound assignment is entered.
+TEST(VecTest, ScalarCompoundAssignmentCapturesAnAliasedRangeProxy) {
+  vec_t<u<8>, 4> v;
+  v.set(0, u<8>(1));
+  v.set(1, u<8>(2));
+  v.set(2, u<8>(3));
+  v.set(3, u<8>(4));
+
+  // The (7, 0) slice is all of element 0; iteration 0 doubles it, so a
+  // proxy that re-reads would keep adding the doubled value.
+  v += v[0](7, 0);
+  EXPECT_EQ(v[0], u<8>(2));
+  EXPECT_EQ(v[1], u<8>(3));
+  EXPECT_EQ(v[2], u<8>(4));
+  EXPECT_EQ(v[3], u<8>(5));
+}
+
+TEST(VecTest, ScalarCompoundAssignmentCapturesAnAliasedPartialSlice) {
+  vec_t<u<8>, 3> v;
+  v.set(0, u<8>(0xff));
+  v.set(1, u<8>(7));
+  v.set(2, u<8>(7));
+
+  // The (7, 4) slice of 0xff is 0xf; adding it to element 0 carries out of
+  // the slice (0xff + 0xf truncates to 0x0e, whose slice is 0x0), so a
+  // re-reading proxy would add 0 to the remaining elements.
+  v += v[0](7, 4);
+  EXPECT_EQ(v[0], u<8>(0x0e));
+  EXPECT_EQ(v[1], u<8>(7 + 0xf));
+  EXPECT_EQ(v[2], u<8>(7 + 0xf));
+}
+
+TEST(VecTest, ScalarCompoundAssignmentCapturesAnAliasedWideRangeProxy) {
+  vec_t<u<100>, 3> v;
+  u<100> seed(0);
+  seed.set_bit(70, true);  // above 64 bits, so the slice is not a uint64_t
+  seed.set_bit(2, true);
+  v.set(0, seed);
+  v.set(1, u<100>(1));
+  v.set(2, u<100>(1));
+
+  // The (99, 0) slice is the whole of element 0: 2^70 + 4.
+  v += v[0](99, 0);
+  u<100> elem0(0);
+  elem0.set_bit(71, true);
+  elem0.set_bit(3, true);  // 2 * (2^70 + 4) = 2^71 + 8
+  EXPECT_EQ(v[0], elem0);
+  EXPECT_EQ(v[1], u<100>(1) + seed);
+  EXPECT_EQ(v[2], u<100>(1) + seed);
+}
+
+TEST(VecTest, ScalarCompoundAssignmentCapturesARangeProxyOfALaterElement) {
+  vec_t<u<8>, 4> v;
+  v.set(0, u<8>(1));
+  v.set(1, u<8>(2));
+  v.set(2, u<8>(3));
+  v.set(3, u<8>(4));
+
+  // Element 2 is overwritten by iteration 2 itself; iterations 3 and up
+  // still need its original value.
+  v *= v[2](7, 0);
+  EXPECT_EQ(v[0], u<8>(3));
+  EXPECT_EQ(v[1], u<8>(6));
+  EXPECT_EQ(v[2], u<8>(9));
+  EXPECT_EQ(v[3], u<8>(12));
+}
+
+TEST(VecTest, ScalarCompoundAssignmentCapturesAnAliasedBitProxy) {
+  vec_t<u<8>, 4> v;
+  v.set(0, u<8>(0b1111));
+  v.set(1, u<8>(1));
+  v.set(2, u<8>(1));
+  v.set(3, u<8>(1));
+
+  // Bit 3 of 0b1111 is 1, but of 0b10000 (element 0 after the first add)
+  // is 0.
+  v += v[0][3];
+  EXPECT_EQ(v[0], u<8>(0b10000));
+  EXPECT_EQ(v[1], u<8>(2));
+  EXPECT_EQ(v[2], u<8>(2));
+  EXPECT_EQ(v[3], u<8>(2));
+}
+
+// The scalar keeps its own width: truncating it to the element type first
+// would divide by u<8>(300) = 44 and yield 5, not 0.
+TEST(VecTest, ScalarCompoundAssignmentKeepsTheScalarsOwnWidth) {
+  vec_t<u<8>, 2> v;
+  v.set(0, u<8>(250));
+  v.set(1, u<8>(100));
+
+  v /= 300;
+  EXPECT_EQ(v[0], u<8>(0));
+  EXPECT_EQ(v[1], u<8>(0));
 }
 
 TEST(VecTest, UnaryOperatorsApplyElementwise) {

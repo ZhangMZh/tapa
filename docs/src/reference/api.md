@@ -268,9 +268,11 @@ struct vec_t {
 
 Related free functions: `truncated<begin, end>(vec)`, `cat(v1, v2)`, `make_vec<N>(val)`.
 
-Scalar compound assignments capture the scalar before updating any element.
-`shift(val)` discards the first element and appends the original value of
-`val`. Both operations support a scalar that refers to an element of the vector.
+Scalar compound assignments evaluate the scalar once, before any element is
+updated. `shift(val)` discards the first element and appends the original value
+of `val`. Both operations accept a scalar that refers into the vector's own
+storage — an element, or a slice or bit of one — and use its value as read
+before the first write.
 
 ### `tapa::u<W>` / `tapa::i<W>`
 
