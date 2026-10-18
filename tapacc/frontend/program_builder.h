@@ -46,7 +46,11 @@ class TreeWriter;
 //      the TU that owns the definition); divergent sightings are an error
 //      printing both definitions, and a task defined at two distinct sites
 //      is an error printing both locations -- one mirror serves every TU,
-//      so a task must be defined in exactly one place;
+//      so a task must be defined in exactly one place. The sightings must
+//      also sight the same graph: the invokes of a shared upper definition
+//      must name the same callees in the same order in every TU, or the
+//      merge would silently union two different graphs (the rewritten
+//      upper body is a shell, so identical bytes cannot clear it);
 //   3. template specializations merge by mangled key; distinct
 //      instantiations are distinct tasks;
 //   4. an internal-linkage task (`static`, anonymous namespace) is a hard

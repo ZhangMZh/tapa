@@ -170,6 +170,16 @@ Run `tapa compile --help` for the full option list.
 
 ---
 
+## Task builds a different task graph in two translation units
+
+**Symptom:** `tapacc` reports `task 'X' builds a different task graph in two translation units: … invokes 'A' but … invokes 'B'; a task sighted in several translation units must build the same task graph in each`.
+
+**Cause:** A task definition shared by several translation units — usually in a header every input includes — invokes different tasks in each, typically because a macro each translation unit defines differently selects the invoked task. The merged program keeps exactly one graph per task, so both variants cannot be honored; an identical shared definition is required, not just an identical signature.
+
+**Fix:** Make the shared definition build the same graph wherever it is sighted: define the selecting macro to the same value before the header is included in every translation unit, or hoist the selection out of the shared body — give each variant its own task and choose between them at the parent's invoke site.
+
+---
+
 ## Task with internal linkage
 
 **Symptom:** `tapacc` reports that a task `has internal linkage (static or anonymous namespace); tasks must have external linkage`, or that a function `builds a tapa::task() but is not an externally linked global function (static, anonymous namespace, or a member function), so it can never be a task`.

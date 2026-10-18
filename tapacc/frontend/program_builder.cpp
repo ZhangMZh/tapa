@@ -400,24 +400,64 @@ const ProgramBuilder::DefSighting& ProgramBuilder::FirstSighting(
 bool ProgramBuilder::MergeAndDiscover() {
   // Rule 2: one key, one task. Sighted definitions must agree on
   // level/target/readable_name/signature; anything else is two different
-  // functions wearing one identity.
+  // functions wearing one identity. They must also sight the same graph:
+  // invoke edges are recorded per sighting, and a shared upper definition
+  // whose invokes are macro-selected per TU has identical facts on both
+  // sightings -- and identical rewritten bytes, the upper body being a
+  // shell -- so only comparing the sighted invoke structure keeps the
+  // merge from silently unioning two different graphs.
+  auto sighted_invokes = [this](const DefSighting& sighting) {
+    std::vector<const InvokeEdge*> invokes;
+    for (auto [it, end] = edges_.equal_range(sighting.key); it != end; ++it) {
+      if (it->second.tu == sighting.tu) invokes.push_back(&it->second);
+    }
+    return invokes;
+  };
+  auto invoke_list = [](const std::vector<const InvokeEdge*>& invokes) {
+    if (invokes.empty()) return std::string("no tasks");
+    std::string list;
+    for (const InvokeEdge* invoke : invokes) {
+      if (!list.empty()) list += ", ";
+      list += "'" + invoke->callee_name + "'";
+    }
+    return list;
+  };
   for (const auto& [key, sightings] : defs_) {
     for (size_t i = 1; i < sightings.size(); ++i) {
       const DefSighting& first = sightings.front();
       const DefSighting& other = sightings[i];
-      if (first.level == other.level && first.target == other.target &&
-          first.readable_name == other.readable_name &&
-          first.signature == other.signature) {
-        continue;
+      if (first.level != other.level || first.target != other.target ||
+          first.readable_name != other.readable_name ||
+          first.signature != other.signature) {
+        Fail("task '" + first.name +
+             "' is defined differently in two "
+             "translation units: " +
+             other.loc + " (" + tu_files_[other.tu] + ") and " + first.loc +
+             " (" + tu_files_[first.tu] +
+             "); a task sighted in several translation "
+             "units must be identical in each");
+        return false;
       }
-      Fail("task '" + first.name +
-           "' is defined differently in two "
-           "translation units: " +
-           other.loc + " (" + tu_files_[other.tu] + ") and " + first.loc +
-           " (" + tu_files_[first.tu] +
-           "); a task sighted in several translation "
-           "units must be identical in each");
-      return false;
+      const std::vector<const InvokeEdge*> first_invokes =
+          sighted_invokes(first);
+      const std::vector<const InvokeEdge*> other_invokes =
+          sighted_invokes(other);
+      bool same_graph = first_invokes.size() == other_invokes.size();
+      for (size_t e = 0; same_graph && e < first_invokes.size(); ++e) {
+        same_graph =
+            first_invokes[e]->callee_key == other_invokes[e]->callee_key;
+      }
+      if (!same_graph) {
+        Fail("task '" + first.name +
+             "' builds a different task graph in two "
+             "translation units: " +
+             other.loc + " (" + tu_files_[other.tu] + ") invokes " +
+             invoke_list(other_invokes) + " but " + first.loc + " (" +
+             tu_files_[first.tu] + ") invokes " + invoke_list(first_invokes) +
+             "; a task sighted in several translation "
+             "units must build the same task graph in each");
+        return false;
+      }
     }
   }
 

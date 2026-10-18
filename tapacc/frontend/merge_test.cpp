@@ -201,6 +201,63 @@ TEST(Merge, SecondDefinitionSiteIsAnError) {
   EXPECT_TRUE(Contains(error, "/proj/b.cpp"));
 }
 
+// ── Rule 2, graph half: sightings must agree on the invoke structure ──
+
+// One shared upper definition whose invoke a per-TU macro selects: site,
+// level, target, name, and signature agree on both sightings, and the
+// rewritten upper body is a shell, so neither the fact comparison nor the
+// tree byte tripwire can see that TU A's Shared invokes ConsumeA while TU
+// B's invokes ConsumeB. Only comparing the sighted invoke structure
+// rejects it before the merge unions the two graphs.
+constexpr char kConsumerHeader[] = R"cpp(
+  void ConsumeA(tapa::istream<float>& in);
+  void ConsumeB(tapa::istream<float>& in);
+  void Shared(tapa::istream<float>& in) { tapa::task().invoke(CONSUMER, in); }
+)cpp";
+
+// TU A selects and defines ConsumeA and owns the top; TU B's only degree
+// of freedom is which consumer the macro names.
+constexpr char kConsumerTuA[] = R"cpp(
+#define CONSUMER ConsumeA
+#include "shared.h"
+  void ConsumeA(tapa::istream<float>& in) {}
+  void Top(tapa::istream<float>& x) { tapa::task().invoke(Shared, x); }
+)cpp";
+
+TreePipelineRun RunConsumerTus(const std::string& name,
+                               const std::string& tu_b) {
+  return test_support::RunTreePipeline(
+      {VirtualTu{"/proj/a.cpp", kConsumerTuA}, VirtualTu{"/proj/b.cpp", tu_b}},
+      "Top", TempRoot(name), {"-std=c++17", "-I/proj"},
+      {{"/proj/shared.h", kConsumerHeader}});
+}
+
+TEST(Merge, DivergentSharedUpperInvokeIsAnError) {
+  const TreePipelineRun m =
+      RunConsumerTus("divergent_graph",
+                     "#define CONSUMER ConsumeB\n"
+                     "#include \"shared.h\"\n"
+                     "void ConsumeB(tapa::istream<float>& in) {}\n");
+  EXPECT_FALSE(m.ok);
+  const std::string error = OneError(m.builder);
+  EXPECT_TRUE(Contains(error, "'Shared' builds a different task graph"));
+  EXPECT_TRUE(Contains(error, "'ConsumeA'"));
+  EXPECT_TRUE(Contains(error, "'ConsumeB'"));
+  EXPECT_TRUE(Contains(error, "/proj/a.cpp"));
+  EXPECT_TRUE(Contains(error, "/proj/b.cpp"));
+}
+
+TEST(Merge, IdenticalSharedUpperInvokesMerge) {
+  // The control: both TUs select the same invoke, so the two sightings of
+  // Shared agree on the graph and merge into one task.
+  const TreePipelineRun m = RunConsumerTus(
+      "identical_graph", "#define CONSUMER ConsumeA\n#include \"shared.h\"\n");
+  EXPECT_TRUE(m.ok) << (m.diags.empty() ? "" : m.diags.front());
+  EXPECT_TRUE(m.builder.errors().empty());
+  EXPECT_EQ(nlohmann::json::parse(m.json)["tasks"].size(), 3u)
+      << "Top, Shared, ConsumeA";
+}
+
 // ── Rule 3: template specializations merge by mangled key ──────────────
 
 constexpr char kTemplate[] = R"cpp(
