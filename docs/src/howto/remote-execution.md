@@ -2,7 +2,9 @@
 
 **Purpose:** Offload TAPA vendor-tool steps to a remote Linux machine over SSH.
 
-**When to use this:** When your development machine is macOS (where Xilinx/AMD tools are unavailable) or when you want to delegate long-running HLS synthesis and implementation steps to a dedicated Linux build server.
+**When to use this:** When your development machine lacks Xilinx/AMD tools
+or when you want to delegate long-running synthesis and implementation to a
+dedicated Linux build server. The local machine must still run `tapacc`.
 
 ## What you need
 
@@ -11,7 +13,8 @@
   minimal remote (for example a fresh container) fails with
   `'features.h' file not found` without it
 - The path to `settings64.sh` on the remote machine
-- TAPA installed locally (the `tapa analyze` step always runs locally)
+- TAPA installed locally, including a working `tapacc` (analysis always runs
+  locally)
 
 ## How remote execution works
 
@@ -22,21 +25,23 @@ TAPA splits work between local and remote:
 | `tapa analyze` (runs `tapacc`) | Always local |
 | `tapa synth` (Vitis HLS synthesis) | Remote when `--remote-host` is set |
 | `tapa floorplan` with `--run-impl` or `--dse` (`v++ --link`) | Remote when `--remote-host` is set |
-| `tapa pack` (IP packaging) | Remote when `--remote-host` is set |
-| File transfer (`.xo`, `.zip` artifacts) | Handled automatically by TAPA |
+| `tapa pack` for `xilinx-vitis` (XO packaging) | Remote when `--remote-host` is set |
+| `tapa pack` for `xilinx-hls` (ZIP assembly) | Always local |
+| Remote job inputs and outputs | Transferred automatically by TAPA |
 
 Planning-only `tapa floorplan` (no `--run-impl`, no `--dse`) needs no vendor tool and always runs locally, using the local `cbc` solver.
 
 Each remote `synth` job uploads exactly what it compiles: the task's rewritten source files, their directories, and every include directory named in its cflags — in practice the work directory's `rewritten/` tree. Nothing has to be staged on the remote host by hand.
 
 ```admonish warning
-Remote execution applies to the **`tapa` compiler only**. The host executable
-you build with `tapa g++` always runs locally — software simulation, fast
-cosimulation, and on-board execution all happen on the machine you launch it
-from. There is no `--remote-host` equivalent for the runtime, so the machine
-running `./vadd --bitstream=vadd.xo` needs its own Vivado (for `xsim`) or
-Verilator installation. Copy the `.xo` back and simulate locally, or run the
-host binary over SSH yourself.
+Remote execution applies to the **`tapa` compiler only**. TAPA does not
+relocate the host executable built with `tapa g++`: software simulation, fast
+cosimulation, hardware emulation, and on-board execution run wherever you
+launch that executable. There is no runtime equivalent of `--remote-host`.
+For fast cosimulation with xsim, that machine needs Vivado; with Verilator,
+it needs Verilator. Hardware emulation and on-board execution need XRT and
+the appropriate platform or board. Run the host over SSH yourself if those
+resources are on the build server.
 ```
 
 ## Commands
@@ -101,8 +106,8 @@ The master connection stays alive for 4 hours after the last client closes. Subs
 
 | Flag | Description |
 |------|-------------|
-| `--remote-host user@host[:port]` | Remote Linux host for vendor tools. Omit user to use the current local username; omit port to use 22. |
-| `--remote-key-file PATH` | SSH private key for authentication. Defaults to the SSH agent or `~/.ssh/id_rsa`. |
+| `--remote-host user@host[:port]` | Remote Linux host for vendor tools. Overrides the configured host and any user/port explicitly included. Omitted fields come from `~/.taparc`, or default to the current username and port 22 without a config. |
+| `--remote-key-file PATH` | SSH private key for authentication. If omitted, OpenSSH uses its normal agent, config, and default identity files. |
 | `--remote-xilinx-settings PATH` | Path to `settings64.sh` **on the remote host**. TAPA sources this before invoking Vitis HLS. |
 | `--remote-ssh-control-dir DIR` | Local directory for OpenSSH multiplex control sockets. Share across invocations to reuse the master connection. |
 | `--remote-ssh-control-persist DURATION` | How long the master socket stays alive after the last connection closes (e.g., `30m`, `4h`). Default: `30m`. |
@@ -125,17 +130,19 @@ remote:
   ssh_multiplex: true
 ```
 
-CLI flags always override the corresponding `~/.taparc` values. In particular, `--remote-host` replaces the `host`, `user`, and `port` fields from the config file.
+CLI flags override the corresponding `~/.taparc` values. `--remote-host`
+replaces `host` and also replaces `user` and `port` only when they are present
+in the command-line value; omitted fields retain the config values.
 
 ## Validation
 
-After a successful remote compile, the `.xo` artifact is automatically transferred back to your local machine. Check for it:
+After a successful compile, the requested artifact is available at the local
+`-o` path. A Vitis XO packaged on the remote host is transferred back
+automatically. Check it with:
 
 ```bash
 ls -lh vadd.xo
 ```
-
-TAPA prints transfer progress and the remote Vitis HLS log to standard output during the run.
 
 ## If something goes wrong
 
@@ -146,5 +153,8 @@ TAPA prints transfer progress and the remote Vitis HLS log to standard output du
 
 **ControlMaster errors**: If the remote host or an intermediary proxy does not support SSH multiplexing, add `--remote-disable-ssh-mux` to your invocation.
 
-**Port conflicts with `~/.taparc`**: If you omit the port in `--remote-host`, TAPA defaults to port 22 — it does **not** fall back to the `port` field from `~/.taparc`. Always include the port explicitly (e.g., `user@host:2222`) when the remote host listens on a non-standard port.
+**Unexpected user or port**: `--remote-host` replaces only the fields you
+specify. For example, `--remote-host alice@build.example` retains `port` from
+`~/.taparc`; without a configured port it defaults to 22. Include
+`user@host:port` explicitly when you want to override both user and port.
 ```
