@@ -13,7 +13,7 @@ diagnose failures, parallelize synthesis, and use remote execution correctly.
 
 Compiling a TAPA design involves three distinct concerns: parsing C++ and
 extracting the task graph, synthesizing each task to RTL with Vitis HLS, and
-packaging the RTL into an `.xo` file for Vitis. Separating these stages lets
+packaging the RTL into an `.xo` or `.zip` artifact. Separating these stages lets
 you re-run only the parts that changed, run synthesis on a remote machine with
 Xilinx tools, and parallelize synthesis across tasks.
 

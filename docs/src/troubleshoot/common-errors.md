@@ -124,7 +124,9 @@ void TopLevel(int n, tapa::mmap<int> mem) {
 
 **Symptom:** Compile error or incorrect behavior when defining or passing arrays of streams.
 
-**Cause:** `tapa::stream<T> arr[N]` is not copyable or movable in the way TAPA expects. Arrays of streams must use the dedicated `tapa::streams<T, N>` type.
+**Cause:** A raw `tapa::stream<T> arr[N]` does not provide TAPA's stream-array
+access and distribution machinery. Use the dedicated `tapa::streams<T, N>`
+type when passing indexed stream arrays to task invocations.
 
 **Fix:** Use `tapa::streams<T, N>` for stream arrays, and use `.invoke` with a count to distribute elements rather than indexing manually.
 

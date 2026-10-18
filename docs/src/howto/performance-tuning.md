@@ -81,7 +81,7 @@ If these files are missing, synthesis either did not run or exited before the re
 
 TAPA needs a resource estimate for each task to balance the design across SLRs during floorplanning and to report utilization. There are two sources, in order of increasing accuracy:
 
-- **HLS estimates (always available).** After Vitis HLS synthesizes a task, TAPA reads its synthesis report for LUT, FF, BRAM, DSP, and URAM counts. These come "for free" with every `tapa synth` run, but **HLS estimates are coarse and frequently inaccurate** — they tend to undercount control and interconnect logic. Treat them as a rough guide, not a placement-quality number.
+- **HLS estimates (available for each HLS-synthesized task).** After Vitis HLS synthesizes a task, TAPA reads its synthesis report for LUT, FF, BRAM, DSP, and URAM counts. These come "for free" with every `tapa synth` run, but **HLS estimates are coarse and frequently inaccurate** — they tend to undercount control and interconnect logic. Treat them as a rough guide, not a placement-quality number.
 
 - **Post-RTL-synthesis estimates (with `--enable-synth-util`).** This runs an additional out-of-context Vivado synthesis pass per task on the generated RTL, producing materially more accurate resource counts. **Prefer this whenever the estimates matter** — i.e. before floorplanning a tight design or when interpreting the utilization report. It costs one extra Vivado synth per task.
 

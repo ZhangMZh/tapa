@@ -1,7 +1,7 @@
 # Parallel RTL Emulation
 
 **Purpose:** Simulate separately compiled kernel RTL concurrently while using
-software-model queues between the kernels.
+software-modeled queues between the kernels.
 
 Each kernel's own RTL is simulated cycle by cycle, which can expose pipeline
 and handshake bugs that software simulation misses. The complete system is
