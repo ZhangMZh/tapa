@@ -431,6 +431,59 @@ TEST(Rewrite, ForwardDeclaredHelperGetsOneStreamPragma) {
   EXPECT_EQ(count, 1u) << code;
 }
 
+// Declaration-only TUs close the wrapper at the semicolon, without
+// consuming either an adjacent declaration or a following blank line.
+TEST(Rewrite, VitisDeclarationOnlyTuClosesExternCAtSemicolon) {
+  const TreePipelineRun run = test_support::RunTreePipeline(
+      {VirtualTu{"/proj/src/def.cpp",
+                 "[[tapa::target(\"xilinx_vitis\")]]\n"
+                 "void Top(tapa::mmap<const float> mem) { tapa::task(); }\n"},
+       VirtualTu{"/proj/src/adjacent.cpp",
+                 "void Top(tapa::mmap<const float> mem);\n"
+                 "int Next();\n"},
+       VirtualTu{"/proj/src/blank.cpp",
+                 "void Top(tapa::mmap<const float> mem);\n\n"
+                 "int Next();\n"}},
+      "Top", TempRoot("decl_only_extern_c"), {"-std=c++17"});
+  ASSERT_TRUE(run.ok) << (run.diags.empty() ? run.json : run.diags.front());
+  const auto suffix = [](const std::string& code) {
+    const size_t begin = code.find("extern \"C\" {");
+    EXPECT_NE(begin, std::string::npos) << code;
+    return begin == std::string::npos ? std::string() : code.substr(begin);
+  };
+  EXPECT_EQ(suffix(run.files.at("adjacent.cpp")),
+            R"tapa(extern "C" {
+
+
+#line 70 "/proj/src/adjacent.cpp"
+void Top(uint64_t mem_offset);
+#line 70 "tapa:/proj/src/adjacent.cpp"
+
+
+}  // extern "C"
+
+
+#line 71 "/proj/src/adjacent.cpp"
+int Next();
+)tapa");
+  EXPECT_EQ(suffix(run.files.at("blank.cpp")),
+            R"tapa(extern "C" {
+
+
+#line 70 "/proj/src/blank.cpp"
+void Top(uint64_t mem_offset);
+#line 70 "tapa:/proj/src/blank.cpp"
+
+
+}  // extern "C"
+
+
+#line 71 "/proj/src/blank.cpp"
+
+int Next();
+)tapa");
+}
+
 // `[[tapa::target]]` also survives into the mirror, and is the one spelling
 // that should: it picks the backend, which discovery has already acted on,
 // so there is nothing left to lower and nothing lost. It must sit inside

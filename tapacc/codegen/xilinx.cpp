@@ -288,14 +288,13 @@ void XilinxBackend::RewriteSignature(const TaskModel& task, bool is_top,
 
 void XilinxBackend::WrapTaskDeclExternC(const clang::FunctionDecl* decl,
                                         EditSink& edits) const {
-  clang::SourceLocation end = decl->getEndLoc();
-  // Insert after the declaration's trailing semicolon.
-  const clang::SourceLocation after = clang::Lexer::findLocationAfterToken(
-      end, clang::tok::semi, edits.getSourceMgr(), edits.getLangOpts(),
-      /*SkipTrailingWhitespaceAndNewLine=*/true);
-  if (after.isValid()) end = after;
+  // Anchor at the first character after the declaration's semicolon. Using
+  // that character as a token anchor could consume the next declaration.
+  const clang::SourceLocation after_semi = clang::Lexer::findLocationAfterToken(
+      decl->getEndLoc(), clang::tok::semi, edits.getSourceMgr(),
+      edits.getLangOpts(), /*SkipTrailingWhitespaceAndNewLine=*/false);
   edits.InsertTextAfter(decl->getBeginLoc(), "extern \"C\" {\n\n");
-  edits.InsertTextAfterToken(end, "\n\n}  // extern \"C\"\n");
+  edits.InsertTextBefore(after_semi, "\n\n}  // extern \"C\"\n");
   RemoveInline(decl, edits);
 }
 
