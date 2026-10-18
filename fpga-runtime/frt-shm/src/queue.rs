@@ -98,6 +98,8 @@ impl SharedMemoryQueue {
 
     pub fn head_tail(&self) -> (u64, u64) {
         let h = self.hdr();
+        // Read head first: concurrent progress cannot produce a snapshot
+        // whose head is newer than its tail when both counters only increase.
         (
             h.head.load(Ordering::Acquire),
             h.tail.load(Ordering::Acquire),
@@ -110,8 +112,8 @@ impl SharedMemoryQueue {
     }
 
     pub fn is_full(&self) -> bool {
-        let h = self.hdr();
-        h.tail.load(Ordering::Acquire) - h.head.load(Ordering::Acquire) >= self.layout.depth
+        let (head, tail) = self.head_tail();
+        tail - head >= self.layout.depth
     }
 
     pub fn try_push(&mut self, data: &[u8]) -> Result<(), &'static str> {
@@ -333,6 +335,59 @@ mod tests {
         assert_eq!(q.hdr().version, 1);
         let reopened = SharedMemoryQueue::open(q.path().to_str().expect("utf8")).expect("open");
         assert_eq!(reopened.hdr().version, 1);
+    }
+
+    #[test]
+    fn concurrent_full_probe_tolerates_queue_progress() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Barrier};
+
+        let q = SharedMemoryQueue::create("test_q_concurrent_full", 1, 1).expect("create");
+        let path = q.path().to_str().expect("utf8").to_owned();
+        let mut producer = SharedMemoryQueue::open(&path).expect("open producer");
+        let mut consumer = SharedMemoryQueue::open(&path).expect("open consumer");
+        let observer = SharedMemoryQueue::open(&path).expect("open observer");
+        let barrier = Arc::new(Barrier::new(4));
+        let done = Arc::new(AtomicBool::new(false));
+
+        std::thread::scope(|scope| {
+            let producer_barrier = Arc::clone(&barrier);
+            let producer_done = Arc::clone(&done);
+            scope.spawn(move || {
+                producer_barrier.wait();
+                for _ in 0..20_000 {
+                    let pending = [1];
+                    loop {
+                        match producer.try_push(&pending) {
+                            Ok(()) => break,
+                            Err("queue full") => std::thread::yield_now(),
+                            Err(error) => panic!("push failed: {error}"),
+                        }
+                    }
+                }
+                producer_done.store(true, Ordering::Release);
+            });
+
+            let consumer_barrier = Arc::clone(&barrier);
+            scope.spawn(move || {
+                consumer_barrier.wait();
+                let mut got = [0u8; 1];
+                for _ in 0..20_000 {
+                    while !consumer.pop_into(&mut got) {
+                        std::thread::yield_now();
+                    }
+                }
+            });
+
+            let observer_barrier = Arc::clone(&barrier);
+            scope.spawn(move || {
+                observer_barrier.wait();
+                while !done.load(Ordering::Acquire) {
+                    let _ = observer.is_full();
+                }
+            });
+            barrier.wait();
+        });
     }
 
     #[test]
