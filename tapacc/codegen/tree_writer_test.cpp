@@ -60,10 +60,12 @@ std::map<std::string, std::string> ReadTree(const std::string& root) {
           const std::string name = entry->d_name;
           if (name == "." || name == "..") continue;
           const std::string path = dir + "/" + name;
+          const std::string relative = prefix + name;
+          if (relative == ".tapa-tree-manifest") continue;
           if (entry->d_type == DT_DIR) {
-            walk(prefix + name + "/", path);
+            walk(relative + "/", path);
           } else {
-            files[prefix + name] = ReadFile(path);
+            files[relative] = ReadFile(path);
           }
         }
         closedir(stream);
@@ -555,23 +557,56 @@ TEST(TreeWriter, UnchangedBytesAreNotRewritten) {
             "#include <syshdr.h>\nint main() { return kept() + moved(); }\n");
 }
 
-// A reused out_root cannot keep files an earlier run wrote: the mirror is
-// exactly this run's closure, stale sources and emptied buckets included.
-TEST(TreeWriter, StaleFilesFromAnEarlierRunArePruned) {
+// A reused out_root prunes only files owned by TAPA's earlier mirror. An
+// arbitrary existing directory and files added outside TAPA stay intact.
+TEST(TreeWriter, OnlyOwnedStaleFilesArePruned) {
   const std::string root = TempRoot("prune");
-  ASSERT_TRUE(RunComposition(root).ok);
   {
     std::error_code ec;
-    llvm::sys::fs::create_directories(root + "/_external/deadbeef");
-    llvm::raw_fd_ostream(root + "/gone.cpp", ec) << "stale\n";
-    llvm::raw_fd_ostream(root + "/_external/deadbeef/old.h", ec) << "stale\n";
+    llvm::raw_fd_ostream(root + "/user.txt", ec) << "keep me\n";
     ASSERT_FALSE(ec) << ec.message();
   }
   ASSERT_TRUE(RunComposition(root).ok);
+  EXPECT_EQ(ReadFile(root + "/user.txt"), "keep me\n");
+
+  // This looks like a stale mirror file, but TAPA did not write it.
+  {
+    std::error_code ec;
+    llvm::raw_fd_ostream(root + "/gone.cpp", ec) << "user-owned\n";
+    ASSERT_FALSE(ec) << ec.message();
+  }
+
+  // Render a later, smaller mirror: keep.h and the external header are now
+  // stale files from the first run, while user.txt and gone.cpp are not.
+  TreeWriter writer(root, {"/w/src/main.cpp"});
+  bool parsed = false;
+  ParseInto(&writer, "int main() { return 0; }\n", "/w/src/main.cpp",
+            {"-std=c++17"}, /*virtual_files=*/{}, &parsed);
+  ASSERT_TRUE(parsed);
+  std::string error;
+  ASSERT_TRUE(writer.Write(&error)) << error;
+
   const std::map<std::string, std::string> files = ReadTree(root);
-  EXPECT_EQ(files.size(), 3u) << "main + keep.h + one bucketed header";
-  EXPECT_EQ(files.find("gone.cpp"), files.end());
-  EXPECT_EQ(files.find("_external"), files.end());
+  EXPECT_EQ(files.at("main.cpp"), "int main() { return 0; }\n");
+  EXPECT_EQ(files.at("user.txt"), "keep me\n");
+  EXPECT_EQ(files.at("gone.cpp"), "user-owned\n");
+  EXPECT_EQ(files.find("keep.h"), files.end());
+  EXPECT_EQ(files.find("_external/4dc19a3d/move.h"), files.end());
+}
+
+TEST(TreeWriter, UnownedOutputCollisionIsRejected) {
+  const std::string root = TempRoot("collision");
+  {
+    std::error_code ec;
+    llvm::raw_fd_ostream(root + "/main.cpp", ec) << "user-owned\n";
+    ASSERT_FALSE(ec) << ec.message();
+  }
+  const RunResult run = RunComposition(root);
+  EXPECT_FALSE(run.ok);
+  EXPECT_NE(run.error.find("unowned"), std::string::npos) << run.error;
+  EXPECT_EQ(ReadFile(root + "/main.cpp"), "user-owned\n");
+  // Preflight rejects the collision before another output is written.
+  EXPECT_EQ(ReadTree(root).count("keep.h"), 0u);
 }
 
 // ── (f) determinism ───────────────────────────────────────────────────────

@@ -36,10 +36,12 @@ std::map<std::string, std::string> ReadTree(const std::string& root) {
           const std::string name = entry->d_name;
           if (name == "." || name == "..") continue;
           const std::string path = dir + "/" + name;
+          const std::string relative = prefix + name;
+          if (relative == ".tapa-tree-manifest") continue;
           if (entry->d_type == DT_DIR) {
-            walk(prefix + name + "/", path);
+            walk(relative + "/", path);
           } else {
-            files[prefix + name] = ReadFile(path);
+            files[relative] = ReadFile(path);
           }
         }
         closedir(stream);

@@ -252,7 +252,9 @@ class TreeWriter {
   std::vector<std::string> ExternalBuckets() const;
 
   // Checks the layout for key collisions and writes every rendered file
-  // under out_root, creating directories as needed.
+  // under out_root, creating directories as needed. The output directory may
+  // contain unrelated files: .tapa-tree-manifest records TAPA's own files so
+  // reuse prunes only those files, and an unowned destination is an error.
   bool Write(std::string* error);
 
  private:

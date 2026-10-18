@@ -510,14 +510,63 @@ std::vector<std::string> TreeWriter::ExternalBuckets() const {
   return {buckets.begin(), buckets.end()};
 }
 
-// Post-order prune of one directory: unregistered files are removed, and
-// a directory left empty by that pruning goes with them (an orphaned
-// `_external` bucket, a source subtree that no longer exists). rmdir's
-// not-empty failure is the ordinary "keep this directory" case; the tree
-// root itself is never a candidate. Symlinks are never followed -- a link
-// is a file the mirror may own, not a doorway to files outside it.
+constexpr char kOwnershipManifestName[] = ".tapa-tree-manifest";
+constexpr char kOwnershipManifestHeader[] = "tapa-tree-ownership-v1\n";
+
+// Reads the files TAPA owned on the previous run. An absent manifest means
+// that this directory has no TAPA-owned files yet; an unrecognized existing
+// manifest is a collision, not permission to adopt the directory.
+bool ReadOwnershipManifest(const std::string& path,
+                           std::set<std::string>* owned, std::string* error) {
+  llvm::sys::fs::file_status status;
+  std::error_code ec = llvm::sys::fs::status(path, status, /*follow=*/false);
+  if (ec == std::errc::no_such_file_or_directory) return true;
+  if (ec) {
+    *error =
+        "cannot inspect ownership manifest '" + path + "': " + ec.message();
+    return false;
+  }
+  if (status.type() != llvm::sys::fs::file_type::regular_file) {
+    *error = "ownership manifest '" + path + "' is not a regular file";
+    return false;
+  }
+  const auto buffer = llvm::MemoryBuffer::getFile(path);
+  if (!buffer) {
+    *error = "cannot read ownership manifest '" + path +
+             "': " + buffer.getError().message();
+    return false;
+  }
+  llvm::StringRef rest = (*buffer)->getBuffer();
+  if (!rest.consume_front(kOwnershipManifestHeader)) {
+    *error = "ownership manifest '" + path + "' has an unrecognized format";
+    return false;
+  }
+  while (!rest.empty()) {
+    const size_t end = rest.find('\n');
+    if (end == llvm::StringRef::npos || end == 0) {
+      *error = "ownership manifest '" + path + "' is malformed";
+      return false;
+    }
+    owned->insert(rest.substr(0, end).str());
+    rest = rest.substr(end + 1);
+  }
+  return true;
+}
+
+bool HasOwnedPrefix(const std::set<std::string>& owned,
+                    const std::string& prefix) {
+  const auto it = owned.lower_bound(prefix);
+  return it != owned.end() && llvm::StringRef(*it).starts_with(prefix);
+}
+
+// Prunes only stale files recorded in TAPA's previous ownership manifest.
+// Unlisted files and all directories are left alone: -emit-dir may be an
+// arbitrary existing directory. Symlinks are never followed; a previously
+// owned link is just a file entry that may be removed.
 bool PruneDirectory(const std::string& dir, const std::string& prefix,
+                    const std::set<std::string>& owned,
                     const std::set<std::string>& keys, std::string* error) {
+  if (owned.empty()) return true;
   std::error_code ec;
   llvm::sys::fs::directory_iterator it(dir, ec);
   if (ec) {
@@ -532,12 +581,13 @@ bool PruneDirectory(const std::string& dir, const std::string& prefix,
     llvm::sys::fs::file_status status;
     if ((ec = llvm::sys::fs::status(path, status, /*follow=*/false))) break;
     if (status.type() == llvm::sys::fs::file_type::directory_file) {
-      if (!PruneDirectory(path, prefix + name + "/", keys, error)) {
+      const std::string child_prefix = prefix + name + "/";
+      if (HasOwnedPrefix(owned, child_prefix) &&
+          !PruneDirectory(path, child_prefix, owned, keys, error)) {
         return false;
       }
-      ec = llvm::sys::fs::remove(path);
-      if (ec == std::errc::directory_not_empty) ec = std::error_code();
-    } else if (keys.count(prefix + name) == 0) {
+    } else if (owned.count(prefix + name) > 0 &&
+               keys.count(prefix + name) == 0) {
       ec = llvm::sys::fs::remove(path);
     }
     if (ec) break;
@@ -557,10 +607,55 @@ bool TreeWriter::Write(std::string* error) {
     if (!layout_.Register(path, &key, error)) return false;
     keys.insert(std::move(key));
   }
-  // The mirror is a pure function of this run's inputs: files an earlier
-  // run wrote under a different file set or layout disappear, so a reused
-  // work directory cannot accumulate orphans.
-  if (!PruneDirectory(out_root_, "", keys, error)) return false;
+  llvm::SmallString<256> manifest_path(out_root_);
+  llvm::sys::path::append(manifest_path, kOwnershipManifestName);
+  const std::string manifest = manifest_path.str().str();
+  std::set<std::string> owned;
+  if (!ReadOwnershipManifest(manifest, &owned, error)) return false;
+
+  const std::string manifest_prefix = std::string(kOwnershipManifestName) + "/";
+  for (const std::string& key : keys) {
+    if (key == kOwnershipManifestName ||
+        llvm::StringRef(key).starts_with(manifest_prefix)) {
+      *error = "rewritten-tree path '" + key +
+               "' collides with TAPA's ownership manifest";
+      return false;
+    }
+  }
+
+  // Check every destination before pruning or writing anything. In
+  // particular, equal bytes do not make an existing unowned file ours.
+  for (const auto& [path, content] : rendered_) {
+    (void)content;
+    const std::string key = *layout_.KeyOf(path);
+    llvm::SmallString<256> out(out_root_);
+    llvm::sys::path::append(out, key);
+    llvm::sys::fs::file_status status;
+    const std::error_code ec =
+        llvm::sys::fs::status(out, status, /*follow=*/false);
+    if (ec == std::errc::no_such_file_or_directory ||
+        ec == std::errc::not_a_directory) {
+      continue;
+    }
+    if (ec) {
+      *error = "cannot inspect '" + out.str().str() + "': " + ec.message();
+      return false;
+    }
+    if (!llvm::sys::fs::exists(status)) continue;
+    if (owned.count(key) == 0) {
+      *error = "refusing to overwrite unowned path '" + out.str().str() + "'";
+      return false;
+    }
+    if (status.type() != llvm::sys::fs::file_type::regular_file) {
+      *error = "cannot write '" + out.str().str() +
+               "': the owned path is not a regular file";
+      return false;
+    }
+  }
+
+  // The mirror is a pure function of this run's inputs, but only files TAPA
+  // itself wrote on an earlier run are eligible for stale pruning.
+  if (!PruneDirectory(out_root_, "", owned, keys, error)) return false;
 
   // Materialize in a fixed order so identical inputs visit the same paths
   // the same way every run; unchanged bytes are skipped.
@@ -585,6 +680,27 @@ bool TreeWriter::Write(std::string* error) {
     }
     stream << content;
   }
+
+  if (std::error_code ec = llvm::sys::fs::create_directories(out_root_)) {
+    *error = "cannot create directory '" + out_root_ + "': " + ec.message();
+    return false;
+  }
+  std::string manifest_content = kOwnershipManifestHeader;
+  for (const std::string& key : keys) {
+    manifest_content += key;
+    manifest_content.push_back('\n');
+  }
+  if (const auto existing = llvm::MemoryBuffer::getFile(manifest)) {
+    if ((*existing)->getBuffer() == manifest_content) return true;
+  }
+  std::error_code ec;
+  llvm::raw_fd_ostream stream(manifest, ec);
+  if (ec) {
+    *error =
+        "cannot write ownership manifest '" + manifest + "': " + ec.message();
+    return false;
+  }
+  stream << manifest_content;
   return true;
 }
 
