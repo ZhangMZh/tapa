@@ -13,7 +13,9 @@ simulation.
 - TAPA installed — see [Installation](installation.md)
 - Xilinx Vitis 2022.1 or newer
 - A compatible Alveo platform (the examples below use the U55C)
-- The vadd source files: [`vadd.cpp`](https://github.com/tuna/tapa/blob/main/tests/apps/vadd/vadd.cpp) and [`vadd-host.cpp`](https://github.com/tuna/tapa/blob/main/tests/apps/vadd/vadd-host.cpp)
+- The vadd source files and a host executable built as described in
+  [Your First Run](first-run.md)
+- XRT for the on-board step
 
 ## Stage 1 — Synthesize to RTL
 
@@ -56,6 +58,8 @@ Before waiting hours for a full bitstream, validate the RTL with TAPA's
 fast cosimulation. Pass the `.xo` file as the `--bitstream` argument:
 
 ```bash
+# Rebuild the host only if you have not already done so in Your First Run.
+tapa g++ -- vadd.cpp vadd-host.cpp -o vadd
 ./vadd --bitstream=vecadd.xo 1000
 ```
 
@@ -65,8 +69,9 @@ minutes that Vitis cosimulation requires. A successful run prints `PASS!`.
 
 ```admonish note
 The default simulator backend is `xsim`, which requires Vivado on Linux. To use
-Verilator instead (cross-platform, no Vivado required), pass `-cosim_simulator verilator`
-to the host executable: `./vadd --bitstream=vadd.xo -cosim_simulator verilator`.
+Verilator instead (Linux or macOS, no Vivado required), pass
+`-cosim_simulator verilator` to the host executable:
+`./vadd --bitstream=vecadd.xo -cosim_simulator verilator 1000`.
 That path needs Verilator 5.044 or newer, which is ahead of most distribution
 packages — see [Fast Hardware Simulation](../howto/fast-cosim.md) before
 reaching for it.
@@ -89,11 +94,10 @@ v++ -o vadd.xilinx_u55c_gen3x16_xdma_3_202210_1.hw.xclbin \
 Artifact produced: `vadd.xilinx_u55c_gen3x16_xdma_3_202210_1.hw.xclbin`
 
 ```admonish note
-`v++` only accepts platforms within its support window: a platform is
-supported for the remainder of its release calendar year plus the following
-year. If linking fails with `ERROR: [v++ 60-1299] The specified platform is
-not supported`, switch to a platform version your Vitis installation still
-supports. See [Common Errors](../troubleshoot/common-errors.md).
+`v++` accepts only platforms supported by the installed Vitis version. If
+linking fails with `ERROR: [v++ 60-1299] The specified platform is not
+supported`, choose a supported platform that matches both your board and Vitis
+installation. See [Common Errors](../troubleshoot/common-errors.md).
 ```
 
 ```admonish warning

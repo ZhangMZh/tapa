@@ -12,18 +12,21 @@ Diagnose and fix failures in TAPA software simulation.
 The simulation hangs without producing output, crashes with an error, or
 prints `FAIL!` instead of `PASS!`.
 
-## How to confirm: run single-threaded
+## Reduce scheduling concurrency
 
-By default TAPA runs each task in its own coroutine using a thread pool sized
-to the number of physical CPU cores. Reducing concurrency to one thread improves
-reproducibility and simplifies debugging:
+By default TAPA schedules task coroutines over a thread pool sized to the
+number of physical CPU cores. Using one worker makes scheduling more
+reproducible and simplifies debugging:
 
 ```bash
 TAPA_CONCURRENCY=1 ./vadd
 ```
 
-If the hang disappears or a crash becomes reproducible, the problem is likely
-a race condition or a deadlock that only manifests under concurrent execution.
+One worker still interleaves tasks at blocking points; it does not run each
+task to completion. If changing the worker count changes the failure, treat
+that as a clue about ordering or timing sensitivity, not as proof of a runtime
+race. Check that every ordering assumption is enforced by stream or memory
+handshakes.
 
 ## Fix patterns
 
@@ -49,12 +52,13 @@ program.
 
 ### Dump stream contents
 
-Set `TAPA_STREAM_LOG_DIR` to a directory path before running. TAPA will write
+Set `TAPA_STREAM_LOG_DIR` to an existing directory before running. TAPA writes
 one log file per named stream under that directory, recording every value
 written to the stream:
 
 ```bash
-TAPA_STREAM_LOG_DIR=/tmp/logs ./vadd
+mkdir -p /tmp/tapa-stream-logs
+TAPA_STREAM_LOG_DIR=/tmp/tapa-stream-logs ./vadd
 ```
 
 Log format:
@@ -64,8 +68,8 @@ Log format:
 - **Structs without `operator<<`** are written as little-endian hex.
 - **Structs with `operator<<`** are written using your operator.
 
-After the run, inspect the files under `/tmp/logs/` to trace data as it
-flows through each stream and locate where incorrect values first appear.
+After the run, inspect the files under `/tmp/tapa-stream-logs/` to trace data
+as it flows through each stream and locate where incorrect values first appear.
 
 ## Common mistakes to check
 

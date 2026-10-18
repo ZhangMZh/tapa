@@ -12,7 +12,10 @@ running on physical hardware.
 
 - TAPA installed — see [Installation](installation.md)
 - `g++` 7.5.0 or newer (check with `g++ --version`)
-- The vadd example files: [`vadd.cpp`](https://github.com/tuna/tapa/blob/main/tests/apps/vadd/vadd.cpp) and [`vadd-host.cpp`](https://github.com/tuna/tapa/blob/main/tests/apps/vadd/vadd-host.cpp)
+- The vadd example files: [`vadd.cpp`](https://github.com/tuna/tapa/blob/main/tests/apps/vadd/vadd.cpp),
+  [`vadd.h`](https://github.com/tuna/tapa/blob/main/tests/apps/vadd/vadd.h), and
+  [`vadd-host.cpp`](https://github.com/tuna/tapa/blob/main/tests/apps/vadd/vadd-host.cpp).
+  Place all three in one directory and run the commands below there.
 
 ## Commands
 
@@ -29,9 +32,10 @@ tapa g++ -- vadd.cpp vadd-host.cpp -o vadd
 includes the necessary TAPA headers and libraries. It prints the underlying
 `g++` command it invokes for reference.
 
-Both the kernel file (`vadd.cpp`) and the host file (`vadd-host.cpp`) must
-be passed in the same command. The kernel file is used for software
-simulation.
+Pass both the kernel file (`vadd.cpp`) and the host file (`vadd-host.cpp`) in
+the same command so the compiler builds the complete software-simulation
+program. The kernel also includes `vadd.h`, which must be in the same
+directory.
 ```
 
 ## Expected output
@@ -50,8 +54,9 @@ line comes from glog and is harmless.
 ## What this proves
 
 The `PASS!` line confirms the vector addition produced correct results. The
-first line shows that TAPA executed the kernel on the CPU using its
-coroutine-based software simulator — no FPGA or Xilinx tools were involved.
+`running software simulation` line shows that TAPA executed the kernel on the
+CPU using its coroutine-based software simulator — no FPGA or Xilinx tools
+were involved.
 
 ## If something goes wrong
 

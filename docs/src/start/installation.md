@@ -8,8 +8,11 @@
 
 | Dependency | Version | Notes |
 |------------|---------|-------|
-| GNU C++ Compiler (`g++`) | 7.5.0 or newer | Required for software simulation and deployment |
-| Xilinx Vitis | 2022.1 or newer | **Not needed for software simulation** — only required for RTL synthesis and deployment |
+| GNU C++ Compiler (`g++`) | 7.5.0 or newer | Required for software simulation and host builds |
+| Xilinx Vitis | 2022.1 or newer | Required for RTL synthesis and bitstream generation, not software simulation |
+| CBC | Any compatible release | Required only for floorplanning; install the `cbc` binary on `PATH` |
+| XRT | Match your platform | Required for hardware emulation and on-board execution, not software simulation or fast cosimulation |
+| Verilator | 5.044 or newer | Optional fast-cosimulation backend; xsim is the default |
 
 TAPA has been tested on the following operating systems:
 
@@ -37,10 +40,15 @@ To install a specific version:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tuna/tapa/main/install.sh \
-  | TAPA_VERSION=0.1.20260319 sh -s -- -q
+  | TAPA_VERSION=0.1.20260921 sh -s -- -q
 ```
 
 Releases are available at [github.com/tuna/tapa/releases](https://github.com/tuna/tapa/releases).
+
+For the default user-local installation, restart your shell after installation so the
+updated `PATH` and `TAPA_HOME` take effect. You can also apply them to the
+current shell with `export PATH="$PATH:$HOME/.tapa/usr/bin"` and
+`export TAPA_HOME="$HOME/.tapa"`.
 
 ## Install g++
 
@@ -90,6 +98,9 @@ sudo apt-get install coinor-cbc
 sudo yum install coin-or-Cbc
 ```
 
+On RHEL and its derivatives, enable the repository that provides CBC for your
+distribution (commonly EPEL) if this package is not found.
+
 ## Running in a container
 
 A minimal base image (for example `ubuntu:24.04`) lacks two things the Xilinx
@@ -136,8 +147,7 @@ source /opt/Xilinx/Vitis/<version>/settings64.sh
 
 Running a design on hardware or in hardware emulation additionally needs XRT
 installed inside the container; software simulation and fast cosimulation do
-not. XRT's GitHub releases do not publish installable packages — download
-the XRT `.deb`/`.rpm` for your distribution from the
+not. Download the XRT `.deb`/`.rpm` for your distribution from the
 [Xilinx download center](https://www.xilinx.com/support/download.html)
 (bundled with the Vitis/XRT unified installer downloads) and install it with
 your package manager, for example `apt-get install ./xrt_*-xrt.deb`.

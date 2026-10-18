@@ -9,7 +9,9 @@ RapidStream Contributor License Agreement.
 [![Staging](https://github.com/tuna/tapa/actions/workflows/staging-build.yml/badge.svg)](https://github.com/tuna/tapa/actions/workflows/staging-build.yml)
 [![Documentation](https://readthedocs.org/projects/tapa/badge/?version=latest)](https://tapa.readthedocs.io/en/latest/?badge=latest)
 
-TAPA is a task-parallel HLS framework that compiles C++ dataflow programs to Verilog RTL for Xilinx FPGAs. Software simulation runs on any Linux machine without FPGA hardware.
+TAPA is a task-parallel HLS framework that compiles C++ dataflow programs to
+Verilog RTL for Xilinx FPGAs. Software simulation runs on a Linux machine
+without FPGA hardware or Xilinx tools.
 
 *C++ source → `tapa compile` → RTL (.xo) → Vitis v++ → FPGA bitstream*
 
@@ -39,16 +41,18 @@ This installs the latest release. With root privileges, installs to
 and updates your shell `PATH`.
 
 **Requirements:** Linux (Ubuntu 18.04+, Debian 10+, RHEL 9+, Fedora 34+, Amazon
-Linux 2023), `g++` 7.5.0+, and the [CBC](https://github.com/coin-or/Cbc) ILP
-solver (`coinor-cbc` on Ubuntu/Debian, `coin-or-Cbc` on Fedora/EPEL) for
-floorplanning. Vitis HLS 2022.1+ is required for RTL synthesis and
-on-board execution — **not** for software simulation.
+Linux 2023) and `g++` 7.5.0+ for software simulation. Floorplanning also needs
+the [CBC](https://github.com/coin-or/Cbc) ILP solver (`coinor-cbc` on
+Ubuntu/Debian, `coin-or-Cbc` on Fedora/EPEL). RTL synthesis and bitstream
+generation need Vitis 2022.1 or newer; hardware emulation and on-board
+execution need XRT. None of these additional tools is needed for software
+simulation.
 
 To install a specific version:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tuna/tapa/main/install.sh \
-  | TAPA_VERSION=0.1.20260319 sh -s -- -q
+  | TAPA_VERSION=0.1.20260921 sh -s -- -q
 ```
 
 Releases: [github.com/tuna/tapa/releases](https://github.com/tuna/tapa/releases)
@@ -122,7 +126,7 @@ Full documentation: **[tapa.readthedocs.io](https://tapa.readthedocs.io/en/lates
 | [Installation](https://tapa.readthedocs.io/en/latest/start/installation.html) | Install from release or build from source |
 | [Your First Run](https://tapa.readthedocs.io/en/latest/start/first-run.html) | Software simulation without FPGA hardware |
 | [How-To Guides](https://tapa.readthedocs.io/en/latest/howto/software-simulation.html) | Build, simulate, and deploy designs |
-| [Tutorials](https://tapa.readthedocs.io/en/latest/tutorials/learning-path.html) | Annotated labs from vadd to floorplanning |
+| [Tutorials](https://tapa.readthedocs.io/en/latest/tutorials/learning-path.html) | Annotated labs from vector addition to parallel RTL emulation |
 | [C++ API Reference](https://tapa.readthedocs.io/en/latest/reference/api.html) | Full API: tasks, streams, mmap, utilities |
 | [CLI Reference](https://tapa.readthedocs.io/en/latest/reference/cli.html) | All `tapa` subcommands and flags |
 | [Troubleshooting](https://tapa.readthedocs.io/en/latest/troubleshoot/common-errors.html) | Common errors, deadlocks, cosim issues |
