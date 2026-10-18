@@ -110,11 +110,21 @@ enum KernelElement {
 }
 
 fn optional_width<'de, D: Deserializer<'de>>(de: D) -> std::result::Result<Option<u32>, D::Error> {
-    Ok(String::deserialize(de)?.parse().ok())
+    let value = String::deserialize(de)?;
+    value.parse().map(Some).map_err(|error| {
+        serde::de::Error::custom(format!(
+            "malformed width {value:?} in kernel metadata XML: {error}"
+        ))
+    })
 }
 
 fn optional_size<'de, D: Deserializer<'de>>(de: D) -> std::result::Result<Option<u32>, D::Error> {
-    Ok(parse_size_bytes(&String::deserialize(de)?))
+    let value = String::deserialize(de)?;
+    parse_size_bytes(&value).map(Some).ok_or_else(|| {
+        serde::de::Error::custom(format!(
+            "malformed byte size {value:?} in kernel metadata XML"
+        ))
+    })
 }
 
 pub fn parse(xml: &str) -> Result<KernelXml> {
@@ -574,6 +584,22 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("mystery"), "{msg}");
         assert!(msg.contains("WeirdStruct"), "{msg}");
+    }
+
+    #[test]
+    fn malformed_numeric_attributes_are_errors() {
+        for entry in [
+            r#"<arg name="a" addressQualifier="1" id="0" port="m_axi_a" dataWidth="wide"/>"#,
+            r#"<arg name="a" addressQualifier="1" id="0" port="m_axi_a" addrWidth="wide"/>"#,
+            r#"<arg name="n" addressQualifier="0" id="0" hostSize="wide" size="0x4"/>"#,
+            r#"<arg name="n" addressQualifier="0" id="0" type="uint16_t" size="wide"/>"#,
+        ] {
+            let xml = format!(
+                r#"<?xml version="1.0"?><root><kernel name="k"><args>{entry}</args></kernel></root>"#
+            );
+            let err = parse(&xml).expect_err("malformed numeric attribute");
+            assert!(err.to_string().contains("wide"), "{err}");
+        }
     }
 
     #[test]
