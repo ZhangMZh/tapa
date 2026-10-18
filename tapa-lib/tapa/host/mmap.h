@@ -367,23 +367,25 @@ class hmap : public mmap<T> {
 
 // Every buffer-access tag gets a subclass of each single-buffer handle, and
 // they differ only in which handle they extend.
-#define TAPA_DEFINE_TAGGED_MMAP(tag, kind)               \
-  template <typename T>                                  \
-  class tag##_##kind : public kind<T> {                  \
-    tag##_##kind(T* ptr) : kind<T>(ptr) {}               \
-                                                         \
-   public:                                               \
-    using kind<T>::kind;                                 \
-    tag##_##kind(const kind<T>& base) : kind<T>(base) {} \
-                                                         \
-    template <uint64_t N>                                \
-    tag##_##kind<vec_t<T, N>> vectorized() const {       \
-      return kind<T>::template vectorized<N>();          \
-    }                                                    \
-    template <typename U>                                \
-    tag##_##kind<U> reinterpret() const {                \
-      return kind<T>::template reinterpret<U>();         \
-    }                                                    \
+#define TAPA_DEFINE_TAGGED_MMAP(tag, kind)                        \
+  template <typename T>                                           \
+  class tag##_##kind : public kind<T> {                           \
+    tag##_##kind(T* ptr) : kind<T>(ptr) {}                        \
+                                                                  \
+   public:                                                        \
+    using kind<T>::kind;                                          \
+    tag##_##kind(const kind<T>& base) : kind<T>(base) {}          \
+                                                                  \
+    template <uint64_t N>                                         \
+    tag##_##kind<vec_t<T, N>> vectorized() const {                \
+      const auto view = kind<T>::template vectorized<N>();        \
+      return tag##_##kind<vec_t<T, N>>(view.data(), view.size()); \
+    }                                                             \
+    template <typename U>                                         \
+    tag##_##kind<U> reinterpret() const {                         \
+      const auto view = kind<T>::template reinterpret<U>();       \
+      return tag##_##kind<U>(view.data(), view.size());           \
+    }                                                             \
   }
 
 #define TAPA_DEFINE_TAGGED_MMAP_FAMILY(kind)  \

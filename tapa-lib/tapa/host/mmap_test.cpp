@@ -44,12 +44,7 @@ TEST(TaggedMmapTest, EveryTagExtendsItsKind) {
   CheckTagIsPreserved<read_write_ommap<int>, ommap<int>>();
 }
 
-// Only the `mmap` kind is covered here. `immap`/`ommap` inherit `vectorized()`
-// and `reinterpret()` from `mmap`, so those return an `mmap<U>` -- a base of
-// `immap<U>`/`ommap<U>` -- and the tagged wrapper cannot convert back down.
-// Instantiating e.g. `read_write_ommap<int>::reinterpret<int64_t>()` therefore
-// does not compile. That predates the macro collapse (the per-kind macros
-// generated the same bodies) and is simply never instantiated today.
+// Every single-buffer kind must preserve both its direction and access tag.
 TEST(TaggedMmapTest, VectorizedAndReinterpretKeepTheTag) {
   std::vector<int> buffer(16);
 
@@ -71,6 +66,27 @@ TEST(TaggedMmapTest, VectorizedAndReinterpretKeepTheTag) {
   EXPECT_EQ(ro.size(), buffer.size());
   EXPECT_EQ(ro.vectorized<2>().size(), buffer.size() / 2);
   EXPECT_EQ(wo.reinterpret<int64_t>().size(),
+            buffer.size() * sizeof(int) / sizeof(int64_t));
+
+  read_only_immap<int> roi(buffer);
+  static_assert(std::is_same<decltype(roi.vectorized<2>()),
+                             read_only_immap<vec_t<int, 2>>>::value,
+                "immap vectorized() must stay read_only");
+  static_assert(std::is_same<decltype(roi.reinterpret<char>()),
+                             read_only_immap<char>>::value,
+                "immap reinterpret() must stay read_only");
+  EXPECT_EQ(roi.vectorized<2>().size(), buffer.size() / 2);
+  EXPECT_EQ(roi.reinterpret<char>().size(), buffer.size() * sizeof(int));
+
+  write_only_ommap<int> woo(buffer);
+  static_assert(std::is_same<decltype(woo.vectorized<2>()),
+                             write_only_ommap<vec_t<int, 2>>>::value,
+                "ommap vectorized() must stay write_only");
+  static_assert(std::is_same<decltype(woo.reinterpret<int64_t>()),
+                             write_only_ommap<int64_t>>::value,
+                "ommap reinterpret() must stay write_only");
+  EXPECT_EQ(woo.vectorized<2>().size(), buffer.size() / 2);
+  EXPECT_EQ(woo.reinterpret<int64_t>().size(),
             buffer.size() * sizeof(int) / sizeof(int64_t));
 }
 
