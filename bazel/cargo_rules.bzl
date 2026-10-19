@@ -4,6 +4,7 @@
 # All rights reserved. The contributor(s) of this file has/have agreed to the
 # RapidStream Contributor License Agreement.
 
+load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolchain")
 load("//bazel:sh_utils.bzl", "runfiles_resolver", "sh_quote")
 
 def _sh_quote(value):
@@ -88,6 +89,27 @@ def _cargo_test_impl(ctx):
             target[DefaultInfo].default_runfiles,
             target[DefaultInfo].data_runfiles,
         ])
+    cxx20_block = ""
+    cxx20_toolchain_files = depset()
+    if ctx.attr.cxx20_toolchain:
+        toolchain = find_cc_toolchain(ctx)
+        clangxx = [
+            file
+            for file in toolchain.all_files.to_list()
+            if file.basename == "clang++" and file.dirname.endswith("/bin")
+        ]
+        if len(clangxx) != 1:
+            fail("cxx20_toolchain: expected one clang++ in the C++ toolchain files, got: %s" % clangxx)
+        cxx20_toolchain_files = toolchain.all_files
+        cxx20_block = """
+# Verilator --timing testbenches compile generated code that needs C++20
+# coroutines, which the sandbox's default c++ may lack (the CI image's GCC 7
+# cannot parse -std=c++20, and its libstdc++ has no <coroutine> at all).
+# Point the frt xsim testbench builds at the resolved LLVM toolchain so they
+# use its clang++ and the bundled libc++ instead.
+FRT_XSIM_LLVM_DIST="$(cd "$(dirname "$(dirname "$(resolve_runfile {clangxx})")")" && pwd)"
+export FRT_XSIM_LLVM_DIST
+""".format(clangxx = _sh_quote(clangxx[0].short_path))
     maybe_skip = ""
     if ctx.attr.skip_without_xilinx_env:
         maybe_skip = """
@@ -123,6 +145,7 @@ export CARGO_TARGET_DIR="${{TEST_TMPDIR}}/cargo-target"
 {env_exports}
 {env_file_exports}
 {maybe_skip}
+{cxx20_block}
 exec "$CARGO" test --manifest-path "$MANIFEST" --locked {cargo_args} {test_args}
 """.format(
         resolver = _runfiles_resolver(),
@@ -133,6 +156,7 @@ exec "$CARGO" test --manifest-path "$MANIFEST" --locked {cargo_args} {test_args}
         env_exports = env_exports,
         env_file_exports = "\n".join(env_file_exports),
         maybe_skip = maybe_skip,
+        cxx20_block = cxx20_block,
         cargo_args = " ".join([_sh_quote(arg) for arg in ctx.attr.cargo_args]),
         test_args = " ".join([_sh_quote(arg) for arg in ctx.attr.test_args]),
     )
@@ -142,7 +166,7 @@ exec "$CARGO" test --manifest-path "$MANIFEST" --locked {cargo_args} {test_args}
         ctx.file._cargo,
         ctx.file._rustc,
         ctx.file._rustdoc,
-    ] + env_files).merge_all(env_file_runfiles)
+    ] + env_files, transitive_files = cxx20_toolchain_files).merge_all(env_file_runfiles)
 
     # `data` entries are staged with their own runfiles, so a test can invoke
     # a built tool (e.g. `//tapa-core:tapa`) and have that tool find its own
@@ -162,6 +186,7 @@ cargo_test = rule(
         "cargo_env": attr.string_dict(),
         "cargo_env_files": attr.label_keyed_string_dict(allow_files = True),
         "skip_without_xilinx_env": attr.bool(default = False),
+        "cxx20_toolchain": attr.bool(default = False),
         "_cargo": attr.label(
             allow_single_file = True,
             cfg = "target",
@@ -178,7 +203,9 @@ cargo_test = rule(
             default = Label("@rules_rust//rust/toolchain:current_rustdoc_files"),
         ),
     },
+    fragments = ["cpp"],
     test = True,
+    toolchains = use_cc_toolchain(),
 )
 
 def _parse_artifacts(ctx, attr_name):

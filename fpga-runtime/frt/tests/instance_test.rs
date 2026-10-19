@@ -303,6 +303,40 @@ end
     check_manual_stream_output(&mut output_queue);
 }
 
+// Bundled libc++ header directories of a staged LLVM toolchain: the
+// arch-specific `include/<triple>/c++/v1` (carrying `__config_site`) and the
+// generic `include/c++/v1`.
+#[cfg(target_os = "linux")]
+fn libcxx_include_dirs(dist: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dist.join("include")) {
+        for entry in entries.flatten() {
+            let dir = entry.path().join("c++/v1");
+            if dir.is_dir() {
+                dirs.push(dir);
+            }
+        }
+    }
+    dirs.push(dist.join("include/c++/v1"));
+    dirs
+}
+
+// Locate `name` (`libc++.a`, `libc++abi.a`) under the staged toolchain's
+// `lib`, which is laid out either flat or under an arch subdirectory.
+#[cfg(target_os = "linux")]
+fn libcxx_archive(dist: &Path, name: &str) -> Option<PathBuf> {
+    let lib = dist.join("lib");
+    let direct = lib.join(name);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    std::fs::read_dir(lib)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path().join(name))
+        .find(|path| path.is_file())
+}
+
 #[cfg(target_os = "linux")]
 fn run_xsim_testbench(
     spec: &frt_cosim::metadata::KernelSpec,
@@ -325,7 +359,8 @@ fn run_xsim_testbench(
                 .map(PathBuf::from)
         });
     let verilator = std::fs::canonicalize(&verilator).unwrap_or(verilator);
-    let build = Command::new(verilator)
+    let mut build = Command::new(verilator);
+    build
         .args([
             "--binary",
             "--timing",
@@ -349,9 +384,33 @@ fn run_xsim_testbench(
                 .into_iter()
                 .map(|root| ("VERILATOR_ROOT", root)),
         )
-        .current_dir(tmp.path())
-        .output()
-        .expect("build Xsim testbench with Verilator");
+        .current_dir(tmp.path());
+    // Verilator's makefile hardcodes `CXX = c++` and appends its own -std
+    // after -CFLAGS, so a --timing build is at the mercy of the sandbox's
+    // default compiler, while the generated timing code needs C++20
+    // coroutines: the CI image's GCC 7 cannot even parse -std=c++20, and its
+    // libstdc++ has no <coroutine> header at all. When Bazel stages the LLVM
+    // toolchain, override the build to use its clang++ and bundled libc++.
+    if let Some(dist) = std::env::var_os("FRT_XSIM_LLVM_DIST") {
+        let dist = PathBuf::from(dist);
+        let cxx = dist.join("bin/clang++");
+        assert!(cxx.is_file(), "staged clang++ missing: {}", cxx.display());
+        let libcxx = libcxx_archive(&dist, "libc++.a").expect("bundled libc++.a");
+        let libcxxabi = libcxx_archive(&dist, "libc++abi.a").expect("bundled libc++abi.a");
+        build
+            .arg("-MAKEFLAGS")
+            .arg(format!("CXX={0} LINK={0} CFG_CXXFLAGS_STD=", cxx.display()));
+        build.arg("-CFLAGS").arg("-nostdinc++");
+        for dir in libcxx_include_dirs(&dist) {
+            build.arg("-CFLAGS").arg("-isystem").arg("-CFLAGS").arg(dir);
+        }
+        build
+            .arg("-LDFLAGS")
+            .arg(libcxx)
+            .arg("-LDFLAGS")
+            .arg(libcxxabi);
+    }
+    let build = build.output().expect("build Xsim testbench with Verilator");
     assert!(
         build.status.success(),
         "Xsim testbench build failed:\n{}\n{}",

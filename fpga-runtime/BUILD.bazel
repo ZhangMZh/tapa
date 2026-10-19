@@ -94,6 +94,7 @@ cargo_test(
     cargo_env_files = {
         "@verilator//:verilator_executable": "VERILATOR_BIN",
     },
+    cxx20_toolchain = True,
     manifest = "Cargo.toml",
     tags = [
         "cpu:8",
