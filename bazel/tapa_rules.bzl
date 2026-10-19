@@ -90,6 +90,7 @@ def _staged_tapa_command(source, destination, arguments):
         "set -euo pipefail",
         "mkdir -p {}".format(sh_quote(destination)),
         "cp -aL {} {}".format(sh_quote(source + "/."), sh_quote(destination)),
+        "chmod -R u+w {}".format(sh_quote(destination)),
         "{}".format(" ".join([sh_quote(arg) for arg in arguments])),
     ])
 
