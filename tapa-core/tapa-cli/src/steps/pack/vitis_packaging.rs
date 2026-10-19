@@ -20,7 +20,8 @@ use std::sync::LazyLock;
 use regex::Regex;
 use tapa_ir::{ClockPeriod, Design, WorkState};
 use tapa_xilinx::{
-    pack_xo as xilinx_pack_xo, DeviceInfo, KernelXmlArgs, PackageXoInputs, ToolRunner,
+    normalize_hls_report_text, pack_xo as xilinx_pack_xo, DeviceInfo, KernelXmlArgs,
+    PackageXoInputs, ToolRunner,
 };
 
 use crate::context::CliContext;
@@ -156,8 +157,6 @@ use tapa_protocol::m_axi_suffixes;
 static TAPA_LIB_RUNFILES_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?:(?:\.\./)*/?)[^\s"<>\|,]*tapa\.runfiles/_main/tapa-lib/"#).unwrap()
 });
-static HLS_XML_ROW_ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"<row id="\d+""#).unwrap());
 
 fn top_rtl_m_axi_bases(
     hdl_dir: &Path,
@@ -278,7 +277,7 @@ fn collect_hls_report_paths(work_dir: &Path) -> Result<Vec<(Utf8PathBuf, String)
 
 fn sanitize_hls_report_text(text: &str, work_dir: &Path) -> String {
     let abs_work_dir = fs_err::canonicalize(work_dir).unwrap_or_else(|_| work_dir.to_path_buf());
-    let mut out = text.to_owned();
+    let mut out = normalize_hls_report_text(text);
     for base in [abs_work_dir.as_path(), work_dir] {
         let base = base.to_string_lossy();
         if let Some(stripped) = base.strip_prefix('/') {
@@ -288,9 +287,6 @@ fn sanitize_hls_report_text(text: &str, work_dir: &Path) -> String {
     }
     out = TAPA_LIB_RUNFILES_RE
         .replace_all(&out, "tapa-lib/")
-        .into_owned();
-    out = HLS_XML_ROW_ID_RE
-        .replace_all(&out, r#"<row id="0""#)
         .into_owned();
     canonicalize_report_tables(&out)
 }

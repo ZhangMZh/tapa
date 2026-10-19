@@ -270,17 +270,8 @@ fn pack_hls_zip(args: &PackArgs, ctx: &CliContext, state: &WorkState) -> Result<
 /// the archive is reproducible. Non-UTF-8 bytes are returned
 /// unchanged; valid HLS reports are UTF-8.
 fn redact_rpt(bytes: &[u8]) -> Vec<u8> {
-    use std::sync::OnceLock;
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex::Regex::new("Date:           ... ... .. ..:..:.. ....")
-            .expect("static date regex must compile")
-    });
     match std::str::from_utf8(bytes) {
-        Ok(text) => re
-            .replace_all(text, "Date:           Tue Jan 01 00:00:00 1980")
-            .into_owned()
-            .into_bytes(),
+        Ok(text) => tapa_xilinx::normalize_hls_report_text(text).into_bytes(),
         Err(_) => bytes.to_vec(),
     }
 }

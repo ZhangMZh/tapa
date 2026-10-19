@@ -12,7 +12,7 @@ use typed_builder::TypedBuilder;
 
 use crate::error::{Result, XilinxError};
 use crate::runtime::process::{ToolInvocation, ToolOutput, ToolRunner};
-use crate::tools::hls::report::{parse_csynth_xml, CsynthReport};
+use crate::tools::hls::report::{normalize_hls_report_text, parse_csynth_xml, CsynthReport};
 
 pub mod report;
 
@@ -321,6 +321,28 @@ fn copy_tree(src: &camino::Utf8Path, dest: &camino::Utf8Path) -> std::io::Result
     Ok(())
 }
 
+fn normalize_staged_reports(dir: &camino::Utf8Path) -> std::io::Result<()> {
+    for entry in walkdir::WalkDir::new(dir) {
+        let entry = entry?;
+        if !entry.file_type().is_file()
+            || !matches!(
+                entry.path().extension().and_then(|ext| ext.to_str()),
+                Some("xml" | "rpt")
+            )
+        {
+            continue;
+        }
+        let bytes = fs_err::read(entry.path())?;
+        if let Ok(text) = std::str::from_utf8(&bytes) {
+            let normalized = normalize_hls_report_text(text);
+            if normalized != text {
+                fs_err::write(entry.path(), normalized)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn harvest_and_stage(
     job: &HlsJob,
     stage_dir: &camino::Utf8Path,
@@ -349,6 +371,13 @@ fn harvest_and_stage(
             "stage verilog {} → {}: {e}",
             syn_abs.join("verilog").as_str(),
             job.hdl_out_dir.as_str()
+        ))
+    })?;
+
+    normalize_staged_reports(&job.reports_out_dir).map_err(|e| {
+        XilinxError::HlsReportParse(format!(
+            "normalize staged reports {}: {e}",
+            job.reports_out_dir.as_str()
         ))
     })?;
 
@@ -630,6 +659,43 @@ mod tests {
         for d in &dirs {
             assert_eq!(d, existing.as_path());
         }
+    }
+
+    #[test]
+    fn harvested_reports_normalize_run_varying_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let job = fixture_job(&work);
+        let stage = work.join("stage");
+        let syn = stage.join("project/k/syn");
+        fs_err::create_dir_all(syn.join("report")).unwrap();
+        fs_err::create_dir_all(syn.join("verilog")).unwrap();
+        fs_err::write(
+            syn.join("verilog/k.v"),
+            "module k; endmodule
+",
+        )
+        .unwrap();
+        fs_err::write(
+            syn.join("report/k_csynth.xml"),
+            r#"<profile><UserAssignments><TopModelName>k</TopModelName><Part>xcu250</Part><TargetClockPeriod>3.33</TargetClockPeriod></UserAssignments><PerformanceEstimates><SummaryOfTimingAnalysis><EstimatedClockPeriod>2.0</EstimatedClockPeriod></SummaryOfTimingAnalysis><SourceLocation>/src/k.cpp:7</SourceLocation><row id="17" col0="read"/></PerformanceEstimates></profile>"#,
+        )
+        .unwrap();
+        fs_err::write(
+            syn.join("report/k_csynth.rpt"),
+            "== Header\nDate:           Mon Jan 02 03:04:05 2024\n== End\n",
+        )
+        .unwrap();
+
+        harvest_and_stage(&job, &stage, ToolOutput::default()).expect("harvest");
+
+        let rpt = fs_err::read_to_string(job.reports_out_dir.join("k_csynth.rpt")).unwrap();
+        assert!(rpt.contains("Date:           Tue Jan 01 00:00:00 1980"));
+        assert!(!rpt.contains("Mon Jan 02 03:04:05 2024"));
+        let xml = fs_err::read_to_string(job.reports_out_dir.join("k_csynth.xml")).unwrap();
+        assert!(xml.contains(r#"<row id="0" col0="read"/>"#));
+        assert!(!xml.contains(r#"row id="17""#));
+        assert!(xml.contains("/src/k.cpp:7"));
     }
 
     #[test]

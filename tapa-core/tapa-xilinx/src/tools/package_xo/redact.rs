@@ -8,14 +8,7 @@ use zip::write::SimpleFileOptions;
 use crate::error::{Result, XilinxError};
 
 fn redact_rpt(text: &str) -> String {
-    use std::sync::OnceLock;
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex::Regex::new("Date:           ... ... .. ..:..:.. ....")
-            .expect("static regex compiles")
-    });
-    let redacted = re.replace_all(text, "Date:           Tue Jan 01 00:00:00 1980");
-    redact_cpp_paths(&redacted)
+    redact_cpp_paths(&crate::tools::hls::report::normalize_hls_report_text(text))
 }
 
 fn redact_xml_payload(text: &str) -> String {

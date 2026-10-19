@@ -6,7 +6,9 @@
 //! Vivado's hierarchical ASCII table.
 
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tapa_ir::{Area, Resource};
 
@@ -107,6 +109,23 @@ impl Resources {
             ))
         })
     }
+}
+
+/// Normalize metadata that changes between otherwise identical HLS runs.
+///
+/// Report dates and XML row IDs do not affect timing, area, source locations,
+/// or RTL. Normalizing them at the harvest boundary keeps downstream artifacts
+/// and content-addressed build caches stable.
+#[must_use]
+pub fn normalize_hls_report_text(text: &str) -> String {
+    static DATE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new("Date:           ... ... .. ..:..:.. ....")
+            .expect("static date regex must compile")
+    });
+    static ROW_ID: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"<row id="\d+""#).expect("static row regex must compile"));
+    let text = DATE.replace_all(text, "Date:           Tue Jan 01 00:00:00 1980");
+    ROW_ID.replace_all(&text, r#"<row id="0""#).into_owned()
 }
 
 pub fn parse_csynth_xml(bytes: &[u8]) -> Result<CsynthReport> {
