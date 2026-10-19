@@ -17,6 +17,7 @@ load(
     "XILINX_PART_NUM",
     "XILINX_TOOL_VERSION",
 )
+load("//bazel:sh_utils.bzl", "sh_quote")
 load("//bazel:xilinx_versions.bzl", "vitis_layout_subdir")
 
 def _remote_host_flag():
@@ -74,12 +75,39 @@ def _vendor_exec_requirements(jobs, remote_host):
         reqs = {"requires-network": "1"}
     return reqs
 
+def _staged_tapa_command(source, destination, arguments):
+    """Copy one content-addressed stage, then execute TAPA in the next."""
+    return "\n".join([
+        "set -euo pipefail",
+        "mkdir -p {}".format(sh_quote(destination)),
+        "cp -aL {} {}".format(sh_quote(source + "/."), sh_quote(destination)),
+        "{}".format(" ".join([sh_quote(arg) for arg in arguments])),
+    ])
+
+def _stage_pack_inputs(source, destination):
+    """Keep only artifacts pack reads out of the synth work directory."""
+    lines = [
+        "mkdir -p {}".format(sh_quote(destination)),
+        "cp -aL {} {}".format(sh_quote(source + "/rtl"), sh_quote(destination)),
+        "cp -aL {} {}".format(sh_quote(source + "/hls"), sh_quote(destination)),
+    ]
+    for name in ["tapa.json", "report.json", "report.yaml", "templates_info.json", "template"]:
+        path = sh_quote(source + "/" + name)
+        lines.append("if [ -e {path} ]; then cp -aL {path} {dest}; fi".format(
+            path = path,
+            dest = sh_quote(destination),
+        ))
+    return "\n".join(lines)
+
 def _tapa_xo_impl(ctx):
     if ctx.attr.jobs < 1:
         fail("jobs must be >= 1, got {}".format(ctx.attr.jobs))
     tapa_cli = ctx.executable.tapa_cli
     srcs = ctx.files.srcs
     top_name = ctx.attr.top_name
+    analysis_dir = ctx.actions.declare_directory(ctx.attr.name + ".analysis.tapa")
+    synth_dir = ctx.actions.declare_directory(ctx.attr.name + ".synth.tapa")
+    pack_input_dir = ctx.actions.declare_directory(ctx.attr.name + ".pack.tapa")
     work_dir = ctx.actions.declare_directory(ctx.attr.name + ".tapa")
 
     output_file = ctx.outputs.output_file
@@ -87,99 +115,116 @@ def _tapa_xo_impl(ctx):
         output_file = ctx.actions.declare_file(ctx.attr.name + ".xo")
     if output_file == None and ctx.attr.target == "xilinx-hls":
         output_file = ctx.actions.declare_file(ctx.attr.name + ".zip")
-
     if ctx.attr.target not in ["xilinx-vitis", "xilinx-hls"]:
         fail("Unsupported target: {}".format(ctx.attr.target))
 
-    outputs = [work_dir]
-
-    tapa_cmd = [tapa_cli.path, "--work-dir", work_dir.path]
-
+    remote_args = []
     remote_host = _remote_host_flag()
     if remote_host:
-        tapa_cmd.extend(["--remote-host", remote_host])
+        remote_args.extend(["--remote-host", remote_host])
         if ctx.file.ssh_key:
-            tapa_cmd.extend(["--remote-key-file", ctx.file.ssh_key.path])
+            remote_args.extend(["--remote-key-file", ctx.file.ssh_key.path])
         xilinx_settings = _remote_xilinx_settings()
         if xilinx_settings:
-            tapa_cmd.extend(["--remote-xilinx-settings", xilinx_settings])
+            remote_args.extend(["--remote-xilinx-settings", xilinx_settings])
         if REMOTE_SSH_CONTROL_DIR:
-            tapa_cmd.extend(["--remote-ssh-control-dir", REMOTE_SSH_CONTROL_DIR])
+            remote_args.extend(["--remote-ssh-control-dir", REMOTE_SSH_CONTROL_DIR])
         if REMOTE_SSH_CONTROL_PERSIST:
-            tapa_cmd.extend(["--remote-ssh-control-persist", REMOTE_SSH_CONTROL_PERSIST])
+            remote_args.extend(["--remote-ssh-control-persist", REMOTE_SSH_CONTROL_PERSIST])
 
-    tapa_cmd.append("analyze")
+    analyze_cmd = [tapa_cli.path, "--work-dir", analysis_dir.path] + remote_args + ["analyze"]
     for src in srcs:
-        tapa_cmd.extend(["--input", src.path])
-    tapa_cmd.extend(["--top", top_name])
-
+        analyze_cmd.extend(["--input", src.path])
+    analyze_cmd.extend(["--top", top_name])
     if ctx.file.tapacc:
-        tapa_cmd.extend(["--tapacc", ctx.file.tapacc])
-
+        analyze_cmd.extend(["--tapacc", ctx.file.tapacc])
     if ctx.attr.cflags:
-        tapa_cmd.extend(["--cflags", ctx.attr.cflags])
-
-    if ctx.files.include:
-        for include in ctx.files.include:
-            tapa_cmd.extend(["--cflags", "-I" + include.path])
-
-    tapa_cmd.extend(["--target", ctx.attr.target])
-
+        analyze_cmd.extend(["--cflags", ctx.attr.cflags])
+    for include in ctx.files.include:
+        analyze_cmd.extend(["--cflags", "-I" + include.path])
+    analyze_cmd.extend(["--target", ctx.attr.target])
     if ctx.attr.flatten_hierarchy:
-        tapa_cmd.extend(["--flatten-hierarchy"])
+        analyze_cmd.extend(["--flatten-hierarchy"])
 
-    tapa_cmd.extend(["synth"])
-
-    tapa_cmd.extend(["--override-report-schema-version", "redacted"])
-
-    tapa_cmd.extend(["--jobs", str(ctx.attr.jobs)])
-
-    if ctx.attr.platform_name:
-        tapa_cmd.extend(["--platform", ctx.attr.platform_name])
-    if ctx.attr.clock_period:
-        tapa_cmd.extend(["--clock-period", ctx.attr.clock_period])
-    if ctx.attr.part_num:
-        tapa_cmd.extend(["--part-num", ctx.attr.part_num])
-
-    if not ctx.attr.platform_name and not ctx.attr.clock_period and not ctx.attr.part_num:
-        tapa_cmd.extend(["--part-num", XILINX_PART_NUM])
-        tapa_cmd.extend(["--clock-period", "3.33"])
-
-    if ctx.attr.enable_synth_util:
-        tapa_cmd.extend(["--enable-synth-util"])
-
-    if output_file != None:
-        tapa_cmd.extend(["pack", "--output", output_file.path])
-        if ctx.file.connectivity:
-            tapa_cmd.extend(["--connectivity", ctx.file.connectivity.path])
-        outputs = [output_file] + outputs
-
-    for rtl_file in ctx.files.custom_rtl_files:
-        tapa_cmd.extend(["--custom-rtl", rtl_file.path])
-
-    inputs = srcs + ctx.files.hdrs + ctx.files.custom_rtl_files
-    if ctx.file.connectivity:
-        inputs.append(ctx.file.connectivity)
+    analyze_inputs = srcs + ctx.files.hdrs
     if ctx.file.ssh_key:
-        inputs.append(ctx.file.ssh_key)
-
-    # Default shell env so `--action_env=NAME=VALUE` reaches `tapa`: with the
-    # Starlark default (no shell env) the action's environment is empty and
-    # the variable is silently ignored, which makes a flag-on build a cache
-    # hit of the flag-off action. Under --incompatible_strict_action_env only
-    # PATH plus explicitly set --action_env values are inherited, so the
-    # action key stays deterministic.
+        analyze_inputs.append(ctx.file.ssh_key)
     ctx.actions.run(
-        outputs = outputs,
-        inputs = inputs,
+        outputs = [analysis_dir],
+        inputs = analyze_inputs,
         tools = [tapa_cli, ctx.executable.vitis_hls_env],
         executable = ctx.executable.vitis_hls_env,
-        arguments = tapa_cmd,
+        arguments = analyze_cmd,
+        mnemonic = "TapaAnalyze",
+        use_default_shell_env = True,
+        execution_requirements = {"requires-network": "1"} if remote_host else {},
+    )
+
+    synth_cmd = [tapa_cli.path, "--work-dir", synth_dir.path] + remote_args + [
+        "synth",
+        "--override-report-schema-version",
+        "redacted",
+        "--jobs",
+        str(ctx.attr.jobs),
+    ]
+    if ctx.attr.platform_name:
+        synth_cmd.extend(["--platform", ctx.attr.platform_name])
+    if ctx.attr.clock_period:
+        synth_cmd.extend(["--clock-period", ctx.attr.clock_period])
+    if ctx.attr.part_num:
+        synth_cmd.extend(["--part-num", ctx.attr.part_num])
+    if not ctx.attr.platform_name and not ctx.attr.clock_period and not ctx.attr.part_num:
+        synth_cmd.extend(["--part-num", XILINX_PART_NUM, "--clock-period", "3.33"])
+    if ctx.attr.enable_synth_util:
+        synth_cmd.extend(["--enable-synth-util"])
+
+    synth_inputs = [analysis_dir]
+    if ctx.file.ssh_key:
+        synth_inputs.append(ctx.file.ssh_key)
+    ctx.actions.run_shell(
+        outputs = [synth_dir, pack_input_dir],
+        inputs = synth_inputs,
+        tools = [tapa_cli, ctx.executable.vitis_hls_env],
+        command = _staged_tapa_command(
+            analysis_dir.path,
+            synth_dir.path,
+            [ctx.executable.vitis_hls_env.path] + synth_cmd,
+        ) + "\n" + _stage_pack_inputs(synth_dir.path, pack_input_dir.path),
+        mnemonic = "TapaSynth",
         use_default_shell_env = True,
         execution_requirements = _vendor_exec_requirements(ctx.attr.jobs, remote_host),
     )
 
-    return [DefaultInfo(files = depset([output_file or work_dir]))]
+    pack_cmd = [tapa_cli.path, "--work-dir", work_dir.path] + remote_args + [
+        "pack",
+        "--output",
+        output_file.path,
+    ]
+    if ctx.file.connectivity:
+        pack_cmd.extend(["--connectivity", ctx.file.connectivity.path])
+    for rtl_file in ctx.files.custom_rtl_files:
+        pack_cmd.extend(["--custom-rtl", rtl_file.path])
+
+    pack_inputs = [pack_input_dir] + ctx.files.custom_rtl_files
+    if ctx.file.connectivity:
+        pack_inputs.append(ctx.file.connectivity)
+    if ctx.file.ssh_key:
+        pack_inputs.append(ctx.file.ssh_key)
+    ctx.actions.run_shell(
+        outputs = [output_file, work_dir],
+        inputs = pack_inputs,
+        tools = [tapa_cli, ctx.executable.vitis_hls_env],
+        command = _staged_tapa_command(
+            pack_input_dir.path,
+            work_dir.path,
+            [ctx.executable.vitis_hls_env.path] + pack_cmd,
+        ),
+        mnemonic = "TapaPack",
+        use_default_shell_env = True,
+        execution_requirements = _vendor_exec_requirements(ctx.attr.jobs, remote_host),
+    )
+
+    return [DefaultInfo(files = depset([output_file]))]
 
 def _tapa_reuse_work_dir_xo_impl(ctx):
     tapa_cli = ctx.executable.tapa_cli

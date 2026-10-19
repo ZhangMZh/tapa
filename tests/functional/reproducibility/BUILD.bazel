@@ -5,6 +5,7 @@
 # RapidStream Contributor License Agreement.
 
 load("//bazel:tapa_rules.bzl", "tapa_reuse_work_dir_xo", "tapa_xo")
+load("//bazel:tapa_rules_test.bzl", "tapa_rules_test_suite")
 load("//bazel:test_tool_rules.bzl", "test_tool_test")
 
 tapa_xo(
@@ -71,3 +72,5 @@ test_tool_test(
         "//tests/apps/vadd:vadd-xo",
     ],
 )
+
+tapa_rules_test_suite(name = "pipeline")
