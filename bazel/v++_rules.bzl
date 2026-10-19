@@ -5,6 +5,7 @@
 # RapidStream Contributor License Agreement.
 
 load("@vars//:vars.bzl", "XILINX_PLATFORM_REPO_PATHS", "XILINX_TOOL_PATH", "XILINX_TOOL_VERSION", "XILINX_XRT_SETUP")
+load("@vitis_hls//:defs.bzl", "VIVADO_AVAILABLE")
 load("//bazel:sh_utils.bzl", "sh_quote")
 load("//bazel:xilinx_versions.bzl", "xilinx_tool_dir_candidates")
 
@@ -85,7 +86,7 @@ def _vpp_exec_requirements(target):
         "resources:memory:{}".format(memory): "",
     }
 
-vpp_xclbin = rule(
+_vpp_xclbin = rule(
     implementation = _vpp_xclbin_impl,
     attrs = {
         "vpp": attr.label(
@@ -117,6 +118,19 @@ vpp_xclbin = rule(
         ),
     },
 )
+
+def vpp_xclbin(name, **kwargs):
+    """Link an XO when Vivado is available, preserving caller constraints.
+
+    Args:
+      name: Target name.
+      **kwargs: Attributes forwarded to the underlying rule.
+    """
+    constraints = list(kwargs.get("target_compatible_with", []))
+    if not VIVADO_AVAILABLE and "@platforms//:incompatible" not in constraints:
+        constraints.append("@platforms//:incompatible")
+    kwargs["target_compatible_with"] = constraints
+    _vpp_xclbin(name = name, **kwargs)
 
 def _xilinx_wrapper_impl(ctx):
     output = ctx.actions.declare_file(ctx.attr.name)

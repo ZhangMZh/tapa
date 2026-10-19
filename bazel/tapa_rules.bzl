@@ -17,6 +17,7 @@ load(
     "XILINX_PART_NUM",
     "XILINX_TOOL_VERSION",
 )
+load("@vitis_hls//:defs.bzl", "VITIS_HLS_RUNNER_AVAILABLE", "VIVADO_AVAILABLE")
 load("//bazel:sh_utils.bzl", "sh_quote")
 load("//bazel:xilinx_versions.bzl", "vitis_layout_subdir")
 
@@ -74,6 +75,14 @@ def _vendor_exec_requirements(jobs, remote_host):
         # Vendor tools run on the remote host, so only the ssh client is local.
         reqs = {"requires-network": "1"}
     return reqs
+
+def _with_tool_constraints(target, kwargs):
+    kwargs = dict(kwargs)
+    constraints = list(kwargs.get("target_compatible_with", []))
+    if (not VITIS_HLS_RUNNER_AVAILABLE or (target == "xilinx-vitis" and not VIVADO_AVAILABLE)) and "@platforms//:incompatible" not in constraints:
+        constraints.append("@platforms//:incompatible")
+    kwargs["target_compatible_with"] = constraints
+    return kwargs
 
 def _staged_tapa_command(source, destination, arguments):
     """Copy one content-addressed stage, then execute TAPA in the next."""
@@ -291,7 +300,7 @@ set -ex
 
     return [DefaultInfo(files = depset([output_file]))]
 
-tapa_reuse_work_dir_xo = rule(
+_tapa_reuse_work_dir_xo = rule(
     implementation = _tapa_reuse_work_dir_xo_impl,
     attrs = {
         "srcs": attr.label_list(allow_files = [".cpp"], mandatory = True),
@@ -323,7 +332,7 @@ tapa_reuse_work_dir_xo = rule(
     },
 )
 
-tapa_xo = rule(
+_tapa_xo = rule(
     implementation = _tapa_xo_impl,
     attrs = {
         "srcs": attr.label_list(allow_files = [".cpp"], mandatory = True),
@@ -371,3 +380,27 @@ tapa_xo = rule(
         ),
     },
 )
+
+def tapa_reuse_work_dir_xo(name, **kwargs):
+    """Build the work-dir reuse fixture when XO tools are available.
+
+    Args:
+      name: Target name.
+      **kwargs: Attributes forwarded to the underlying rule.
+    """
+    _tapa_reuse_work_dir_xo(
+        name = name,
+        **_with_tool_constraints("xilinx-vitis", kwargs)
+    )
+
+def tapa_xo(name, **kwargs):
+    """Analyze, synthesize, and package a kernel with staged cache inputs.
+
+    Args:
+      name: Target name.
+      **kwargs: Attributes forwarded to the underlying rule.
+    """
+    _tapa_xo(
+        name = name,
+        **_with_tool_constraints(kwargs.get("target", "xilinx-vitis"), kwargs)
+    )

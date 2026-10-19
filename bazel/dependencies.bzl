@@ -33,6 +33,9 @@ def _first_existing_dir(rctx, paths):
             return path
     return ""
 
+def _is_executable(rctx, path):
+    return rctx.execute(["test", "-x", path]).return_code == 0
+
 def _optional_local_repository_impl(rctx):
     """Repository rule that creates a stub when no candidate path exists."""
     build_file_content = rctx.attr.build_file_content
@@ -141,9 +144,22 @@ def _vitis_hls_repository_impl(rctx):
     # when they did not, which compiles fine and silently tests nothing, so a
     # target that has no meaning without them needs to say so itself --
     # see `//tapa-lib:vendor-parity-test`.
+    hls_runner_available = available and (
+        bool(rctx.attr.remote_host) or
+        (path and (
+            _is_executable(rctx, path + "/bin/vitis_hls") or
+            _is_executable(rctx, path + "/bin/vitis-run")
+        ))
+    )
+    vivado_available = bool(rctx.attr.remote_host) or any([
+        _is_executable(rctx, candidate + "/bin/vivado")
+        for candidate in rctx.attr.vivado_paths
+    ])
     rctx.file(
         "defs.bzl",
-        "VITIS_HLS_AVAILABLE = {}\n".format("True" if available else "False"),
+        "VITIS_HLS_AVAILABLE = {}\n".format("True" if available else "False") +
+        "VITIS_HLS_RUNNER_AVAILABLE = {}\n".format("True" if hls_runner_available else "False") +
+        "VIVADO_AVAILABLE = {}\n".format("True" if vivado_available else "False"),
     )
 
 _vitis_hls_repository = repository_rule(
@@ -159,6 +175,7 @@ _vitis_hls_repository = repository_rule(
         "remote_key_file": attr.string(default = ""),
         "remote_ssh_control_dir": attr.string(default = ""),
         "remote_ssh_control_persist": attr.string(default = "30m"),
+        "vivado_paths": attr.string_list(mandatory = True),
     },
 )
 
@@ -211,6 +228,12 @@ def _load_dependencies(module_ctx):
     if REMOTE_HOST and REMOTE_XILINX_TOOL_PATH:
         remote_vitis_hls_path = REMOTE_XILINX_TOOL_PATH + vitis_hls_subdir + XILINX_TOOL_VERSION
 
+    vivado_paths = xilinx_tool_dir_candidates(
+        XILINX_TOOL_PATH,
+        "Vivado",
+        XILINX_TOOL_VERSION,
+    )
+
     _vitis_hls_repository(
         name = "vitis_hls",
         build_file_content = """
@@ -243,6 +266,7 @@ cc_library(
         remote_key_file = REMOTE_KEY_FILE,
         remote_ssh_control_dir = REMOTE_SSH_CONTROL_DIR,
         remote_ssh_control_persist = REMOTE_SSH_CONTROL_PERSIST,
+        vivado_paths = vivado_paths,
     )
 
     xsim_paths = [

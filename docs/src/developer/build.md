@@ -87,9 +87,12 @@ If your tools are elsewhere, set `XILINX_TOOL_PATH` and
 `XILINX_TOOL_VERSION` in `VARS.local.bzl`. Both classic
 `<root>/<Tool>/<version>` and AMD unified `<root>/<version>/<Tool>` layouts
 are probed. If XRT is unavailable, set `HAS_XRT = False` there to mark
-XRT-dependent test targets incompatible instead of failing them. See
-`bazel/vars.bzl` for the override mechanism and `VARS.bzl` for all available
-settings.
+XRT-dependent test targets incompatible instead of failing them. Bazel also
+probes the HLS headers and runner and the Vivado executable; targets that
+require unavailable tools are marked incompatible and skipped, while host,
+unit, and tapacc analysis tests remain available. Remote configurations stay
+enabled. See `bazel/vars.bzl` for the override mechanism and `VARS.bzl` for
+all available settings.
 
 ## Build TAPA from Source
 
