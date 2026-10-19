@@ -124,8 +124,13 @@ pub fn normalize_hls_report_text(text: &str) -> String {
     });
     static ROW_ID: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r#"<row id="\d+""#).expect("static row regex must compile"));
+    static RUNFILES: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?:(?:\.\./)*/?)[^\s"<>\|,]*tapa\.runfiles/_main/tapa-lib/"#)
+            .expect("static runfiles regex must compile")
+    });
     let text = DATE.replace_all(text, "Date:           Tue Jan 01 00:00:00 1980");
-    ROW_ID.replace_all(&text, r#"<row id="0""#).into_owned()
+    let text = ROW_ID.replace_all(&text, r#"<row id="0""#);
+    RUNFILES.replace_all(&text, "tapa-lib/").into_owned()
 }
 
 pub fn parse_csynth_xml(bytes: &[u8]) -> Result<CsynthReport> {

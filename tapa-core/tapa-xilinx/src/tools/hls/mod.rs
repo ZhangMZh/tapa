@@ -678,7 +678,7 @@ mod tests {
         .unwrap();
         fs_err::write(
             syn.join("report/k_csynth.xml"),
-            r#"<profile><UserAssignments><TopModelName>k</TopModelName><Part>xcu250</Part><TargetClockPeriod>3.33</TargetClockPeriod></UserAssignments><PerformanceEstimates><SummaryOfTimingAnalysis><EstimatedClockPeriod>2.0</EstimatedClockPeriod></SummaryOfTimingAnalysis><SourceLocation>/src/k.cpp:7</SourceLocation><row id="17" col0="read"/></PerformanceEstimates></profile>"#,
+            r#"<profile><UserAssignments><TopModelName>k</TopModelName><Part>xcu250</Part><TargetClockPeriod>3.33</TargetClockPeriod></UserAssignments><PerformanceEstimates><SummaryOfTimingAnalysis><EstimatedClockPeriod>2.0</EstimatedClockPeriod></SummaryOfTimingAnalysis><SourceLocation>/src/k.cpp:7</SourceLocation><row id="17" col0="read"/><ToolHeader>/tmp/sandbox/abc/tapa.runfiles/_main/tapa-lib/tapa/xilinx/hls/stream.h:99</ToolHeader></PerformanceEstimates></profile>"#,
         )
         .unwrap();
         fs_err::write(
@@ -696,6 +696,8 @@ mod tests {
         assert!(xml.contains(r#"<row id="0" col0="read"/>"#));
         assert!(!xml.contains(r#"row id="17""#));
         assert!(xml.contains("/src/k.cpp:7"));
+        assert!(xml.contains("tapa-lib/tapa/xilinx/hls/stream.h:99"));
+        assert!(!xml.contains("/tmp/sandbox/abc"));
     }
 
     #[test]

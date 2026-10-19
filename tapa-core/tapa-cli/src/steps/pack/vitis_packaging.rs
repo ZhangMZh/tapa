@@ -15,9 +15,6 @@
 
 use camino::Utf8PathBuf;
 use std::path::Path;
-use std::sync::LazyLock;
-
-use regex::Regex;
 use tapa_ir::{ClockPeriod, Design, WorkState};
 use tapa_xilinx::{
     normalize_hls_report_text, pack_xo as xilinx_pack_xo, DeviceInfo, KernelXmlArgs,
@@ -154,10 +151,6 @@ fn apply_pack_overlays(args: &PackArgs, ctx: &CliContext, hdl_dir: &Path) -> Res
 // copy here once drifted from it (`_AWREGION`/`_ARREGION`).
 use tapa_protocol::m_axi_suffixes;
 
-static TAPA_LIB_RUNFILES_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?:(?:\.\./)*/?)[^\s"<>\|,]*tapa\.runfiles/_main/tapa-lib/"#).unwrap()
-});
-
 fn top_rtl_m_axi_bases(
     hdl_dir: &Path,
     top_name: &str,
@@ -285,9 +278,6 @@ fn sanitize_hls_report_text(text: &str, work_dir: &Path) -> String {
         }
         replace_report_rewritten_prefixes(&mut out, &base);
     }
-    out = TAPA_LIB_RUNFILES_RE
-        .replace_all(&out, "tapa-lib/")
-        .into_owned();
     canonicalize_report_tables(&out)
 }
 
