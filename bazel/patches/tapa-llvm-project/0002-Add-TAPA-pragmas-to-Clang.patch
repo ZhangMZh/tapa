@@ -1,10 +1,10 @@
 diff --git a/clang/include/clang/Basic/Attr.td b/clang/include/clang/Basic/Attr.td
-index e98592f..d09a486 100644
+index 2c62f46d4..edd5a72cb 100644
 --- a/clang/include/clang/Basic/Attr.td
 +++ b/clang/include/clang/Basic/Attr.td
-@@ -5345,3 +5345,137 @@ def ModularFormat : InheritableAttr {
+@@ -5503,3 +5503,137 @@ def Personality : InheritableAttr {
    let Subjects = SubjectList<[Function]>;
-   let Documentation = [ModularFormatDocs];
+   let Documentation = [PersonalityDocs];
  }
 +
 +// Begin TAPA
@@ -141,7 +141,7 @@ index e98592f..d09a486 100644
 +
 +// End TAPA
 diff --git a/clang/include/clang/Basic/AttributeCommonInfo.h b/clang/include/clang/Basic/AttributeCommonInfo.h
-index 77b5eb8..ae24cd2 100644
+index 77b5eb8a1..ae24cd287 100644
 --- a/clang/include/clang/Basic/AttributeCommonInfo.h
 +++ b/clang/include/clang/Basic/AttributeCommonInfo.h
 @@ -72,7 +72,7 @@ public:
@@ -154,7 +154,7 @@ index 77b5eb8..ae24cd2 100644
      None,
      Optional,
 diff --git a/clang/lib/Basic/Attributes.cpp b/clang/lib/Basic/Attributes.cpp
-index 5878a4e..9fe6ff5 100644
+index 8ee45a338..e85f1ea95 100644
 --- a/clang/lib/Basic/Attributes.cpp
 +++ b/clang/lib/Basic/Attributes.cpp
 @@ -236,7 +236,8 @@ getScopeFromNormalizedScopeName(StringRef ScopeName) {
@@ -168,10 +168,10 @@ index 5878a4e..9fe6ff5 100644
  
  unsigned AttributeCommonInfo::calculateAttributeSpellingListIndex() const {
 diff --git a/clang/lib/Sema/SemaDeclAttr.cpp b/clang/lib/Sema/SemaDeclAttr.cpp
-index 3f0ea5c..47a6989 100644
+index 1b272b541..60f23f5a6 100644
 --- a/clang/lib/Sema/SemaDeclAttr.cpp
 +++ b/clang/lib/Sema/SemaDeclAttr.cpp
-@@ -162,6 +162,192 @@ bool Sema::checkStringLiteralArgumentAttr(const ParsedAttr &AL, unsigned ArgNum,
+@@ -165,6 +165,192 @@ bool Sema::checkStringLiteralArgumentAttr(const ParsedAttr &AL, unsigned ArgNum,
    return checkStringLiteralArgumentAttr(AL, ArgExpr, Str, ArgLocation);
  }
  
@@ -364,9 +364,9 @@ index 3f0ea5c..47a6989 100644
  /// Check if the passed-in expression is of type int or bool.
  static bool isIntOrBool(Expr *Exp) {
    QualType QT = Exp->getType();
-@@ -8033,6 +8219,41 @@ ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D, const ParsedAttr &AL,
-   case ParsedAttr::AT_GCCStruct:
-     handleGCCStructAttr(S, D, AL);
+@@ -8502,6 +8688,41 @@ ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D, const ParsedAttr &AL,
+           << AL << AL.isRegularKeywordAttribute() << D->getLocation();
+     handleSimpleAttribute<PointerFieldProtectionAttr>(S, D, AL);
      break;
 +
 +  // Tapa attributes.
@@ -407,10 +407,10 @@ index 3f0ea5c..47a6989 100644
  }
  
 diff --git a/clang/lib/Sema/SemaStmtAttr.cpp b/clang/lib/Sema/SemaStmtAttr.cpp
-index 27fd556..a36c99f 100644
+index 3e9dc9c5e..3ec1b7ccd 100644
 --- a/clang/lib/Sema/SemaStmtAttr.cpp
 +++ b/clang/lib/Sema/SemaStmtAttr.cpp
-@@ -188,6 +188,96 @@ static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const ParsedAttr &A,
+@@ -202,6 +202,96 @@ static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const ParsedAttr &A,
    return LoopHintAttr::CreateImplicit(S.Context, Option, State, ValueExpr, A);
  }
  
@@ -507,7 +507,7 @@ index 27fd556..a36c99f 100644
  namespace {
  class CallExprFinder : public ConstEvaluatedExprVisitor<CallExprFinder> {
    bool FoundAsmStmt = false;
-@@ -724,6 +814,20 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
+@@ -756,6 +846,20 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
      return S.CreateAnnotationAttr(A);
    case ParsedAttr::AT_Atomic:
      return handleAtomicAttr(S, St, A, Range);
@@ -530,7 +530,7 @@ index 27fd556..a36c99f 100644
                              ParsedAttrInfo::NotHandled) {
 diff --git a/clang/lib/Sema/TapaAttrs.h b/clang/lib/Sema/TapaAttrs.h
 new file mode 100644
-index 0000000..2751c76
+index 000000000..2751c76ae
 --- /dev/null
 +++ b/clang/lib/Sema/TapaAttrs.h
 @@ -0,0 +1,54 @@

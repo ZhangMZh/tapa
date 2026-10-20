@@ -1,7 +1,7 @@
 diff --git a/utils/bazel/llvm-project-overlay/libc/BUILD.bazel b/utils/bazel/llvm-project-overlay/libc/BUILD.bazel
 --- a/utils/bazel/llvm-project-overlay/libc/BUILD.bazel
 +++ b/utils/bazel/llvm-project-overlay/libc/BUILD.bazel
-@@ -32,7 +32,7 @@
+@@ -44,7 +44,7 @@ exports_files([
  # Flag documentation: https://bazel.build/extending/config
  string_flag(
      name = "mpfr",
@@ -11,9 +11,10 @@ diff --git a/utils/bazel/llvm-project-overlay/libc/BUILD.bazel b/utils/bazel/llv
          "disable",  # Skip tests that need mpfr
          "external",  # Build mpfr from source
 diff --git a/utils/bazel/llvm-project-overlay/lld/BUILD.bazel b/utils/bazel/llvm-project-overlay/lld/BUILD.bazel
+index 959b9f94b..31604d15c 100644
 --- a/utils/bazel/llvm-project-overlay/lld/BUILD.bazel
 +++ b/utils/bazel/llvm-project-overlay/lld/BUILD.bazel
-@@ -106,8 +106,8 @@
+@@ -111,8 +111,8 @@ cc_library(
          "//llvm:TargetParser",
          "//llvm:TransformUtils",
          "//llvm:config",
@@ -27,7 +28,7 @@ diff --git a/utils/bazel/llvm-project-overlay/lld/BUILD.bazel b/utils/bazel/llvm
 diff --git a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
 --- a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
 +++ b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
-@@ -324,14 +324,8 @@
+@@ -467,14 +467,8 @@
          ":config",
          ":Demangle",
          "//third-party/siphash",
@@ -41,10 +42,10 @@ diff --git a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel b/utils/bazel/llv
 -        "//third-party:zstd",
 +        # "//third-party:zlib",
 +        # "//third-party:zstd",
+         "//libc:shared_math_headers_for_apfloat",
      ],
  )
- 
-@@ -4434,7 +4428,7 @@
+@@ -4717,7 +4711,7 @@
  # Flag documentation: https://bazel.build/extending/config
  string_flag(
      name = "pfm",

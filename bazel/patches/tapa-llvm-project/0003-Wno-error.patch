@@ -1,6 +1,7 @@
+diff --git a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
 --- a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
 +++ b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
-@@ -274,7 +274,7 @@ cc_library(
+@@ -402,7 +402,7 @@
          "include/llvm/Support/Extension.def",
          "include/llvm/Support/VCSRevision.h",
      ],
@@ -9,7 +10,7 @@
      defines = select({
          "@platforms//cpu:aarch64": [
          ],
-@@ -1441,7 +1441,7 @@ cc_library(
+@@ -1767,7 +1761,7 @@
      hdrs = glob(["include/llvm/Transforms/Instrumentation/*.h"]) + [
          "include/llvm/Transforms/Utils/Instrumentation.h",
      ],

@@ -83,15 +83,15 @@ llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm", 
 http_archive(
     name = "llvm_static_tools",
     build_file_content = 'exports_files(["BUILD.bazel"])',
-    sha256 = "8e4358297c924a4a133456eaf3fb5aef4a0e2aa8d32135501bd4f2ad65f77ac9",
-    urls = ["https://github.com/hermeticbuild/hermetic-llvm/releases/download/llvm-22.1.8-3/llvm-toolchain-minimal-22.1.8-linux-amd64-musl.tar.zst"],
+    sha256 = "2808ea0503af3656373fc141ddc7d082b53c7f858efd5245aed0241734257348",
+    urls = ["https://github.com/hermeticbuild/hermetic-llvm/releases/download/llvm-23.1.2-2/llvm-toolchain-minimal-23.1.2-linux-amd64-musl.tar.zst"],
 )
 
 llvm_distribution = use_repo_rule("@toolchains_llvm//toolchain:rules.bzl", "llvm")
 
 llvm_distribution(
     name = "llvm_distribution",
-    llvm_versions = {"": "22.1.8"},
+    llvm_versions = {"": "23.1.2"},
 )
 
 llvm_toolchain = use_repo_rule("//bazel:llvm_toolchain.bzl", "llvm_toolchain")
@@ -112,7 +112,7 @@ use_repo(rust, "rust_toolchains")
 register_toolchains("@rust_toolchains//:all")
 
 llvm.toolchain(
-    llvm_version = "22.1.8",
+    llvm_version = "23.1.2",
     stdlib = {
         "linux-x86_64": "stdc++",
         "linux-aarch64": "stdc++",
@@ -180,15 +180,15 @@ use_repo(load_dependencies, "ssh_key", "vitis_hls", "xsim_xv")
 
 bazel_dep(name = "libuuid", version = "2.41.2.bcr.0")
 
-LLVM_VERSION_MAJOR = 22
+LLVM_VERSION_MAJOR = 23
 
 LLVM_VERSION_MINOR = 1
 
-LLVM_VERSION_PATCH = 8
+LLVM_VERSION_PATCH = 2
 
 LLVM_VERSION = "{}.{}.{}".format(LLVM_VERSION_MAJOR, LLVM_VERSION_MINOR, LLVM_VERSION_PATCH)
 
-LLVM_SHA256 = "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888"
+LLVM_SHA256 = "c98bbef08a2b4c2613cd50e9aa9ae7b69b1fe6c16b2c40373bc0ab6116fdf78a"
 
 http_archive(
     name = "tapa-llvm-project",
@@ -229,6 +229,7 @@ EOF
         "//bazel:patches/tapa-llvm-project/0001-Disable-zlib-zstd-mpfr-and-pfm.patch",
         "//bazel:patches/tapa-llvm-project/0002-Add-TAPA-pragmas-to-Clang.patch",
         "//bazel:patches/tapa-llvm-project/0003-Wno-error.patch",
+        "//bazel:patches/tapa-llvm-project/0004-Unconditional-backtrace-and-mallinfo-defines.patch",
     ],
     sha256 = LLVM_SHA256,
     strip_prefix = "llvm-project-{}.src".format(LLVM_VERSION),

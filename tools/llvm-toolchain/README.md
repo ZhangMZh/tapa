@@ -20,13 +20,13 @@ The Linux x86_64 toolchain combines two pinned archives:
 
 | Source | Archive | SHA256 |
 |---|---|---|
-| [hermetic-llvm 22.1.8](https://github.com/hermeticbuild/hermetic-llvm/releases/tag/llvm-22.1.8-3) | `llvm-toolchain-minimal-22.1.8-linux-amd64-musl.tar.zst` | `8e4358297c924a4a133456eaf3fb5aef4a0e2aa8d32135501bd4f2ad65f77ac9` |
-| [Official LLVM 22.1.8](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) | `LLVM-22.1.8-Linux-X64.tar.xz` | `df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384` |
+| [hermetic-llvm 23.1.2](https://github.com/hermeticbuild/hermetic-llvm/releases/tag/llvm-23.1.2-2) | `llvm-toolchain-minimal-23.1.2-linux-amd64-musl.tar.zst` | `2808ea0503af3656373fc141ddc7d082b53c7f858efd5245aed0241734257348` |
+| [Official LLVM 23.1.2](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.2) | `LLVM-23.1.2-Linux-X64.tar.xz` | `b5ed9675149cc837c282e9b6962c276c9fa62863d5b2f91537b60848552995b7` |
 
 The [repository rule](../../bazel/llvm_toolchain.bzl) uses the hermetic-llvm
 archive's static multicall `bin/llvm` and compiler/tool symlinks on Linux
 x86_64. The official archive supplies `include/` and `lib/`, including the
-`lib/clang/22` compiler resources and ASan libraries required by
+`lib/clang/23` compiler resources and ASan libraries required by
 `--config=asan`. Every configured C/C++ action tool uses the static binary on
 Linux x86_64. Auxiliary programs absent from the static archive, such as
 `clang-apply-replacements`, remain available from the official archive and
@@ -68,12 +68,12 @@ Configure custom archives through `toolchains_llvm`'s per-platform `urls`,
 
 ## Version policy
 
-All Linux x86_64 distributions use the same LLVM 22.1.8 static C/C++ action
+All Linux x86_64 distributions use the same LLVM 23.1.2 static C/C++ action
 tools and matching official resources. Static musl binaries remove these
 tools' dependency on a distribution-specific glibc or libstdc++ runtime. Target
 library compatibility still depends on the distribution's development files.
 Other execution platforms retain the `toolchains_llvm` distribution selection
-for LLVM 22.1.8.
+for LLVM 23.1.2.
 
 The optional source builder's 18.1.8 and 14.0.0 pins are independent of the
 active Bazel toolchain. Its source hashes live in `build-llvm-toolchain.sh`

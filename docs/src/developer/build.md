@@ -106,7 +106,7 @@ This command compiles all TAPA targets, including the compiler, runtime
 library, and tests.
 
 On Linux x86_64, the compiler, linker, and binary utilities used by Bazel C/C++
-actions are static LLVM 22.1.8 binaries from the published hermetic-llvm
+actions are static LLVM 23.1.2 binaries from the published hermetic-llvm
 archive. Headers and compiler-rt libraries come from the same version's
 official archive. These action tools run without host libxml2, zlib, or
 libstdc++ shared libraries. Retained auxiliary LLVM programs keep their
@@ -114,7 +114,7 @@ upstream runtime dependencies.
 Generated programs still use the system's C and C++ headers and libraries;
 this is not a bundled sysroot. Other execution platforms use the distributions
 selected by `toolchains_llvm`. The LLVM source dependency used to build
-`tapacc` is pinned separately in `MODULE.bazel` (currently 22.1.8). See the
+`tapacc` is pinned separately in `MODULE.bazel` (currently 23.1.2). See the
 [toolchain details](https://github.com/tuna/tapa/tree/main/tools/llvm-toolchain)
 for archive provenance and the optional source build.
 
