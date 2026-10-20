@@ -4,8 +4,8 @@ module(name = "tapa")
 
 bazel_dep(name = "bazel_skylib", version = "1.9.2", dev_dependency = True)
 bazel_dep(name = "platforms", version = "1.1.0", dev_dependency = True)
-bazel_dep(name = "rules_cc", version = "0.2.22", dev_dependency = True)
-bazel_dep(name = "rules_rust", version = "0.73.0", dev_dependency = True)
+bazel_dep(name = "rules_cc", version = "0.2.26", dev_dependency = True)
+bazel_dep(name = "rules_rust", version = "0.74.0", dev_dependency = True)
 bazel_dep(name = "rules_pkg", version = "1.3.0", dev_dependency = True)
 
 # 2.0.0-rc3 generated launchers require sys._base_executable, which is absent
@@ -13,9 +13,9 @@ bazel_dep(name = "rules_pkg", version = "1.3.0", dev_dependency = True)
 # tapa-llvm-project repo references @rules_python//python:defs.bzl.
 bazel_dep(name = "rules_python", version = "1.9.2", dev_dependency = True)
 bazel_dep(name = "rules_shell", version = "0.8.0", dev_dependency = True)
-bazel_dep(name = "rules_verilator", version = "0.3.2", dev_dependency = True)
-bazel_dep(name = "rules_verilog", version = "1.4.2", dev_dependency = True)
-bazel_dep(name = "toolchains_llvm", version = "1.8.0", dev_dependency = True)
+bazel_dep(name = "rules_verilator", version = "1.1.2", dev_dependency = True)
+bazel_dep(name = "rules_verilog", version = "1.4.3", dev_dependency = True)
+bazel_dep(name = "toolchains_llvm", version = "1.11.3", dev_dependency = True)
 bazel_dep(name = "verilator", version = "5.044", dev_dependency = True)
 
 # 5.046.bcr.3 pulls rules_cc_autoconf through BCR bison/flex/m4. That helper
@@ -27,6 +27,10 @@ single_version_override(
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
+# mdBook 0.5 changed the preprocessor RenderContext format; the latest
+# mdbook-admonish (1.20.0, including its main branch) still links mdbook
+# 0.4 and cannot parse 0.5 input. Keep mdBook on 0.4.x until
+# mdbook-admonish supports 0.5.
 http_archive(
     name = "mdbook_linux_amd64",
     build_file_content = 'exports_files(["mdbook"])',
@@ -144,9 +148,20 @@ git_override(
 non_module_boost_repositories = use_extension("@com_github_nelhage_rules_boost//:boost/repositories.bzl", "non_module_dependencies")
 use_repo(non_module_boost_repositories, "boost")
 
-bazel_dep(name = "gflags", version = "2.2.2.bcr.1")
+bazel_dep(name = "gflags", version = "2.3.1")
+
+# gflags 2.3.1 replaced include_prefix = "gflags" with includes = ["gen"].
+# Both expose <gflags/gflags.h> to cc dependents, but only the include_prefix
+# layout routes headers through _virtual_includes artifacts in CcInfo
+# compilation contexts, which bazel/header_extractor.bzl requires to stage
+# runtime headers for tapacc and the Vitis HLS jobs.
+single_version_override(
+    module_name = "gflags",
+    patches = ["//bazel:patches/gflags/0001-Restore-include-prefix-layout.patch"],
+)
+
 bazel_dep(name = "glog", version = "0.5.0")  # Must be 0.5.0; dpi requires this version.
-bazel_dep(name = "googletest", version = "1.18.0")
+bazel_dep(name = "googletest", version = "1.18.0.bcr.1")
 
 single_version_override(
     module_name = "glog",

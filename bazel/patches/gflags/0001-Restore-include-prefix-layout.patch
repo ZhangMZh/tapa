@@ -1,0 +1,15 @@
+gflags 2.3.1 replaced include_prefix = "gflags" with includes = ["gen"].
+Both expose <gflags/gflags.h> to cc dependents, but only the former routes
+headers through _virtual_includes artifacts in CcInfo compilation contexts,
+which TAPA's header_extractor (bazel/header_extractor.bzl) relies on to
+stage runtime headers for tapacc and the Vitis HLS jobs.
+--- bazel/gflags.bzl
++++ bazel/gflags.bzl
+@@ -104,6 +104,6 @@
+         srcs = srcs,
+         copts = copts,
+         linkopts = linkopts,
+         visibility = ["//visibility:public"],
+-        includes = ["gen"],
++        strip_include_prefix = "gen",
+     )
