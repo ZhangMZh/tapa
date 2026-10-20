@@ -15,7 +15,7 @@ sh_test(
         "//bazel:is_macos": ["//bazel:sim_env.sh"],
         "//conditions:default": ["//bazel:v++_env.sh"],
     }),
-    args = ["$(location cannon-host)"] + select({
+    args = ["$(rootpath cannon-host)"] + select({
         "//bazel:is_macos": ["1000"],
         "//conditions:default": [],
     }),
@@ -30,10 +30,10 @@ sh_test(
     timeout = "long",  # 85s without contention
     srcs = ["//bazel:v++_env.sh"],
     args = [
-        "$(location cannon-host)",
-        "--scatter_bitstream=$(location scatter)",
-        "--proc_elem_bitstream=$(location proc-elem)",
-        "--gather_bitstream=$(location gather)",
+        "$(rootpath cannon-host)",
+        "--scatter_bitstream=$(rootpath scatter)",
+        "--proc_elem_bitstream=$(rootpath proc-elem)",
+        "--gather_bitstream=$(rootpath gather)",
     ],
     data = [
         ":cannon-host",
@@ -98,7 +98,7 @@ sh_test(
         "//bazel:is_macos": ["//bazel:sim_env.sh"],
         "//conditions:default": ["//bazel:v++_env.sh"],
     }),
-    args = ["$(location cannon-host)"] + select({
+    args = ["$(rootpath cannon-host)"] + select({
         "//bazel:is_macos": ["1000"],
         "//conditions:default": [],
     }),
@@ -112,10 +112,10 @@ sh_test(
     timeout = "long",  # 125s without contention
     srcs = ["//bazel:v++_env.sh"],
     args = [
-        "$(location cannon-host-4x4)",
-        "--scatter_bitstream=$(location scatter-4x4)",
-        "--proc_elem_bitstream=$(location proc-elem-4x4)",
-        "--gather_bitstream=$(location gather-4x4)",
+        "$(rootpath cannon-host-4x4)",
+        "--scatter_bitstream=$(rootpath scatter-4x4)",
+        "--proc_elem_bitstream=$(rootpath proc-elem-4x4)",
+        "--gather_bitstream=$(rootpath gather-4x4)",
     ],
     data = [
         ":cannon-host-4x4",

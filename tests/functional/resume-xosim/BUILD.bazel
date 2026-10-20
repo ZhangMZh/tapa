@@ -12,9 +12,9 @@ sh_test(
     timeout = "long",
     srcs = ["//bazel:v++_env.sh"],
     args = [
-        "$(location :resume-xosim-test.sh)",
-        "$(location //tests/apps/vadd:vadd-host)",
-        "--bitstream=$(location //tests/apps/vadd:vadd-xo)",
+        "$(rootpath :resume-xosim-test.sh)",
+        "$(rootpath //tests/apps/vadd:vadd-host)",
+        "--bitstream=$(rootpath //tests/apps/vadd:vadd-xo)",
         "1000",
     ],
     data = [

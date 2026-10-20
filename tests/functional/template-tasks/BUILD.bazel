@@ -15,7 +15,7 @@ sh_test(
         "//bazel:is_macos": ["//bazel:sim_env.sh"],
         "//conditions:default": ["//bazel:v++_env.sh"],
     }),
-    args = ["$(location template-tasks-host)"] + select({
+    args = ["$(rootpath template-tasks-host)"] + select({
         "//bazel:is_macos": ["1000"],
         "//conditions:default": [],
     }),
@@ -30,8 +30,8 @@ sh_test(
     timeout = "moderate",
     srcs = ["//bazel:xrt_env.sh"],
     args = [
-        "$(location template-tasks-host)",
-        "--bitstream=$(location template-tasks-zip)",
+        "$(rootpath template-tasks-host)",
+        "--bitstream=$(rootpath template-tasks-zip)",
         "1000",
     ],
     data = [

@@ -15,7 +15,7 @@ sh_test(
         "//bazel:is_macos": ["//bazel:sim_env.sh"],
         "//conditions:default": ["//bazel:v++_env.sh"],
     }),
-    args = ["$(location blackhole-host)"] + select({
+    args = ["$(rootpath blackhole-host)"] + select({
         "//bazel:is_macos": ["1000"],
         "//conditions:default": [],
     }),
@@ -30,8 +30,8 @@ sh_test(
     timeout = "moderate",
     srcs = ["//bazel:v++_env.sh"],
     args = [
-        "$(location blackhole-host)",
-        "--bitstream=$(location blackhole-zip)",
+        "$(rootpath blackhole-host)",
+        "--bitstream=$(rootpath blackhole-zip)",
         "1000",
     ],
     data = [

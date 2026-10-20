@@ -43,8 +43,8 @@ sh_test(
     timeout = "moderate",
     srcs = ["//bazel:xrt_env.sh"],
     args = [
-        "$(location vadd-host)",
-        "--bitstream=$(location vadd-zip)",
+        "$(rootpath vadd-host)",
+        "--bitstream=$(rootpath vadd-zip)",
         "1000",
     ],
     data = [

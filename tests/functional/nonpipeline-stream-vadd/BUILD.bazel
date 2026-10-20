@@ -11,7 +11,7 @@ sh_test(
     name = "nonpipeline-stream-vadd",
     size = "medium",
     srcs = ["//bazel:v++_env.sh"],
-    args = ["$(location //tests/apps/vadd:vadd-host)"],
+    args = ["$(rootpath //tests/apps/vadd:vadd-host)"],
     data = ["//tests/apps/vadd:vadd-host"],
     env = {"TAPA_CONCURRENCY": "2"},
     tags = ["cpu:2"],
@@ -23,8 +23,8 @@ sh_test(
     timeout = "moderate",
     srcs = ["//bazel:v++_env.sh"],
     args = [
-        "$(location //tests/apps/vadd:vadd-host)",
-        "--bitstream=$(location nonpipeline-stream-vadd-xo)",
+        "$(rootpath //tests/apps/vadd:vadd-host)",
+        "--bitstream=$(rootpath nonpipeline-stream-vadd-xo)",
         "1000",
     ],
     data = [

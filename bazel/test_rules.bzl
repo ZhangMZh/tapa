@@ -83,7 +83,7 @@ def tapa_app_test(
     if kernel_hdrs == None:
         kernel_hdrs = ["%s.h" % name]
 
-    sim_test_args = ["$(location %s-host)" % name] + sim_args
+    sim_test_args = ["$(rootpath %s-host)" % name] + sim_args
     if macos_sim_args:
         sim_test_args = sim_test_args + select({
             "//bazel:is_macos": macos_sim_args,
@@ -116,8 +116,8 @@ def tapa_app_test(
         timeout = hw_test_timeout,
         srcs = ["//bazel:v++_env.sh"],
         args = [
-            "$(location %s-host)" % name,
-            "--bitstream=$(location %s-xo)" % name,
+            "$(rootpath %s-host)" % name,
+            "--bitstream=$(rootpath %s-xo)" % name,
         ] + hw_test_args,
         data = extra_test_data + [
             host_label,
@@ -136,8 +136,8 @@ def tapa_app_test(
         timeout = hw_test_timeout,
         srcs = ["//bazel:xrt_env.sh"],
         args = [
-            "$(location %s-host)" % name,
-            "--bitstream=$(location %s-hw-emu-xclbin)" % name,
+            "$(rootpath %s-host)" % name,
+            "--bitstream=$(rootpath %s-hw-emu-xclbin)" % name,
         ] + hw_test_args,
         data = extra_test_data + [
             host_label,
@@ -153,8 +153,8 @@ def tapa_app_test(
         timeout = hw_test_timeout,
         srcs = ["//bazel:sim_env.sh"],
         args = [
-            "$(location %s-host)" % name,
-            "--bitstream=$(location %s-zip)" % name,
+            "$(rootpath %s-host)" % name,
+            "--bitstream=$(rootpath %s-zip)" % name,
             "--cosim_simulator=verilator",
         ] + hw_test_args,
         data = extra_test_data + [
@@ -243,7 +243,7 @@ def tapa_functional_test(
             None.
         xosim_tags: Tags of the `<name>-xosim` sh_test; omitted when None.
     """
-    sim_test_args = ["$(location %s-host)" % name] + sim_args
+    sim_test_args = ["$(rootpath %s-host)" % name] + sim_args
     if macos_sim_args:
         sim_test_args = sim_test_args + select({
             "//bazel:is_macos": macos_sim_args,
@@ -278,8 +278,8 @@ def tapa_functional_test(
         name = "%s-xosim" % name,
         srcs = ["//bazel:v++_env.sh"],
         args = [
-            "$(location %s-host)" % name,
-            "--bitstream=$(location %s-xo)" % name,
+            "$(rootpath %s-host)" % name,
+            "--bitstream=$(rootpath %s-xo)" % name,
             "1000",
         ],
         data = [
@@ -342,8 +342,8 @@ def regression_xosim(name, xo, host_srcs, host_defines = [], hw_test_args = [], 
         timeout = hw_test_timeout,
         srcs = ["//bazel:v++_env.sh"],
         args = [
-            "$(location %s)" % host_label,
-            "--bitstream=$(location %s)" % xo,
+            "$(rootpath %s)" % host_label,
+            "--bitstream=$(rootpath %s)" % xo,
         ] + hw_test_args,
         data = extra_test_data + [
             host_label,

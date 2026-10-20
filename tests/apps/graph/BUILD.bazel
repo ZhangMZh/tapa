@@ -30,12 +30,12 @@ tapa_app_test(
         "*.h",
         "*.hpp",
     ]),
-    hw_test_args = ["$(location graph.txt)"],
+    hw_test_args = ["$(rootpath graph.txt)"],
     kernel_hdrs = glob([
         "*.hpp",
         "*.h",
     ]),
-    sim_args = ["$(location graph.txt)"],
+    sim_args = ["$(rootpath graph.txt)"],
     top_name = "Graph",
 )
 
@@ -47,8 +47,8 @@ sh_test(
         "//conditions:default": ["//bazel:v++_env.sh"],
     }),
     args = [
-        "$(location graph-host)",
-        "$(location process_facebook_txt)",
+        "$(rootpath graph-host)",
+        "$(rootpath process_facebook_txt)",
         "512",
     ],
     data = [

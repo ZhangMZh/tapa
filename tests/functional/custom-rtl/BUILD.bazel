@@ -14,8 +14,8 @@ sh_test(
     timeout = "moderate",
     srcs = ["//bazel:v++_env.sh"],
     args = [
-        "$(location custom-rtl-target-host)",
-        "--bitstream=$(location custom-rtl-target-xo)",
+        "$(rootpath custom-rtl-target-host)",
+        "--bitstream=$(rootpath custom-rtl-target-xo)",
         "1000",
     ],
     data = [

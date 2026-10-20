@@ -25,7 +25,7 @@ sh_test(
         "//bazel:is_macos": ["//bazel:sim_env.sh"],
         "//conditions:default": ["//bazel:v++_env.sh"],
     }),
-    args = ["$(location shared-mmap-host)"] + select({
+    args = ["$(rootpath shared-mmap-host)"] + select({
         "//bazel:is_macos": ["1000"],
         "//conditions:default": [],
     }),
@@ -40,8 +40,8 @@ sh_test(
     timeout = "long",
     srcs = ["//bazel:v++_env.sh"],
     args = [
-        "$(location shared-mmap-host)",
-        "--bitstream=$(location shared-mmap-xo)",
+        "$(rootpath shared-mmap-host)",
+        "--bitstream=$(rootpath shared-mmap-xo)",
         "1000",
     ],
     data = [

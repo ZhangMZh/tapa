@@ -263,7 +263,7 @@ regression_xosim(
         "page_rank/tapa/src/page-rank.h",
     ],
     hw_test_args = [
-        "$(location page_rank/tapa/data/graph.txt)",
+        "$(rootpath page_rank/tapa/data/graph.txt)",
         "8",
     ],
     xo = ":page-rank-xo",
@@ -291,7 +291,7 @@ regression_xosim(
         "include/sparse_helper_spmv.h",
     ],
     hw_test_args = [
-        "$(location testdata/identity-16.mtx)",
+        "$(rootpath testdata/identity-16.mtx)",
         "1",
     ],
     xo = ":serpens-16ch-xo",
@@ -309,7 +309,7 @@ regression_xosim(
         "include/sparse_helper_spmv.h",
     ],
     hw_test_args = [
-        "$(location testdata/identity-4704.mtx)",
+        "$(rootpath testdata/identity-4704.mtx)",
         "1",
     ],
     xo = ":serpens-24ch-xo",
@@ -326,7 +326,7 @@ regression_xosim(
         "include/sparse_helper_spmm.h",
     ],
     hw_test_args = [
-        "$(location testdata/identity-16.mtx)",
+        "$(rootpath testdata/identity-16.mtx)",
         "8",
     ],
     xo = ":sextans-split-bram-uram-xo",
@@ -344,7 +344,7 @@ regression_xosim(
         "callipepla/tapa/src_noconst/callipepla.h",
     ],
     hw_test_args = [
-        "$(location testdata/spd-14.mtx)",
+        "$(rootpath testdata/spd-14.mtx)",
         "16",
     ],
     xo = ":callipepla-xo",
@@ -372,7 +372,7 @@ regression_xosim(
         "include/sparse_helper_spmm.h",
     ],
     hw_test_args = [
-        "$(location testdata/identity-4704.mtx)",
+        "$(rootpath testdata/identity-4704.mtx)",
         "16",
     ],
     xo = ":sextans-xo",

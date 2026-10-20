@@ -15,7 +15,7 @@ sh_test(
         "//bazel:is_macos": ["//bazel:sim_env.sh"],
         "//conditions:default": ["//bazel:v++_env.sh"],
     }),
-    args = ["$(location stream-top-host)"] + select({
+    args = ["$(rootpath stream-top-host)"] + select({
         "//bazel:is_macos": ["1000"],
         "//conditions:default": [],
     }),
@@ -30,8 +30,8 @@ sh_test(
     timeout = "moderate",
     srcs = ["//bazel:v++_env.sh"],
     args = [
-        "$(location stream-top-host)",
-        "--bitstream=$(location stream-top-xo)",
+        "$(rootpath stream-top-host)",
+        "--bitstream=$(rootpath stream-top-xo)",
     ],
     data = [
         ":stream-top-host",
@@ -49,8 +49,8 @@ sh_test(
     timeout = "moderate",
     srcs = ["//bazel:v++_env.sh"],
     args = [
-        "$(location stream-top-host)",
-        "--bitstream=$(location stream-top-hls-zip)",
+        "$(rootpath stream-top-host)",
+        "--bitstream=$(rootpath stream-top-hls-zip)",
     ],
     data = [
         ":stream-top-hls-zip",
