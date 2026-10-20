@@ -20,8 +20,8 @@ The Linux x86_64 toolchain combines two pinned archives:
 
 | Source | Archive | SHA256 |
 |---|---|---|
-| [hermetic-llvm 22.1.7](https://github.com/hermeticbuild/hermetic-llvm/releases/tag/llvm-22.1.7-2) | `llvm-toolchain-minimal-22.1.7-linux-amd64-musl.tar.zst` | `d739a0f8a0f28687e64ea9edf9d98b4cd5f2f1fe72d70eb35834864a0da73bc2` |
-| [Official LLVM 22.1.7](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.7) | `LLVM-22.1.7-Linux-X64.tar.xz` | `edb0522b41e261819c06ea437d249f9b8acfa413d3805bc9920eec6fb76ff830` |
+| [hermetic-llvm 22.1.8](https://github.com/hermeticbuild/hermetic-llvm/releases/tag/llvm-22.1.8-3) | `llvm-toolchain-minimal-22.1.8-linux-amd64-musl.tar.zst` | `8e4358297c924a4a133456eaf3fb5aef4a0e2aa8d32135501bd4f2ad65f77ac9` |
+| [Official LLVM 22.1.8](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) | `LLVM-22.1.8-Linux-X64.tar.xz` | `df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384` |
 
 The [repository rule](../../bazel/llvm_toolchain.bzl) uses the hermetic-llvm
 archive's static multicall `bin/llvm` and compiler/tool symlinks on Linux
@@ -68,12 +68,12 @@ Configure custom archives through `toolchains_llvm`'s per-platform `urls`,
 
 ## Version policy
 
-All Linux x86_64 distributions use the same LLVM 22.1.7 static C/C++ action
+All Linux x86_64 distributions use the same LLVM 22.1.8 static C/C++ action
 tools and matching official resources. Static musl binaries remove these
 tools' dependency on a distribution-specific glibc or libstdc++ runtime. Target
 library compatibility still depends on the distribution's development files.
 Other execution platforms retain the `toolchains_llvm` distribution selection
-for LLVM 22.1.7.
+for LLVM 22.1.8.
 
 The optional source builder's 18.1.8 and 14.0.0 pins are independent of the
 active Bazel toolchain. Its source hashes live in `build-llvm-toolchain.sh`

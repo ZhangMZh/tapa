@@ -106,7 +106,7 @@ This command compiles all TAPA targets, including the compiler, runtime
 library, and tests.
 
 On Linux x86_64, the compiler, linker, and binary utilities used by Bazel C/C++
-actions are static LLVM 22.1.7 binaries from the published hermetic-llvm
+actions are static LLVM 22.1.8 binaries from the published hermetic-llvm
 archive. Headers and compiler-rt libraries come from the same version's
 official archive. These action tools run without host libxml2, zlib, or
 libstdc++ shared libraries. Retained auxiliary LLVM programs keep their

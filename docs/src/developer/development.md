@@ -138,7 +138,7 @@ TAPA has two separate LLVM configurations:
   patches under `bazel/patches/tapa-llvm-project/`, and verify the new source
   archive hash.
 - The Bazel C/C++ action toolchain uses the archives and `toolchains_llvm`
-  settings near the top of `MODULE.bazel` (currently 22.1.7). Follow
+  settings near the top of `MODULE.bazel` (currently 22.1.8). Follow
   `tools/llvm-toolchain/README.md` when changing that toolchain; its version
   need not be identical to the `tapacc` source dependency.
 
