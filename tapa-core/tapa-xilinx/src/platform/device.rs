@@ -29,7 +29,7 @@ fn local_name(qname: &str) -> &str {
 fn attr_value(e: &quick_xml::events::BytesStart<'_>, name: &str) -> Result<Option<String>> {
     for attr in e.attributes() {
         let attr = attr.map_err(|err| XilinxError::HlsReportParse(err.to_string()))?;
-        let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+        let key: &str = attr.key.as_ref();
         if local_name(key) == name {
             let val = attr
                 .normalized_value(quick_xml::XmlVersion::Implicit1_0)
@@ -66,9 +66,7 @@ pub fn parse_hpfm_xml(xml: &[u8]) -> Result<DeviceInfo> {
             }
             Ok(Event::Eof) => break,
             Ok(Event::Start(ref e) | Event::Empty(ref e)) => {
-                let name_bytes = e.name().as_ref().to_vec();
-                let qname = String::from_utf8_lossy(&name_bytes);
-                let name = local_name(&qname);
+                let name = local_name(e.name().0);
                 if name == "platformInfo" {
                     in_platform_info = true;
                 } else if in_platform_info {
@@ -84,9 +82,7 @@ pub fn parse_hpfm_xml(xml: &[u8]) -> Result<DeviceInfo> {
                 }
             }
             Ok(Event::End(ref e)) => {
-                let name_bytes = e.name().as_ref().to_vec();
-                let qname = String::from_utf8_lossy(&name_bytes);
-                let name = local_name(&qname);
+                let name = local_name(e.name().0);
                 if name == "platformInfo" {
                     in_platform_info = false;
                 }
@@ -125,7 +121,7 @@ pub fn parse_xpfm(bytes: &[u8]) -> Result<DeviceInfo> {
     let hpfm_idx = (0..archive.len()).find(|&i| {
         archive
             .by_index(i)
-            .is_ok_and(|e| e.name().ends_with(".hpfm"))
+            .is_ok_and(|e| e.name().is_ok_and(|n| n.ends_with(".hpfm")))
     });
     let Some(idx) = hpfm_idx else {
         return Err(XilinxError::DeviceConfig {

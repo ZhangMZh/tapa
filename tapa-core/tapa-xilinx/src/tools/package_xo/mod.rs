@@ -186,7 +186,10 @@ fn bundle_report_paths_into_xo(
             let mut entry = z_in
                 .by_index(i)
                 .map_err(|e| XilinxError::XoRedaction(format!("read xo entry {i}: {e}")))?;
-            let name = entry.name().to_owned();
+            let name = entry
+                .name()
+                .map_err(|e| XilinxError::XoRedaction(format!("read xo entry name {i}: {e}")))?
+                .into_owned();
             if written.contains(name.as_str()) {
                 continue;
             }

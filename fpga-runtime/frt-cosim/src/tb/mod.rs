@@ -523,7 +523,7 @@ pub fn control_addr_width(mmap_args: &[MmapArg], scalar_args: &[ScalarArg]) -> u
         .max()
         .unwrap_or(0)
         .max(0x0c);
-    u32::BITS - max_offset.leading_zeros()
+    max_offset.bit_width()
 }
 
 pub fn scalar_words(base_offset: u32, bytes: &[u8]) -> Vec<ScalarWord> {

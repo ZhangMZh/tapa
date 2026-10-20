@@ -160,7 +160,7 @@ pub(super) fn collect_hls_reports(
 /// `io::Error` conversion.
 fn add_zip_entry<W: std::io::Write + std::io::Seek>(
     z: &mut zip::ZipWriter<W>,
-    opts: zip::write::FileOptions<'_, ()>,
+    opts: zip::write::FileOptions<'_, '_, ()>,
     name: &str,
     bytes: &[u8],
 ) -> Result<()> {
@@ -208,7 +208,7 @@ fn pack_hls_zip(args: &PackArgs, ctx: &CliContext, state: &WorkState) -> Result<
     }
     let file = fs_err::File::create(&output_path)?;
     let mut z = zip::ZipWriter::new(std::io::BufWriter::new(file));
-    let opts: zip::write::FileOptions<'_, ()> =
+    let opts: zip::write::FileOptions<'_, '_, ()> =
         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     let mut rtl_files: Vec<std::path::PathBuf> = Vec::new();
@@ -503,7 +503,7 @@ mod tests {
         let zip_bytes = fs_err::read(&output_path).expect("read zip");
         let mut zr = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).expect("open zip");
         let names: Vec<String> = (0..zr.len())
-            .map(|i| zr.by_index(i).unwrap().name().to_string())
+            .map(|i| zr.by_index(i).unwrap().name().unwrap().into_owned())
             .collect();
         assert!(
             names.iter().any(|n| n == "tapa.json"),

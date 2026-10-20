@@ -110,7 +110,10 @@ fn load_xo_spec<R: Read + std::io::Seek>(
         let mut file = zip
             .by_index(i)
             .map_err(|e| CosimError::Metadata(e.to_string()))?;
-        let name = file.name().to_owned();
+        let name = file
+            .name()
+            .map_err(|e| CosimError::Metadata(e.to_string()))?
+            .into_owned();
         if name.ends_with('/') {
             continue;
         }
@@ -155,7 +158,10 @@ fn load_zip_spec<R: Read + std::io::Seek>(
         let mut file = zip
             .by_index(i)
             .map_err(|e| CosimError::Metadata(e.to_string()))?;
-        let name = file.name().to_owned();
+        let name = file
+            .name()
+            .map_err(|e| CosimError::Metadata(e.to_string()))?
+            .into_owned();
         if name.ends_with('/') {
             continue;
         }

@@ -7,8 +7,8 @@ use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Query, QueryCursor};
 
 use super::tree_sitter::{
-    child_count, find_first_module, has_error_node, module_header, signal_kind_of, sv_language,
-    sv_parser, text_of,
+    find_first_module, has_error_node, module_header, signal_kind_of, sv_language, sv_parser,
+    text_of,
 };
 
 static Q_DRIVER_USES: LazyLock<Query> = LazyLock::new(|| {
@@ -98,7 +98,7 @@ fn record_identifiers(
             .and_modify(|previous| *previous &= proven)
             .or_insert(proven);
     } else {
-        for i in 0..child_count(node) {
+        for i in 0..node.child_count() {
             record_identifiers(node.child(i).unwrap(), src, proven_name, names);
         }
     }
@@ -123,15 +123,15 @@ pub fn unconditionally_zero_driven_names(source: &str) -> BTreeSet<String> {
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&Q_DRIVER_USES, module, src);
     while let Some(found) = matches.next() {
-        let lhs = found.captures[0].node;
+        let lhs = found.captures()[0].node;
         if matches!(
             lhs.kind(),
             "net_decl_assignment" | "variable_decl_assignment"
-        ) && !(0..child_count(lhs)).any(|i| lhs.child(i).unwrap().kind() == "=")
+        ) && !(0..lhs.child_count()).any(|i| lhs.child(i).unwrap().kind() == "=")
         {
             continue;
         }
-        let proven_name = (found.captures[0].index == 0
+        let proven_name = (found.captures()[0].index == 0
             && is_module_zero_assignment(lhs, module, src))
         .then(|| text_of(lhs, src));
         record_identifiers(lhs, src, proven_name, &mut names);
@@ -185,12 +185,12 @@ pub fn original_module_text(source: &str) -> (&str, &str) {
     let Some(header) = module_header(module) else {
         return empty;
     };
-    let body_end = (0..child_count(module))
+    let body_end = (0..module.child_count())
         .map(|i| module.child(i).unwrap())
         .find(|node| node.kind() == "endmodule")
         .map_or_else(|| module.end_byte(), |node| node.start_byte());
     let mut body_start = header.end_byte();
-    for i in 0..child_count(module) {
+    for i in 0..module.child_count() {
         let child = module.child(i).unwrap();
         if child.end_byte() <= header.end_byte() {
             continue;
@@ -207,7 +207,7 @@ pub fn original_module_text(source: &str) -> (&str, &str) {
     }
     // The comment on the terminator's own line is replaced by the emitted
     // `endmodule //name`; every later node starts the preserved tail.
-    let tail_start = (0..child_count(root))
+    let tail_start = (0..root.child_count())
         .map(|i| root.child(i).unwrap())
         .filter(|node| node.start_byte() >= module.end_byte())
         .find(|node| {

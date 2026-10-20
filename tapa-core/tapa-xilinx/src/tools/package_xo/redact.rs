@@ -67,15 +67,15 @@ fn redact_xml_event_based(text: &str) -> std::result::Result<String, quick_xml::
             Ok(Event::Text(t)) => {
                 pending
                     .get_or_insert_with(String::new)
-                    .push_str(&t.xml10_content()?);
+                    .push_str(&t.xml10_content());
                 buf.clear();
                 continue;
             }
             Ok(Event::GeneralRef(r)) => {
-                let entity = r.decode()?;
+                let entity: &str = r;
                 let pending = pending.get_or_insert_with(String::new);
                 pending.push('&');
-                pending.push_str(&entity);
+                pending.push_str(entity);
                 pending.push(';');
                 buf.clear();
                 continue;
@@ -88,7 +88,7 @@ fn redact_xml_event_based(text: &str) -> std::result::Result<String, quick_xml::
             Ok(Event::Eof) => break,
             Ok(Event::Start(mut e)) => {
                 redact_element_attrs(&mut e);
-                let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                let name = e.name().as_ref().to_owned();
                 stack.push(name);
                 writer.write_event(Event::Start(e))?;
             }
@@ -116,12 +116,10 @@ fn redact_element_attrs(elem: &mut BytesStart<'_>) {
         .attributes()
         .filter_map(|a| a.ok())
         .map(|attr| {
-            let key = std::str::from_utf8(attr.key.as_ref())
-                .unwrap_or("")
-                .to_string();
+            let key = attr.key.as_ref().to_string();
             let value = attr
                 .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                .unwrap_or_else(|_| std::str::from_utf8(&attr.value).unwrap_or("").into())
+                .unwrap_or_else(|_| attr.value.clone())
                 .into_owned();
             (key, value)
         })
@@ -173,7 +171,12 @@ pub fn redact_xo(path: &camino::Utf8Path) -> Result<()> {
     {
         let mut writer = zip::ZipWriter::new(&mut out);
         let mut names: Vec<String> = (0..archive.len())
-            .filter_map(|i| archive.by_index(i).ok().map(|e| e.name().to_string()))
+            .filter_map(|i| {
+                archive
+                    .by_index(i)
+                    .ok()
+                    .and_then(|e| e.name().ok().map(|n| n.into_owned()))
+            })
             .collect();
         names.sort();
         for name in &names {

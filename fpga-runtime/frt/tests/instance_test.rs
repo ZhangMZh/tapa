@@ -83,7 +83,7 @@ fn make_manual_zip() -> PathBuf {
     let zip_path = tmp.path().join("manual_kernel.zip");
     let file = File::create(&zip_path).expect("create zip");
     let mut zip = zip::ZipWriter::new(file);
-    let opts: FileOptions<'_, ()> = FileOptions::default();
+    let opts: FileOptions<'_, '_, ()> = FileOptions::default();
 
     zip.start_file("tapa.json", opts).expect("add state");
     zip.write_all(include_bytes!("fixtures/manual_zip/tapa.json"))
@@ -105,7 +105,7 @@ fn make_manual_xo() -> PathBuf {
     let xo_path = tmp.path().join("manual_kernel.xo");
     let file = File::create(&xo_path).expect("create xo");
     let mut zip = zip::ZipWriter::new(file);
-    let opts: FileOptions<'_, ()> = FileOptions::default();
+    let opts: FileOptions<'_, '_, ()> = FileOptions::default();
 
     zip.start_file("kernel.xml", opts).expect("add kernel xml");
     zip.write_all(include_bytes!("fixtures/manual_xo/kernel.xml"))
@@ -537,7 +537,7 @@ fn open_cosim_verilator_axis_handshakes_use_settled_inputs() {
     let tmp = tempfile::tempdir().expect("archive directory");
     let xo_path = tmp.path().join("axis_handshake.xo");
     let mut archive = zip::ZipWriter::new(File::create(&xo_path).expect("create archive"));
-    let opts: FileOptions<'_, ()> = FileOptions::default();
+    let opts: FileOptions<'_, '_, ()> = FileOptions::default();
     archive.start_file("kernel.xml", opts).expect("kernel XML");
     archive
         .write_all(

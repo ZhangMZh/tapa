@@ -49,7 +49,7 @@ fn zip_inventory(bytes: &[u8]) -> Vec<ZipEntryInventory> {
     let mut out = Vec::with_capacity(archive.len());
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).expect("archive index");
-        let name = entry.name().to_string();
+        let name = entry.name().unwrap().into_owned();
         let size = entry.size();
         let dt = entry.last_modified().expect("mtime");
         let tuple = (
@@ -195,13 +195,13 @@ fn live_pack_xo_roundtrips_vadd_rtl() {
     // path inside the produced `.xo`; scan the archive for the
     // canonical entry rather than assuming a root-level filename.
     let kernel_xml_entry_name: String = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .map(|i| archive.by_index(i).unwrap().name().unwrap().into_owned())
         .find(|n| n.ends_with("/kernel.xml") || n == "kernel.xml")
         .unwrap_or_else(|| {
             panic!(
                 "produced .xo does not contain any kernel.xml entry: {:?}",
                 (0..archive.len())
-                    .map(|i| archive.by_index(i).unwrap().name().to_string())
+                    .map(|i| archive.by_index(i).unwrap().name().unwrap().into_owned())
                     .collect::<Vec<_>>()
             )
         });
@@ -229,7 +229,7 @@ fn live_pack_xo_roundtrips_vadd_rtl() {
     // MS-DOS epoch.
     for i in 0..archive.len() {
         let entry = archive.by_index(i).expect("entry");
-        let name = entry.name().to_string();
+        let name = entry.name().unwrap().into_owned();
         let dt = entry.last_modified().expect("zip entry mtime");
         assert_eq!(
             (

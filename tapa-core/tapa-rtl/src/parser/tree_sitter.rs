@@ -42,16 +42,6 @@ pub(super) fn text_of<'a>(node: Node<'a>, src: &'a [u8]) -> &'a str {
     std::str::from_utf8(&src[node.byte_range()]).unwrap_or("")
 }
 
-/// Child count as the `u32` that [`Node::child`] indexes with.
-///
-/// tree-sitter widens the count to `usize` on the Rust side but still takes a
-/// `u32` index, so every `0..child_count()` loop needs one of the two narrowed.
-/// The underlying C API counts children in a `uint32_t`, so this never
-/// truncates.
-pub(super) fn child_count(node: Node) -> u32 {
-    u32::try_from(node.child_count()).unwrap_or(u32::MAX)
-}
-
 // ── Width extraction ────────────────────────────────────────────────
 
 fn extract_width(node: Node, src: &[u8]) -> Option<Width> {
@@ -59,7 +49,7 @@ fn extract_width(node: Node, src: &[u8]) -> Option<Width> {
         if node.kind() == "packed_dimension" {
             return Some(node);
         }
-        for i in 0..child_count(node) {
+        for i in 0..node.child_count() {
             if let Some(found) = find_packed_dimension(node.child(i).unwrap()) {
                 return Some(found);
             }
@@ -68,7 +58,7 @@ fn extract_width(node: Node, src: &[u8]) -> Option<Width> {
     }
 
     let pd = find_packed_dimension(node)?;
-    for i in 0..child_count(pd) {
+    for i in 0..pd.child_count() {
         let child = pd.child(i).unwrap();
         if child.kind() == "constant_range" {
             return parse_constant_range(child, src);
@@ -80,7 +70,7 @@ fn extract_width(node: Node, src: &[u8]) -> Option<Width> {
 fn parse_constant_range(node: Node, src: &[u8]) -> Option<Width> {
     let mut msb_str = None;
     let mut lsb_str = None;
-    for i in 0..child_count(node) {
+    for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         let text = text_of(child, src).trim();
         if text == ":" {
@@ -107,7 +97,7 @@ fn extract_ports_from_node(node: Node, src: &[u8]) -> Vec<Port> {
     let mut width: Option<Width> = None;
     let mut names: Vec<String> = Vec::new();
 
-    for i in 0..child_count(node) {
+    for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
             "attribute_instance" => {
@@ -117,7 +107,7 @@ fn extract_ports_from_node(node: Node, src: &[u8]) -> Vec<Port> {
             }
             "input_declaration" => {
                 direction = Direction::Input;
-                for j in 0..child_count(child) {
+                for j in 0..child.child_count() {
                     let c = child.child(j).unwrap();
                     if c.kind() == "net_port_type" || c.kind() == "data_type_or_implicit" {
                         width = extract_width(c, src);
@@ -129,7 +119,7 @@ fn extract_ports_from_node(node: Node, src: &[u8]) -> Vec<Port> {
             }
             "output_declaration" => {
                 direction = Direction::Output;
-                for j in 0..child_count(child) {
+                for j in 0..child.child_count() {
                     let c = child.child(j).unwrap();
                     if c.kind() == "net_port_type" || c.kind() == "data_type_or_implicit" {
                         width = extract_width(c, src);
@@ -141,7 +131,7 @@ fn extract_ports_from_node(node: Node, src: &[u8]) -> Vec<Port> {
             }
             "inout_declaration" => {
                 direction = Direction::Inout;
-                for j in 0..child_count(child) {
+                for j in 0..child.child_count() {
                     let c = child.child(j).unwrap();
                     if c.kind() == "net_port_type" || c.kind() == "data_type_or_implicit" {
                         width = extract_width(c, src);
@@ -181,12 +171,12 @@ fn extract_ansi_port(
     let mut name: Option<String> = None;
     let mut has_type_spec = false;
 
-    for i in 0..child_count(node) {
+    for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
             "net_port_header" => {
                 has_type_spec = true;
-                for j in 0..child_count(child) {
+                for j in 0..child.child_count() {
                     let c = child.child(j).unwrap();
                     if c.kind() == "port_direction" {
                         direction = parse_direction(text_of(c, src).trim());
@@ -198,7 +188,7 @@ fn extract_ansi_port(
             }
             "variable_port_header" => {
                 has_type_spec = true;
-                for j in 0..child_count(child) {
+                for j in 0..child.child_count() {
                     let c = child.child(j).unwrap();
                     if c.kind() == "port_direction" {
                         direction = parse_direction(text_of(c, src).trim());
@@ -250,7 +240,7 @@ fn extract_identifiers(node: Node, src: &[u8]) -> Vec<String> {
         if node.kind() == "simple_identifier" || node.kind() == "escaped_identifier" {
             ids.push(text_of(node, src).to_owned());
         }
-        for i in 0..child_count(node) {
+        for i in 0..node.child_count() {
             walk(node.child(i).unwrap(), src, ids);
         }
     }
@@ -265,18 +255,18 @@ fn extract_parameters_from_node(node: Node, src: &[u8]) -> Vec<Parameter> {
     let mut width: Option<Width> = None;
     let mut params = Vec::new();
 
-    for i in 0..child_count(node) {
+    for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         if child.kind() == "data_type_or_implicit" || child.kind() == "data_type" {
             width = extract_width(child, src).or(width);
         }
         if child.kind() == "list_of_param_assignments" {
-            for j in 0..child_count(child) {
+            for j in 0..child.child_count() {
                 let c = child.child(j).unwrap();
                 if c.kind() == "param_assignment" {
                     let mut name = None;
                     let mut default_str = None;
-                    for k in 0..child_count(c) {
+                    for k in 0..c.child_count() {
                         let d = c.child(k).unwrap();
                         match d.kind() {
                             "simple_identifier" => name = Some(text_of(d, src).to_owned()),
@@ -354,7 +344,7 @@ fn first_issue(root: Node, src: &[u8]) -> Option<ParseIssue> {
         // ignored: only the module interface is validated here.
         return None;
     }
-    for i in 0..child_count(root) {
+    for i in 0..root.child_count() {
         if let Some(found) = first_issue(root.child(i).unwrap(), src) {
             return Some(found);
         }
@@ -386,7 +376,7 @@ pub(super) fn signal_kind_of(node: Node, src: &[u8]) -> Option<SignalKind> {
 pub(super) fn has_error_node(node: Node) -> bool {
     node.kind() == "ERROR"
         || node.is_missing()
-        || (0..child_count(node)).any(|i| has_error_node(node.child(i).unwrap()))
+        || (0..node.child_count()).any(|i| has_error_node(node.child(i).unwrap()))
 }
 
 /// Declared identifier of each declarator in a wire/reg declaration,
@@ -398,12 +388,12 @@ fn declarator_names(node: Node, src: &[u8]) -> Vec<String> {
         "list_of_variable_decl_assignments"
     };
     let mut names = Vec::new();
-    for i in 0..child_count(node) {
+    for i in 0..node.child_count() {
         let list = node.child(i).unwrap();
         if list.kind() != list_kind {
             continue;
         }
-        for j in 0..child_count(list) {
+        for j in 0..list.child_count() {
             let assignment = list.child(j).unwrap();
             if !matches!(
                 assignment.kind(),
@@ -413,7 +403,7 @@ fn declarator_names(node: Node, src: &[u8]) -> Vec<String> {
             }
             // The declared name is the first identifier child; later
             // identifiers belong to unpacked dimensions or initializers.
-            for k in 0..child_count(assignment) {
+            for k in 0..assignment.child_count() {
                 let child = assignment.child(k).unwrap();
                 if matches!(child.kind(), "simple_identifier" | "escaped_identifier") {
                     names.push(text_of(child, src).to_owned());
@@ -492,7 +482,7 @@ fn walk_module_body(
             // Unwrap one grouping level; port declarations carry their
             // leading attributes as direct children.
             "module_item" | "port_declaration" => {
-                for i in 0..child_count(node) {
+                for i in 0..node.child_count() {
                     visit(node.child(i).unwrap(), src, module, out)?;
                 }
             }
@@ -519,7 +509,7 @@ fn walk_module_body(
         signals: Vec::new(),
         pragmas: Vec::new(),
     };
-    for i in 0..child_count(mod_node) {
+    for i in 0..mod_node.child_count() {
         let child = mod_node.child(i).unwrap();
         if child.id() == header_node.id() {
             continue;
@@ -536,7 +526,7 @@ pub(super) fn find_first_module(root: Node) -> Option<Node> {
     if root.kind() == "module_declaration" {
         return Some(root);
     }
-    for i in 0..child_count(root) {
+    for i in 0..root.child_count() {
         if let Some(found) = find_first_module(root.child(i).unwrap()) {
             return Some(found);
         }
@@ -546,7 +536,7 @@ pub(super) fn find_first_module(root: Node) -> Option<Node> {
 
 pub(super) fn module_header(module: Node) -> Option<Node> {
     module.child_by_field_name("header").or_else(|| {
-        (0..child_count(module))
+        (0..module.child_count())
             .map(|i| module.child(i).unwrap())
             .find(|node| matches!(node.kind(), "module_nonansi_header" | "module_ansi_header"))
     })
@@ -569,7 +559,7 @@ fn is_preamble_trivia(node: Node, src: &[u8]) -> bool {
 /// level or folded into the module header by the grammar.
 fn leading_pragmas(root: Node, mod_node: Node, header: Node, src: &[u8]) -> Vec<Pragma> {
     let mut pragmas = Vec::new();
-    for i in 0..child_count(root) {
+    for i in 0..root.child_count() {
         let child = root.child(i).unwrap();
         if child.end_byte() > mod_node.start_byte() {
             break;
@@ -585,7 +575,7 @@ fn leading_pragmas(root: Node, mod_node: Node, header: Node, src: &[u8]) -> Vec<
             }
         }
     }
-    for i in 0..child_count(header) {
+    for i in 0..header.child_count() {
         let child = header.child(i).unwrap();
         if child.kind() == "module_keyword" {
             break;
@@ -605,13 +595,13 @@ fn extract_ports(header: Node, mod_node: Node, src: &[u8]) -> (Vec<Port>, Vec<St
     let mut port_names = Vec::new();
 
     // ANSI header ports
-    for i in 0..child_count(header) {
+    for i in 0..header.child_count() {
         let child = header.child(i).unwrap();
         if child.kind() == "list_of_port_declarations" {
             let mut pending_pragma: Option<Pragma> = None;
             let mut last_dir = Direction::Input;
             let mut last_width: Option<Width> = None;
-            for j in 0..child_count(child) {
+            for j in 0..child.child_count() {
                 let c = child.child(j).unwrap();
                 match c.kind() {
                     "attribute_instance" => {
@@ -635,10 +625,10 @@ fn extract_ports(header: Node, mod_node: Node, src: &[u8]) -> (Vec<Port>, Vec<St
             }
         }
         if child.kind() == "list_of_ports" {
-            for j in 0..child_count(child) {
+            for j in 0..child.child_count() {
                 let c = child.child(j).unwrap();
                 if c.kind() == "port" {
-                    for k in 0..child_count(c) {
+                    for k in 0..c.child_count() {
                         let d = c.child(k).unwrap();
                         if d.kind() == "simple_identifier" || d.kind() == "escaped_identifier" {
                             port_names.push(text_of(d, src).to_owned());
@@ -653,7 +643,7 @@ fn extract_ports(header: Node, mod_node: Node, src: &[u8]) -> (Vec<Port>, Vec<St
     let mut port_cursor = QueryCursor::new();
     let mut port_matches = port_cursor.matches(&Q_PORTS, mod_node, src);
     while let Some(m) = port_matches.next() {
-        let port_node = m.captures.first().unwrap().node;
+        let port_node = m.captures().first().unwrap().node;
         ports.extend(extract_ports_from_node(port_node, src));
     }
     (ports, port_names)
@@ -719,7 +709,7 @@ pub fn parse_module_info(source: &str) -> Result<ModuleParse, ParseError> {
         return Ok(ModuleParse::HeaderFailed);
     };
 
-    let Some(name) = (0..child_count(header))
+    let Some(name) = (0..header.child_count())
         .map(|i| header.child(i).unwrap())
         .find(|n| n.kind() == "simple_identifier")
         .map(|n| text_of(n, src).to_owned())
@@ -732,7 +722,7 @@ pub fn parse_module_info(source: &str) -> Result<ModuleParse, ParseError> {
     let mut param_cursor = QueryCursor::new();
     let mut param_matches = param_cursor.matches(&Q_PARAMS, mod_node, src);
     while let Some(m) = param_matches.next() {
-        let param_node = m.captures.first().unwrap().node;
+        let param_node = m.captures().first().unwrap().node;
         params.extend(extract_parameters_from_node(param_node, src));
     }
 

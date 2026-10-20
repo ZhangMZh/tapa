@@ -506,7 +506,7 @@ mod tests {
         let path = root.join(name);
         let file = fs_err::File::create(&path).expect("create mock XO");
         let mut archive = zip::ZipWriter::new(file);
-        let options: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+        let options: zip::write::FileOptions<'_, '_, ()> = zip::write::FileOptions::default();
         archive
             .start_file("ip/stub.txt", options)
             .expect("start mock XO entry");

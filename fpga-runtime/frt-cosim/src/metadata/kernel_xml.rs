@@ -138,8 +138,8 @@ pub fn parse(xml: &str) -> Result<KernelXml> {
     loop {
         let start = reader.buffer_position() as usize;
         match reader.read_event() {
-            Ok(Event::Start(e)) => match e.name().as_ref() {
-                b"kernel" => {
+            Ok(Event::Start(e)) => match e.name().0 {
+                "kernel" => {
                     if kernel.is_some() {
                         return Err(CosimError::Metadata(
                             "multiple <kernel> elements in kernel metadata XML; cosim packages must contain exactly one kernel".into(),
@@ -153,15 +153,15 @@ pub fn parse(xml: &str) -> Result<KernelXml> {
                             .map_err(|e| CosimError::Metadata(e.to_string()))?,
                     );
                 }
-                b"platform" => {
+                "platform" => {
                     if platform.is_empty() {
                         platform = platform_name(&e);
                     }
                 }
-                b"core" => {
+                "core" => {
                     for a in e.attributes().flatten() {
-                        if a.key.as_ref() == b"target" {
-                            target = parse_target(&String::from_utf8_lossy(&a.value));
+                        if a.key.0 == "target" {
+                            target = parse_target(&a.value);
                         }
                     }
                 }
@@ -216,9 +216,9 @@ const DEFAULT_STREAM_DEPTH: u32 = 16;
 
 fn platform_name(e: &quick_xml::events::BytesStart) -> String {
     for a in e.attributes().flatten() {
-        let key = a.key.as_ref();
-        if key == b"name" || key == b"vbnv" || key == b"platformVBNV" {
-            let value = String::from_utf8_lossy(&a.value).trim().to_owned();
+        let key = a.key.0;
+        if key == "name" || key == "vbnv" || key == "platformVBNV" {
+            let value = a.value.trim().to_owned();
             if !value.is_empty() {
                 return value;
             }
