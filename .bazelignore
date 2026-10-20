@@ -3,5 +3,7 @@
 # RapidStream Contributor License Agreement.
 
 node_modules
+tapa-core/target
+fpga-runtime/target
 tools/test-tools/target
 .claude
