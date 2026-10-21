@@ -12,7 +12,7 @@ ARG BATS_VERSION=v1.14.0
 
 # Required by Vivado:
 #   - gcc-multilib
-#   - libtinfo5
+#   - libtinfo6 -> libtinfo5
 #   - libx11-6
 #   - locales
 
@@ -36,7 +36,7 @@ RUN apt-get update && \
         gcc-multilib \
         ocl-icd-opencl-dev \
         git \
-        libtinfo5 \
+        libtinfo6 \
         libx11-6 \
         locales \
         parallel \
@@ -64,8 +64,11 @@ RUN apt-get update && \
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && locale-gen
 
 # Create a user for the test environment
-RUN addgroup --gid ${DOCKER_GROUP_ID} io && \
-    adduser --uid ${DOCKER_USER_ID} --ingroup io --home /tmp io
+RUN groupadd -g ${DOCKER_GROUP_ID} io && \
+    useradd -u ${DOCKER_USER_ID} -g io -d /tmp io
+
+# Link libtinfo.so.6 to libtinfo.so.5
+RUN ln -s /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
 
 USER io
 ENV HOME="/tmp"
