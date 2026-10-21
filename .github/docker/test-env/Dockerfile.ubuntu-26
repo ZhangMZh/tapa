@@ -1,0 +1,61 @@
+FROM ubuntu:resolute-20261006
+
+ARG DOCKER_USER_ID
+ARG DOCKER_GROUP_ID
+
+# Testing framework:
+#   - bats
+#   - parallel (for parallel testing)
+
+# Required by Vivado:
+#   - gcc-multilib
+#   - libtinfo6 -> libtinfo5
+#   - libx11-6
+#   - locales
+
+# Required by us:
+#   - g++
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# The CI runner sits next to TUNA, so fetch packages from there
+# (shared script; the comment block lives with it).
+COPY setup-mirror-debian.sh /tmp/setup-mirror-debian.sh
+RUN sh /tmp/setup-mirror-debian.sh
+
+RUN apt-get update && \
+      # Update the following line to the latest date for retriggering the docker build
+      echo "Installing system dependencies as of 20261021" && \
+      apt-get upgrade -y && \
+      apt-get install --no-install-recommends -y \
+        bats \
+        g++ \
+        gcc-multilib \
+        ocl-icd-opencl-dev \
+        libtinfo6 \
+        libx11-6 \
+        locales \
+        parallel \
+      && \
+      rm -rf /var/lib/apt/lists/* && \
+      rm -rf /var/cache/apt/* && \
+      rm -rf /tmp/* /var/tmp/* && \
+      true
+
+# Regenerate the locales for Vivado
+RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && locale-gen
+
+# Remove the default 'ubuntu' user (UID 1000) that ships with the base
+# image, so it doesn't conflict with the runner's UID.
+RUN userdel -r ubuntu 2>/dev/null || true
+
+# Create a user for the test environment
+RUN groupadd -g ${DOCKER_GROUP_ID} io && \
+    useradd -u ${DOCKER_USER_ID} -g io -d /tmp io
+
+# Link libtinfo.so.6 to libtinfo.so.5
+RUN ln -s /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
+
+USER io
+ENV HOME="/tmp"
+WORKDIR /tmp

@@ -2,7 +2,7 @@
 # All rights reserved. The contributor(s) of this file has/have agreed to the
 # RapidStream Contributor License Agreement.
 
-FROM rockylinux/rockylinux:9.6.20250531
+FROM rockylinux/rockylinux:9.8.20260525.0
 
 # Copyright (c) 2024 RapidStream Design Automation, Inc. and contributors.
 # All rights reserved. The contributor(s) of this file has/have agreed to the
@@ -33,7 +33,7 @@ ARG PARALLEL_SHA256=afe4b572a4334aac3a002a080ad618249f00b84d7659d03e77412727d18f
 
 RUN yum update -y && \
     # Update the following line to the latest date for retriggering the docker build
-    echo "Installing system dependencies as of 20250723" && \
+    echo "Installing system dependencies as of 20261021" && \
     # ocl-icd-devel ships only in CRB, which is disabled by default on
     # EL9 and on Rocky 10; enabling it explicitly is a no-op where it is
     # already on.

@@ -30,12 +30,13 @@ jobs:
     needs: build
 
     strategy:
-      # One broken image must not cancel the other 24 jobs: a single
+      # One broken image must not cancel the other jobs: a single
       # distro-specific failure used to hide every other result in the matrix.
       fail-fast: false
       matrix:
         include:
-          # Test all Vitis versions on the latest supported Ubuntu LTS.
+          # Test all Vitis versions on Ubuntu 24.04 LTS (the oldest Vitis
+          # releases predate newer LTS releases).
           - os: ubuntu-24
             xilinx_version: "2024.2"
           - os: ubuntu-24
@@ -48,16 +49,17 @@ jobs:
             xilinx_version: "2022.2"
           - os: ubuntu-24
             xilinx_version: "2022.1"
-          # Test all OS versions with the latest Vitis version.
-          - os: ubuntu-22
+          # Test all OS versions with the latest Vitis version. Of the EOL
+          # releases, only the earliest supported one is kept per distro.
+          - os: ubuntu-26
             xilinx_version: "2024.2"
-          - os: ubuntu-20
+          - os: ubuntu-22
             xilinx_version: "2024.2"
           - os: ubuntu-18
             xilinx_version: "2024.2"
-          - os: debian-12
+          - os: debian-13
             xilinx_version: "2024.2"
-          - os: debian-11
+          - os: debian-12
             xilinx_version: "2024.2"
           - os: debian-10
             xilinx_version: "2024.2"
@@ -69,19 +71,9 @@ jobs:
             xilinx_version: "2024.2"
           - os: rockylinux-9
             xilinx_version: "2024.2"
-          - os: fedora-41
+          - os: fedora-44
             xilinx_version: "2024.2"
-          - os: fedora-40
-            xilinx_version: "2024.2"
-          - os: fedora-39
-            xilinx_version: "2024.2"
-          - os: fedora-38
-            xilinx_version: "2024.2"
-          - os: fedora-37
-            xilinx_version: "2024.2"
-          - os: fedora-36
-            xilinx_version: "2024.2"
-          - os: fedora-35
+          - os: fedora-43
             xilinx_version: "2024.2"
           - os: fedora-34
             xilinx_version: "2024.2"
