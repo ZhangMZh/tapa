@@ -11,7 +11,9 @@ The `--target` selected during analysis determines the output format.
 ### `xilinx-vitis` (default)
 
 `tapa pack` produces an `.xo` file. Use it for fast cosimulation or pass it to
-`v++ --link` to build an `hw_emu.xclbin` or `hw.xclbin`.
+`v++ --link` to build an `hw_emu.xclbin` or `hw.xclbin`. For the experimental
+V80 service-shell backend, `tapa link` consumes the XO and produces a hardware
+`.vbin` for VRT. See [Build & Run on Board](../howto/build-and-run.md).
 
 ### `xilinx-hls`
 
@@ -33,7 +35,7 @@ hand.
 
 ## Reproducibility
 
-TAPA removes timestamps, absolute paths, and random IDs from final artifacts.
+TAPA removes timestamps, absolute paths, and random IDs from its XO/ZIP archives.
 Given the same sources, compiler options, and tool versions, repeated builds
 produce byte-identical output. Vendor-tool upgrades can change the artifact
 contents even when your source does not change.
@@ -88,7 +90,11 @@ work.out/
 - **`tapacc.json`** is raw frontend output retained for diagnostics. Later
   stages do not read it, so editing it has no effect.
 - **`floorplan.xdc`** contains the constraints produced by `tapa floorplan`.
-  `tapa pack` applies it automatically; you normally do not need to edit it.
+  `tapa pack` applies it automatically for Vitis linking. For a separate V80
+  link, pass it to `tapa link --floorplan-xdc`; you normally do not need to edit it.
+
+Implementation feedback (`--run-impl` or `--dse`) also publishes the selected
+bitstream as `floorplan.xclbin` for Vitis or `floorplan.vbin` for SLASH.
 
 The final archive includes the interface metadata needed by fast cosimulation,
 so you can move the `.xo` or `.zip` to another machine without also copying the

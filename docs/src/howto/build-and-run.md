@@ -7,10 +7,34 @@
 ## What you need
 
 - A `.xo` kernel object from `tapa compile` and its matching host executable
-- Vitis and XRT installed (Linux only)
+- Vitis and XRT for U-series devices, or SLASH and VRT for V80 (Linux only)
 - The target platform string (e.g., `xilinx_u55c_gen3x16_xdma_3_202210_1`)
 - An Alveo board installed in the system for the final execution step
-- Several hours of compute time for `v++ --link`
+- Several hours of compute time for full implementation
+
+For the V80 SLASH service shell, `tapa link` produces a `.vbin` for VRT;
+the XRT flow below produces an `.xclbin` for U-series devices.
+
+The VRT runtime is selected by the `.vbin` suffix. Build the optional VRT
+adapter against the installed SLASH headers, then select the board and kernel
+instance through the existing TAPA host flags:
+
+```bash
+cmake -S fpga-runtime/frt/vrt -B build/frt-vrt
+cmake --build build/frt-vrt
+./callipepla --bitstream=callipepla.vbin \
+  --vrt_bdf=0000:a1:00 --vrt_kernel=Callipepla_0 \
+  --vrt_library=$PWD/build/frt-vrt/libfrt_vrt.so matrix.mtx 16
+```
+
+This experimental backend accepts hardware VBINs only and supports 32/64-bit
+scalar arguments and memory-mapped buffers. Host stream arguments are not
+supported. Opening the VRT device uses the SDK's default programming behavior;
+it does not merely attach to a previously deployed design.
+
+`tapa link --xo ... --connectivity ... --output ... --clock-hz 100000000`
+invokes SLASH and rejects a VBIN whose final routed timing report is below the
+requested clock.
 
 ## Stage 1: Compile the kernel with TAPA
 
@@ -29,7 +53,7 @@ tapa \
   -o vadd.$platform.hw.xo
 ```
 
-The `.xo` file is the artifact that feeds `v++`.
+The `.xo` file feeds `v++ --link` on U-series devices or `tapa link` on V80.
 
 ## Stage 2: Link into an FPGA bitstream
 

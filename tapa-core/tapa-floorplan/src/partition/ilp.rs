@@ -7,7 +7,8 @@
 //!   destination candidate regions;
 //! * endpoint-coupling, resource, and guillotine-cut constraints; and
 //! * width-weighted, vertically penalized centroid distance as the sole
-//!   variable objective cost.
+//!   variable objective cost, refined by physical coordinates for tagged
+//!   terminals when the device table provides them.
 //!
 //! After a successful solve, the achieved objective is pinned and a unique
 //! stable candidate ranking is minimized, so equal-cost optima resolve
@@ -219,7 +220,7 @@ pub(crate) fn floorplan_with_exact_resource_caps(
 fn exact_resource_cap_constraints(device: &Device, block_limit: f64) -> PlacementConstraints {
     let by_resource: BTreeMap<_, _> = Resource::ALL
         .into_iter()
-        .filter(|resource| !resource.is_logic())
+        .filter(|resource| device.constrains_resource(*resource) && !resource.is_logic())
         .map(|resource| (resource, block_limit))
         .collect();
     let max_resource_limits = row_regions(device)
@@ -640,7 +641,13 @@ fn attempt_placement(
             log::info!("placement infeasible at usage limit {usage_limit:.2}");
             Ok(Rung::Infeasible(IlpError::Infeasible {
                 limit: config.retry_ceiling,
-                demand: describe_demand(graph, areas, config.retry_ceiling, &config.constraints),
+                demand: describe_demand(
+                    device,
+                    graph,
+                    areas,
+                    config.retry_ceiling,
+                    &config.constraints,
+                ),
             }))
         }
         LpStatus::NotSolved | LpStatus::Unbounded => Err(IlpError::NoIncumbent(solution.status)),
@@ -658,6 +665,7 @@ fn attempt_placement(
 /// explanation; if none is, the binding constraint is the wire-capacity cuts or
 /// per-slot packing, and the message says so instead of inventing a cause.
 fn describe_demand(
+    device: &Device,
     graph: &FloorGraph,
     areas: &RegionAreas,
     usage_limit: f64,
@@ -665,6 +673,9 @@ fn describe_demand(
 ) -> String {
     let mut worst: Option<(Resource, u64, u64)> = None;
     for resource in Resource::ALL {
+        if !device.constrains_resource(resource) {
+            continue;
+        }
         let demand: u64 = graph
             .vertices()
             .iter()
@@ -745,7 +756,7 @@ fn candidate_domains(
             );
             // A zero-area vertex fits even on a slot whose derated area
             // scaled to zero (0 <= 0); only the fitting check decides.
-            if !area_fits(vertex.area, available) {
+            if !area_fits_on_device(device, vertex.area, available) {
                 continue;
             }
             candidates.push(region);
@@ -935,6 +946,13 @@ fn area_fits(required: Area, available: Area) -> bool {
         .all(|resource| resource.amount(&required) <= resource.amount(&available))
 }
 
+fn area_fits_on_device(device: &Device, required: Area, available: Area) -> bool {
+    Resource::ALL
+        .into_iter()
+        .filter(|resource| device.constrains_resource(*resource))
+        .all(|resource| resource.amount(&required) <= resource.amount(&available))
+}
+
 /// An area as a short `LUT=… FF=…` line for an error message, listing only the
 /// resources that are non-zero so an all-zero area reads as "nothing".
 fn describe_area(area: Area) -> String {
@@ -1015,6 +1033,7 @@ impl FloorplanModel {
         let y = add_edge_vars(&mut lp, graph, domains);
         add_coupling(&mut lp, graph, domains, &x, &y);
         add_resource_constraints(
+            device,
             &mut lp,
             graph,
             areas,
@@ -1244,6 +1263,7 @@ fn add_coupling(
     reason = "resource rows need the vertex areas, the crossing registers, and the limits that bound both"
 )]
 fn add_resource_constraints(
+    device: &Device,
     lp: &mut LpModel,
     graph: &FloorGraph,
     areas: &RegionAreas,
@@ -1259,6 +1279,11 @@ fn add_resource_constraints(
             .get(&region)
             .ok_or_else(|| IlpError::InvalidRegion(region.region_name()))?;
         for resource in Resource::ALL {
+            if !device.constrains_resource(resource) {
+                // V80 BRAM/URAM legality is delegated to Vivado.
+                // V80 的 BRAM/URAM 合法放置交由 Vivado 决定。
+                continue;
+            }
             let mut terms = SparseRow::new();
             for (vi, vertex) in graph.vertices().iter().enumerate() {
                 if let Some(ci) = domains[vi]
@@ -1362,8 +1387,8 @@ fn add_cut_constraints(
     }
 }
 
-/// Width-weighted adjusted centroid distance plus the formulation's constant
-/// one.
+/// Width-weighted adjusted distance between physical terminals and region
+/// centroids, plus the formulation's constant one.
 fn add_objective(
     lp: &mut LpModel,
     graph: &FloorGraph,
@@ -1375,16 +1400,24 @@ fn add_objective(
     let centroids: std::collections::BTreeMap<Coor, (i64, i64)> = domains
         .iter()
         .flatten()
-        .map(|region| centroid_twice(device, region).map(|centroid| (*region, centroid)))
+        .map(|region| centroid_quarters(device, region).map(|centroid| (*region, centroid)))
         .collect::<Result<_, _>>()?;
     let mut objective = SparseRow::new();
     for term in y_terms(graph, domains) {
-        let src_centroid = centroids[term.src];
-        let dst_centroid = centroids[term.dst];
-        let distance_twice = (src_centroid.0 - dst_centroid.0).abs()
-            + VERTICAL_DIST_PENALTY * (src_centroid.1 - dst_centroid.1).abs();
-        if distance_twice != 0 {
-            let coefficient = f64::from(term.edge.width) * distance_twice.as_f64() / 2.0;
+        let src_location = vertex_location_quarters(
+            device,
+            &graph.vertices()[term.edge.src],
+            centroids[term.src],
+        );
+        let dst_location = vertex_location_quarters(
+            device,
+            &graph.vertices()[term.edge.dst],
+            centroids[term.dst],
+        );
+        let distance_quarters = (src_location.0 - dst_location.0).abs()
+            + VERTICAL_DIST_PENALTY * (src_location.1 - dst_location.1).abs();
+        if distance_quarters != 0 {
+            let coefficient = f64::from(term.edge.width) * distance_quarters.as_f64() / 4.0;
             objective.push(coefficient, term.var(y));
         }
     }
@@ -1392,16 +1425,29 @@ fn add_objective(
     Ok(())
 }
 
-/// Twice the exact midpoint, so half-integer rectangular centroids remain
-/// exact until the final LP coefficient conversion.
-fn centroid_twice(device: &Device, region: &Coor) -> Result<(i64, i64), IlpError> {
+/// A tagged terminal uses its measured physical anchor; ordinary vertices use
+/// the candidate region's centroid.
+fn vertex_location_quarters(device: &Device, vertex: &Vertex, centroid: (i64, i64)) -> (i64, i64) {
+    vertex
+        .required_tag
+        .as_deref()
+        .and_then(|tag| device.anchor_position_quarters(tag))
+        .unwrap_or(centroid)
+}
+
+/// Four times the exact midpoint, preserving quarter-unit physical anchor
+/// offsets until the final LP coefficient conversion.
+fn centroid_quarters(device: &Device, region: &Coor) -> Result<(i64, i64), IlpError> {
     let dl = device
         .slot(region.dl_x, region.dl_y)
         .ok_or_else(|| IlpError::InvalidRegion(region.region_name()))?;
     let ur = device
         .slot(region.ur_x, region.ur_y)
         .ok_or_else(|| IlpError::InvalidRegion(region.region_name()))?;
-    Ok((dl.centroid_x + ur.centroid_x, dl.centroid_y + ur.centroid_y))
+    Ok((
+        2 * (dl.centroid_x + ur.centroid_x),
+        2 * (dl.centroid_y + ur.centroid_y),
+    ))
 }
 
 #[cfg(test)]

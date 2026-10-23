@@ -177,12 +177,26 @@ Floorplanning needs a device table describing the slot grid and where each memor
 | Alveo U55C | `xcu55c-fsvh2892-2L-e` | `HBM[0]`–`HBM[31]`, no DDR | `xilinx_u55c_gen3x16_xdma_3_202210_1` |
 | Alveo U250 | `xcu250-figd2104-2L-e` | `DDR[0]`–`DDR[3]`, one per SLR | `xilinx_u250_gen3x16_xdma_4_1_202210_1` |
 | Alveo U280 | `xcu280-fsvh2892-2L-e` | `HBM[0]`–`HBM[31]`, `DDR[0]`, `DDR[1]` | `xilinx_u280_gen3x16_xdma_1_202211_1` |
+| Alveo V80 (SLASH service shell) | `xcv80-lsva4737-2MHP-e-S` | `HBM[0]`–`HBM[63]`, `DDR[0]`–`DDR[3]` | `slash_v80_service` |
 | VCK190 | `xcvc1902-vsva2197-2MP-e-S` | `DDR[0]`–`DDR[3]`, by NoC memory controller | `xilinx_vck190_base_202410_1` |
 
 Floorplanning also accepts other part strings in these same device families;
 an unknown family is rejected with `no floorplan device table matches ...`.
 The other steps (`analyze`, `synth`, `pack`) work on parts supported by Vitis
 HLS; only floorplanning has this restricted device table.
+
+The experimental V80 table uses one slot per physical SLR in a 1-column by
+3-row grid. Logic and DSP capacities describe the SLASH reconfigurable
+module's available resources. BRAM/URAM counts are inventory only: the V80
+planner delegates their placement legality to Vivado. SLR0 has no TAPA RM
+placement region. HBM endpoints, DDR[0], DDR[2], DDR[3], and the control
+interface are anchored to SLR2; DDR[1] is anchored to SLR1. Both SLR boundaries
+have an 18,870-SLL budget in this table.
+
+The 64 `HBM[n]` tags name SLASH AXI endpoints (`HBM_AXI_00`–`HBM_AXI_63`),
+not independent HBM pseudo-channels. Their mapping depends on the installed
+service shell. Physical anchors refine placement distance; the model does not
+represent NoC routes, bandwidth, latency, or contention.
 
 ### Synthesizing with `--platform`, not `--part-num`
 
@@ -191,8 +205,9 @@ When the top task has direct M-AXI ports, synthesize with the exact
 placement is platform-specific, and a different platform is rejected.
 `--part-num` is sufficient only when there are no direct M-AXI ports.
 
-The `--run-impl` and `--dse` flows also require the `xilinx-vitis` target and
-a platform accepted by the installed `v++`.
+The `--run-impl` and `--dse` flows also require the `xilinx-vitis` target
+and the matching implementation backend: Vitis for Alveo U-series devices,
+or SLASH with the `slash_v80_service` platform for V80.
 
 ### Optional flags (planning)
 
@@ -227,19 +242,41 @@ sp=Bandwidth.chan[0]:DDR[0]
 sp=Bandwidth.chan[1]:DDR[1]
 ```
 
-The same file is what `tapa pack --connectivity` forwards to `v++ --link` as a `--config`, so one file serves both steps.
+For V80, use SLASH syntax instead: one kernel instance, physical AXI interface
+names, and memory targets without brackets:
+
+```ini
+[connectivity]
+nk=VecAdd:1:VecAdd_0
+sp=VecAdd_0.m_axi_a:HBM0
+sp=VecAdd_0.m_axi_b:HBM1
+sp=VecAdd_0.m_axi_c:HBM2
+```
+
+Use the same configuration for floorplanning and hardware linking. U-series
+devices pass their Vitis configuration to `v++ --link`; V80 passes its SLASH
+configuration to `tapa link`.
 
 ### Optional flags (implementation / DSE)
 
-These run the floorplanned design through `v++ --link` to measure Fmax. On top of the `--platform` synthesis that external-memory floorplanning already requires, they need a `xilinx-vitis` target and a platform `v++` still accepts, and they run Vivado/Vitis on the tool host.
+These run the floorplanned design through the device's implementation backend to measure Fmax. U-series devices use `v++ --link`; V80 uses SLASH to build the service-shell `.vbin`. They require a `xilinx-vitis` TAPA target, the exact platform used at synthesis, and Vivado plus either Vitis or SLASH on the tool host.
 
 | Flag | Description |
 |------|-------------|
-| `--run-impl` | Plan one candidate at `--usage-limit`, package the XO, and run one `v++ --link` to measure its Fmax. |
+| `--run-impl` | Plan one candidate at `--usage-limit`, package the XO, and implement it with Vitis or SLASH to measure its Fmax. |
 | `--dse` | Design-space exploration: sweep exact logic-utilization caps across `--dse-min`…`--dse-max` and keep the highest-frequency implementation. |
 | `--dse-min FRAC` / `--dse-max FRAC` / `--dse-step FRAC` | DSE cap range and step (defaults `0.55` / `0.9` / `0.03`; require `--dse`). The sweep starts at `--dse-max` and steps down. |
 | `--dse-jobs N` | Max candidate package/link jobs to run concurrently (default `1`; requires `--dse`). |
 | `--vivado-threads N` | Per-link Vivado synthesis jobs (`--vivado.synth.jobs`, default `2`). Lower it on memory-constrained hosts. |
+
+### What the floorplan XDC emits
+
+For U-series devices, `pack`/`v++` applies slot and pipeline pblocks through
+`OPT_DESIGN.TCL.PRE`. The V80 SLASH adapter applies constraints through
+`PLACE_DESIGN.TCL.PRE`, after the reconfigurable module is linked. It assigns
+kernel and pipeline hierarchies with `USER_SLR_ASSIGNMENT`, marks crossing
+pipeline registers with `USER_SLL_REG`, and leaves the shell's existing
+`pblock_slash` intact. It does not create per-slot V80 pblocks.
 
 ### Example
 

@@ -94,7 +94,9 @@ It places tasks, balances resources, and pipelines SLR crossings.
 Use floorplanning for cross-SLR timing failures or routing congestion, not for
 long combinational paths inside a task. Those require HLS changes.
 
-See [Floorplan for Timing Closure](floorplan.md) for the complete workflow,
+U-series implementation feedback uses `v++ --link`; the experimental V80
+service-shell backend uses SLASH. See
+[Floorplan for Timing Closure](floorplan.md) for the complete workflow,
 including connectivity, `--run-impl`, DSE, result files, and troubleshooting.
 
 ## Advanced flags summary

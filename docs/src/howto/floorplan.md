@@ -18,8 +18,9 @@ needed when the design already meets timing.
 - A [supported device and platform](../reference/cli.md#supported-devices).
 - For a kernel with direct M-AXI ports: synthesis with the exact supported
   `--platform`, plus a connectivity file assigning every port to a memory bank.
-- For `--run-impl` or `--dse`: the `xilinx-vitis` target, Vitis/Vivado,
-  and a platform accepted by the installed `v++`.
+- For `--run-impl` or `--dse`: the `xilinx-vitis` target and Vivado, plus
+  Vitis and a supported platform for U-series devices, or SLASH with the
+  `slash_v80_service` platform for the experimental V80 backend.
 
 For tighter designs, consider `tapa synth --enable-synth-util` before
 floorplanning. It provides more accurate per-task resource estimates at the
@@ -67,6 +68,10 @@ Use `<top-task>.<parameter>` with the names from your C++ signature. For a
 Provide one assignment for every direct M-AXI port. A design without direct
 M-AXI ports does not need this file.
 
+V80 uses SLASH's instance, physical interface, and memory-target names; see
+the [V80 connectivity syntax](../reference/cli.md#connectivity-file). Its
+implementation flow requires a SLASH configuration even without M-AXI ports.
+
 ## Start with the defaults
 
 The default options are a good first plan:
@@ -87,7 +92,9 @@ options.
 
 `floorplan` writes `floorplan.xdc`. For `xilinx-vitis`, `pack` applies that
 file and the staged connectivity configuration automatically, so no extra
-flags are required.
+flags are required for Vitis linking. A separate V80 `tapa link` invocation
+needs `--connectivity` and `--floorplan-xdc`; see the
+[V80 guide](v80-vadd-callipepla.md).
 
 Pipelining can add latency across SLR boundaries but should not change the
 results. Run fast cosimulation again to check functionality. Fast cosim does
@@ -97,7 +104,8 @@ measurements for that.
 ## Measure a plan with `--run-impl`
 
 Planning alone does not prove that the design closes timing. To package one
-plan and run `v++ --link` for implementation feedback:
+plan and run the implementation backend (`v++ --link` for U-series devices,
+SLASH for V80):
 
 ```bash
 tapa --work-dir work.out floorplan \

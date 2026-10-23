@@ -34,7 +34,9 @@ per-task RTL (Verilog)
 placement + timing constraints
     │
     ▼  tapa pack      (XO packaging can run remotely)
-    ├─ .xo (xilinx-vitis) ─v++ --link (Vitis)→ .xclbin
+    ├─ .xo (xilinx-vitis)
+    │   ├─ U-series: v++ --link (Vitis) → .xclbin
+    │   └─ V80: tapa link (SLASH) → .vbin
     └─ .zip (xilinx-hls) → fast cosim or a downstream RTL flow
 ```
 
@@ -58,8 +60,9 @@ timing; see [Floorplan for Timing Closure](../howto/floorplan.md) for when it
 helps and how to run it.
 
 **`tapa pack`** — Combines the generated RTL into an `.xo` for the default
-`xilinx-vitis` target or a `.zip` for `xilinx-hls`. An XO feeds `v++ --link`;
-the ZIP is for direct RTL consumers and fast cosimulation.
+`xilinx-vitis` target or a `.zip` for `xilinx-hls`. An XO feeds `v++ --link`
+for U-series devices or `tapa link` for V80; the ZIP is for direct RTL
+consumers and fast cosimulation.
 
 **Shortcut:** `tapa compile` runs analyze, synth, and pack in the correct
 order in a single command. It does not floorplan — for that, run the steps
@@ -166,13 +169,13 @@ tapa compile --top VecAdd --part-num xcu250-figd2104-2L-e \
 
 ---
 
-## Note about v++ link
+## Hardware implementation
 
 ```admonish note
-For the `xilinx-vitis` target, the `v++ --link` step that produces `.xclbin`
-is performed by Xilinx Vitis, not TAPA. TAPA's input to that step is the `.xo`
-file. See [Build & Run on Board](../howto/build-and-run.md) for the full linking
-workflow.
+For U-series devices, Xilinx Vitis performs `v++ --link` and produces an
+`.xclbin`. V80 uses the SLASH service-shell flow through `tapa link`, which
+consumes the XO and produces a `.vbin` for VRT. See
+[Build & Run on Board](../howto/build-and-run.md) for both workflows.
 ```
 
 ---
