@@ -2,13 +2,9 @@
 """Export a TAPA XO's IP and argument ABI for SLASH without changing RTL."""
 
 import argparse
-import copy
-import io
 import json
-import os
 import re
 import tarfile
-import tempfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
@@ -17,7 +13,6 @@ SPIRIT = "http://www.spiritconsortium.org/XMLSchema/SPIRIT/1685-2009"
 NS = {"s": SPIRIT}
 ET.register_namespace("spirit", SPIRIT)
 ET.register_namespace("xilinx", "http://www.xilinx.com")
-V80_KERNEL_BASE = 0x020200010000
 
 
 def add(parent, tag, value=None):
@@ -142,60 +137,55 @@ def export(xo, output):
         return ip / "component.xml"
 
 
-def _updated_system_map(data):
-    root = ET.fromstring(data)
-    if root.findtext("Platform") != "Hardware" or root.findtext("ShellType") != "service":
-        raise ValueError("Expected a V80 hardware service-shell system map")
-    kernels = root.findall("Kernel")
-    if len(kernels) != 1:
-        raise ValueError("Expected exactly one V80 service-shell kernel")
-    base = kernels[0].find("BaseAddress")
-    if base is None:
-        raise ValueError("V80 kernel has no control base address")
-    current = int(base.text, 0)
-    if current not in (0x020200000000, V80_KERNEL_BASE):
-        raise ValueError(f"Unexpected V80 kernel control base {current:#x}")
-    base.text = f"0x{V80_KERNEL_BASE:X}"
-    ET.indent(root, space="  ")
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+def _hardware_kernel_base(project, system_map):
+    """Require SLASH metadata, saved BD and generated decoder to agree."""
+    kernels = ET.fromstring(system_map).findall("Kernel")
+    if len(kernels) != 1 or not kernels[0].findtext("Name"):
+        raise ValueError("Expected one named V80 kernel")
+    name = kernels[0].findtext("Name")
+    base_text = kernels[0].findtext("BaseAddress")
+    if base_text is None:
+        raise ValueError("Kernel metadata has no control base address")
+    base = int(base_text, 0)
+    designs = list(project.glob("slash_rm/*.srcs/sources_1/bd/slash_base/slash_base.bd"))
+    if len(designs) != 1:
+        raise ValueError("Expected one saved SLASH block design for address verification")
+    design = json.loads(designs[0].read_text())["design"]
+    segments = design["addressing"]["/"]["address_spaces"]["S_AXILITE_INI"]["segments"]
+    mapped = [seg for seg in segments.values()
+              if seg["address_block"] == f"/{name}/s_axi_control/reg0"]
+    if len(mapped) != 1 or int(mapped[0]["offset"], 0) != base:
+        raise ValueError("Saved BD kernel address disagrees with V80 metadata; relink in a fresh directory")
 
+    # Follow the kernel control connection rather than assuming an IP instance name.
+    control = f"{name}/s_axi_control"
+    peers = [port for net in design["interface_nets"].values()
+             if control in net["interface_ports"]
+             for port in net["interface_ports"] if port != control]
+    if len(peers) != 1:
+        raise ValueError("Expected one kernel AXI-Lite interconnect")
+    interconnect = peers[0].split("/")[0]
+    generated = list(project.glob(
+        f"slash_rm/*.gen/sources_1/bd/slash_base/ip/slash_base_{interconnect}_*/bd_*/bd_*.bd"
+    ))
+    if len(generated) != 1:
+        raise ValueError("Expected one generated kernel AXI-Lite SmartConnect")
 
-def _rewrite_vbin_system_map(vbin, system_map):
-    fd, temporary = tempfile.mkstemp(prefix=f".{vbin.name}.", dir=vbin.parent)
-    os.close(fd)
-    found = 0
-    try:
-        with tarfile.open(vbin, "r:gz") as source, tarfile.open(temporary, "w:gz") as target:
-            for member in source:
-                if member.name == "system_map.xml":
-                    found += 1
-                    info = copy.copy(member)
-                    info.size = len(system_map)
-                    target.addfile(info, io.BytesIO(system_map))
-                elif member.isfile():
-                    stream = source.extractfile(member)
-                    if stream is None:
-                        raise ValueError(f"Cannot read VBIN member {member.name}")
-                    target.addfile(member, stream)
+    def decoder_bases(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if re.fullmatch(r"SEG[0-9]+_BASE_ADDR", key):
+                    yield int(value["value"], 0)
                 else:
-                    target.addfile(member)
-        if found != 1:
-            raise ValueError(f"Expected one VBIN system_map.xml, found {found}")
-        os.replace(temporary, vbin)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+                    yield from decoder_bases(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from decoder_bases(value)
 
-
-def finalize(vbin):
-    """Synchronize VRT metadata with the address assigned in the Vivado BD."""
-    project_map = Path(f"{vbin}.prj") / "system_map.xml"
-    if not project_map.is_file():
-        raise ValueError(f"SLASH project has no system map: {project_map}")
-    system_map = _updated_system_map(project_map.read_bytes())
-    _rewrite_vbin_system_map(vbin, system_map)
-    project_map.write_bytes(system_map)
-    print(f"Updated {vbin} kernel control base to {V80_KERNEL_BASE:#x}")
+    bases = set(decoder_bases(json.loads(generated[0].read_text())))
+    if bases != {base}:
+        raise ValueError("Generated SmartConnect kernel address is stale; regenerate IP and relink")
+    return base
 
 
 def verify(vbin, clock_hz):
@@ -204,16 +194,15 @@ def verify(vbin, clock_hz):
         stream = archive.extractfile("system_map.xml")
         if stream is None:
             raise ValueError("VBIN has no system_map.xml")
-        root = ET.parse(stream).getroot()
+        system_map = stream.read()
+        _hardware_kernel_base(Path(str(vbin) + ".prj"), system_map)
+        root = ET.fromstring(system_map)
         if root.findtext("Platform") != "Hardware":
             raise ValueError("VBIN is not a hardware image")
         if root.findtext("ShellType") != "service":
             raise ValueError("Expected the V80 service shell")
         if int(root.findtext("ClockFrequency")) != clock_hz:
             raise ValueError("SLASH changed the requested clock; timing did not close")
-        kernels = root.findall("Kernel")
-        if len(kernels) != 1 or int(kernels[0].findtext("BaseAddress"), 0) != V80_KERNEL_BASE:
-            raise ValueError("Expected one kernel after the service-shell 64 KiB reservation")
         if not any(m.name.endswith(".pdi") and m.size for m in archive.getmembers()):
             raise ValueError("VBIN has no programming image")
     reports = list(Path(str(vbin) + ".prj").glob("slash_rm/report_timing_*.txt"))
@@ -238,8 +227,6 @@ def main():
     exporter = commands.add_parser("export")
     exporter.add_argument("xo", type=Path)
     exporter.add_argument("output", type=Path)
-    finalizer = commands.add_parser("finalize")
-    finalizer.add_argument("vbin", type=Path)
     checker = commands.add_parser("verify")
     checker.add_argument("vbin", type=Path)
     checker.add_argument("clock_hz", type=int)
@@ -247,11 +234,9 @@ def main():
     try:
         if args.command == "export":
             print(export(args.xo, args.output))
-        elif args.command == "finalize":
-            finalize(args.vbin)
         else:
             verify(args.vbin, args.clock_hz)
-    except (ValueError, OSError) as error:
+    except (ValueError, OSError, KeyError, ET.ParseError) as error:
         parser.exit(1, f"{error}\n")
 
 

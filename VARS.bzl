@@ -1,10 +1,10 @@
 """Variables for Xilinx tools to be configured by the developers."""
 
-XILINX_TOOL_PATH = "/opt/tools/xilinx"
-XILINX_TOOL_VERSION = "2024.2"
+XILINX_TOOL_PATH = "/mnt/ssd0/tools/Xilinx"
+XILINX_TOOL_VERSION = "2025.1"
 XILINX_TOOL_LEGACY_PATH = "/opt/tools/xilinx"
 XILINX_TOOL_LEGACY_VERSION = "2022.2"
-HAS_XRT = True
+HAS_XRT = False
 XILINX_XRT_SETUP = "/opt/xilinx/xrt/setup.sh"
 XILINX_PLATFORM_REPO_PATHS = "/opt/xilinx/platforms"
 
@@ -17,7 +17,7 @@ XILINX_PLATFORM_REPO_PATHS = "/opt/xilinx/platforms"
 # refuses the U250 platform as too old, and newer installs do not ship xcu280.
 # Override both in VARS.local.bzl when the local install ships a different
 # device.
-XILINX_PART_NUM = "xcu55c-fsvh2892-2L-e"
+XILINX_PART_NUM = "xcv80-lsva4737-2MHP-e-S"
 XILINX_HW_EMU_PLATFORM = "xilinx_u55c_gen3x16_xdma_3_202210_1"
 
 # Remote SSH host for fetching vendor headers. Leave REMOTE_HOST empty to disable.

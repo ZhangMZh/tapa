@@ -84,28 +84,20 @@ pub fn link(runner: &dyn ToolRunner, job: &SlashLinkJob) -> Result<SlashLinkOutp
     // The implementation project is retained on the tool host. Verification
     // runs there too, so remote linking need not download the Vivado project.
     invocation.downloads = vec![output.clone(), Utf8PathBuf::from(format!("{output}.prj"))];
-    if let Some(xdc) = &job.floorplan_xdc {
+    if let Some(xdc) = job.floorplan_xdc.as_ref() {
         let xdc = crate::util::absolutize(xdc);
         let hook = work.join("slash_floorplan.tcl");
         fs_err::write(&hook, pre_synth_hook(&xdc))?;
         invocation
             .args
             .extend(["--pre-synth-tcls".into(), ToolValue::path(hook.clone())]);
-        invocation.uploads.extend([xdc, hook]);
+        invocation.uploads.extend([hook, xdc]);
     }
     let link_output = run_output(runner, &invocation)?;
 
-    // SLASH's BD address assignment drives the hardware. Keep the exported
-    // system map in sync so VRT's BAR lookup names that same AXI-Lite window.
+    // SLASH owns both the hardware address assignment and the system map.
+    // Verify that they agree without rewriting either artifact.
     let project = Utf8PathBuf::from(format!("{output}.prj"));
-    let mut finalize = ToolInvocation::new("python3")
-        .arg(ToolValue::path(adapter.clone()))
-        .arg("finalize")
-        .arg(ToolValue::path(output.clone()));
-    finalize.uploads = vec![adapter.clone(), output.clone(), project.clone()];
-    finalize.downloads = vec![output.clone(), project.clone()];
-    run(runner, &finalize)?;
-
     let mut verify = ToolInvocation::new("python3")
         .arg(ToolValue::path(adapter.clone()))
         .arg("verify")
@@ -125,30 +117,10 @@ pub fn link(runner: &dyn ToolRunner, job: &SlashLinkJob) -> Result<SlashLinkOutp
 }
 
 fn pre_synth_hook(floorplan_xdc: &Utf8PathBuf) -> String {
+    // Floorplanning needs the linked RM before placement. It is Tcl, not a
+    // plain XDC file, and must not modify SLASH's control address assignment.
     format!(
-        "# TAPA floorplan.xdc is a Tcl implementation hook, not a plain XDC file.\n\
-         # Vivado's XDC parser rejects the control-flow diagnostics it contains.\n\
-         # Static OPT_DESIGN sees the reconfigurable module only as a black box.\n\
-         # Apply cell constraints after the RM is linked and before placement.\n\
-         set_property STEPS.PLACE_DESIGN.TCL.PRE [list {{{floorplan_xdc}}}] [get_runs impl_1]\n\
-         # VRT reserves the first 64 KiB of the service-shell control aperture.\n\
-         set tapa_kernel_cells [get_bd_cells -hier -filter {{VLNV =~ \"tapa:xrtl:*\"}}]\n\
-         if {{[llength $tapa_kernel_cells] != 1}} {{ error \"TAPA V80 link requires exactly one TAPA kernel, found [llength $tapa_kernel_cells]\" }}\n\
-         set tapa_kernel_cell [lindex $tapa_kernel_cells 0]\n\
-         set tapa_control_seg [get_bd_addr_segs -quiet \"$tapa_kernel_cell/s_axi_control/reg0\"]\n\
-         if {{[llength $tapa_control_seg] != 1}} {{ error \"TAPA V80 link could not resolve the kernel AXI-Lite register segment\" }}\n\
-         set tapa_control_range [get_property RANGE $tapa_control_seg]\n\
-         set tapa_control_space [get_bd_addr_spaces S_AXILITE_INI]\n\
-         if {{[llength $tapa_control_space] != 1}} {{ error \"TAPA V80 link could not resolve the service-shell control address space\" }}\n\
-         assign_bd_address -offset 0x020200010000 -range $tapa_control_range -target_address_space $tapa_control_space $tapa_control_seg -force\n\
-         set tapa_mapped_name \"SEG_[get_property NAME $tapa_kernel_cell]_reg0\"\n\
-         set tapa_mapped_segments [list]\n\
-         foreach tapa_mapped_candidate [get_bd_addr_segs -quiet -of_objects $tapa_control_space] {{\n\
-             if {{[get_property NAME $tapa_mapped_candidate] eq $tapa_mapped_name}} {{ lappend tapa_mapped_segments $tapa_mapped_candidate }}\n\
-         }}\n\
-         if {{[llength $tapa_mapped_segments] != 1}} {{ error \"TAPA V80 link could not resolve the mapped kernel AXI-Lite segment\" }}\n\
-         set tapa_actual_offset [get_property OFFSET [lindex $tapa_mapped_segments 0]]\n\
-         if {{$tapa_actual_offset != 0x020200010000}} {{ error \"TAPA V80 kernel AXI-Lite segment did not move past the service-shell reservation (got $tapa_actual_offset)\" }}\n"
+        "set_property STEPS.PLACE_DESIGN.TCL.PRE [list {{{floorplan_xdc}}}] [get_runs impl_1]\n"
     )
 }
 
@@ -224,7 +196,7 @@ fn parse_timing(report: &str, clock_hz: u64) -> Result<KernelTiming> {
     }
     let requested_mhz = f64::from(u32::try_from(requested_mhz).expect("checked above"));
     let row = Regex::new(
-        r"(?m)WNS\(ns\)\s+TNS\(ns\).*?\n\s*-+\s*\n\s*([-+0-9.]+)\s+([-+0-9.]+)\s+\d+\s+\d+\s+([-+0-9.]+)\s+([-+0-9.]+)",
+        r"(?m)WNS\(ns\)\s+TNS\(ns\).*?\n\s*-+[^\n]*\n\s*([-+0-9.]+)\s+([-+0-9.]+)\s+\d+\s+\d+\s+([-+0-9.]+)\s+([-+0-9.]+)",
     )
     .expect("static SLASH timing expression");
     let captures = row.captures(report).ok_or_else(|| {
@@ -271,7 +243,7 @@ fn parse_timing(report: &str, clock_hz: u64) -> Result<KernelTiming> {
 
 #[cfg(test)]
 mod tests {
-    use super::{link, pre_synth_hook, resolve_executable, SlashLinkJob};
+    use super::{link, parse_timing, pre_synth_hook, resolve_executable, SlashLinkJob};
     use crate::runtime::process::{MockToolRunner, ToolOutput};
     use camino::Utf8PathBuf;
 
@@ -282,7 +254,6 @@ mod tests {
         let runner = MockToolRunner::new();
         runner.push_ok("python3", ToolOutput::default());
         runner.push_ok("/bin/sh", ToolOutput::default());
-        runner.push_ok("python3", ToolOutput::default());
         // Capture all invocations without pretending to produce a valid VBIN
         // or routed timing report. No external tool is executed by this test.
         runner.push_failure("python3", 1, "stop after invocation capture");
@@ -301,7 +272,7 @@ mod tests {
         assert!(error.to_string().contains("stop after invocation capture"));
 
         let calls = runner.calls();
-        assert_eq!(calls.len(), 4, "export, link, finalize, and verify");
+        assert_eq!(calls.len(), 3, "export, link, and verify");
         for invocation in &calls {
             for argument in &invocation.args {
                 let local = argument.to_string();
@@ -324,19 +295,28 @@ mod tests {
     }
 
     #[test]
-    fn v80_pre_synth_hook_reassigns_the_real_kernel_control_segment() {
+    fn v80_pre_synth_hook_only_sets_floorplan() {
         let hook = pre_synth_hook(&Utf8PathBuf::from("/tmp/floorplan.xdc"));
-        assert!(hook.contains("STEPS.PLACE_DESIGN.TCL.PRE"));
-        assert!(!hook.contains("STEPS.OPT_DESIGN.TCL.PRE"));
-        assert!(hook.contains("get_bd_cells -hier -filter {VLNV =~ \"tapa:xrtl:*\"}"));
-        assert!(hook.contains("get_property RANGE $tapa_control_seg"));
-        assert!(
-            hook.contains("assign_bd_address -offset 0x020200010000 -range $tapa_control_range")
+        assert_eq!(
+            hook,
+            "set_property STEPS.PLACE_DESIGN.TCL.PRE [list {/tmp/floorplan.xdc}] [get_runs impl_1]\n"
         );
-        assert!(hook.contains("get_bd_addr_segs -quiet -of_objects $tapa_control_space"));
-        assert!(hook.contains("SEG_[get_property NAME $tapa_kernel_cell]_reg0"));
-        assert!(hook.contains("get_property OFFSET [lindex $tapa_mapped_segments 0]"));
-        assert!(hook.contains("if {$tapa_actual_offset != 0x020200010000}"));
+    }
+
+    #[test]
+    fn parses_vivado_timing_columns_and_rejects_violations() {
+        let report =
+            "    WNS(ns) TNS(ns) TNS Failing Endpoints TNS Total Endpoints WHS(ns) THS(ns)\n\
+                      ------- ------- --------------------- ------------------- ------- -------\n\
+                        0.066   0.000                     0               87110   0.022   0.000\n";
+        let timing = parse_timing(report, 100_000_000).expect("Vivado column separator");
+        assert!((timing.wns_ns - 0.066).abs() < 1e-9);
+        assert!((timing.reported_target_period_ns - 10.0).abs() < 1e-9);
+        for value in ["0.066", "0.022"] {
+            let failing = report.replace(value, &format!("-{value}"));
+            let error = parse_timing(&failing, 100_000_000).expect_err("timing violation");
+            assert!(error.to_string().contains("SLASH timing failed"));
+        }
     }
 
     #[test]

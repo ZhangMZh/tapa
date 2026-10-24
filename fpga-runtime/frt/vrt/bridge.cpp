@@ -8,6 +8,8 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -50,7 +52,8 @@ struct Instance {
   vrt::Device device;
   vrt::Kernel kernel;
   std::map<uint32_t, Buffer> buffers;
-  std::vector<bool> bound;
+  std::vector<std::optional<uint64_t>> arguments;
+  std::string failure;
   bool launched = false;
   bool finished = false;
   Clock::time_point start;
@@ -61,10 +64,11 @@ struct Instance {
   Instance(const char* path, const char* bdf, const char* name)
       : device(bdf, path),
         kernel(device, name),
-        bound(kernel.getFunctionalArgs().size(), false) {
+        arguments(kernel.getFunctionalArgs().size()) {
     if (device.getPlatform() != vrt::Platform::HARDWARE) {
       throw std::runtime_error("FRT VRT backend requires a hardware VBIN");
     }
+    ReadControl();
   }
 
   const vrt::FunctionalArg& Arg(uint32_t index) {
@@ -78,10 +82,61 @@ struct Instance {
     return args[index];
   }
 
+  [[noreturn]] void Fail(const std::string& message) {
+    failure = message;
+    throw std::runtime_error(failure);
+  }
+
+  uint32_t ReadControl() {
+    const uint32_t control = kernel.read(0);
+    if (control == UINT32_MAX) {
+      std::ostringstream message;
+      message << "VRT kernel " << kernel.getName()
+              << " control read returned 0xffffffff at AXI base 0x" << std::hex
+              << kernel.getPhysAddr()
+              << "; check VBIN metadata against the implemented address map";
+      Fail(message.str());
+    }
+    return control;
+  }
+
+  void WriteArguments() {
+    for (size_t index = 0; index < arguments.size(); ++index) {
+      const auto& arg = kernel.getFunctionalArgs()[index];
+      if (!arguments[index]) {
+        throw std::runtime_error("unbound VRT kernel argument " + arg.name);
+      }
+    }
+    for (size_t index = 0; index < arguments.size(); ++index) {
+      const auto& arg = kernel.getFunctionalArgs()[index];
+      const uint64_t value = *arguments[index];
+      for (uint32_t word = 0; word < arg.range / 32; ++word) {
+        const uint32_t offset = arg.offset + word * 4;
+        const uint32_t expected = static_cast<uint32_t>(value >> (word * 32));
+        kernel.write(offset, expected);
+        if (arg.readable && kernel.read(offset) != expected) {
+          std::ostringstream message;
+          message << "VRT argument " << arg.name
+                  << " readback mismatch at offset 0x" << std::hex << offset
+                  << "; kernel was not started";
+          Fail(message.str());
+        }
+      }
+    }
+  }
+
   bool Poll() {
-    if (launched && !finished && (kernel.read(0) & 2u)) {
-      finished = true;
-      compute_ns = Elapsed(start);
+    if (!failure.empty()) throw std::runtime_error(failure);
+    if (launched && !finished) {
+      const uint32_t control = ReadControl();
+      if (control & 2u) {
+        finished = true;
+        compute_ns = Elapsed(start);
+      } else if (Clock::now() - start >= std::chrono::minutes(5)) {
+        Fail(
+            "VRT kernel completion timed out after 300 seconds; device buffers "
+            "retained");
+      }
     }
     return finished;
   }
@@ -127,8 +182,7 @@ int frt_vrt_scalar(void* handle, uint32_t index, const uint8_t* data,
     }
     uint64_t value = 0;
     std::memcpy(&value, data, size);
-    instance.kernel.setArg(index, value);
-    instance.bound[index] = true;
+    instance.arguments[index] = value;
   });
 }
 
@@ -143,10 +197,9 @@ int frt_vrt_buffer(void* handle, uint32_t index, uint8_t* host, size_t size,
     }
     auto buffer = std::make_unique<vrt::Buffer<uint8_t>>(
         instance.device, size, instance.kernel.argMemoryConfig(arg.name));
-    instance.kernel.setArg(index, *buffer);
+    instance.arguments[index] = buffer->getPhysAddr();
     instance.buffers.insert_or_assign(
         index, Buffer{std::move(buffer), host, size, access});
-    instance.bound[index] = true;
   });
 }
 
@@ -188,17 +241,16 @@ int frt_vrt_exec(void* handle) {
     if (instance.launched && !instance.finished) {
       throw std::runtime_error("VRT kernel is already running");
     }
-    for (size_t index = 0; index < instance.bound.size(); ++index) {
-      if (!instance.bound[index]) {
-        throw std::runtime_error(
-            "unbound VRT kernel argument " + std::to_string(index) + " (" +
-            instance.kernel.getFunctionalArgs()[index].name + ")");
-      }
-    }
+    if (!instance.failure.empty()) throw std::runtime_error(instance.failure);
+    // Read/COR consumes an old ap_done before a new launch. Check accessibility
+    // before writing any parameter, and verify parameters before asserting
+    // start.
+    instance.ReadControl();
+    instance.WriteArguments();
     instance.start = Clock::now();
-    instance.kernel.start();
     instance.launched = true;
     instance.finished = false;
+    instance.kernel.write(0, 1u);
   });
 }
 
