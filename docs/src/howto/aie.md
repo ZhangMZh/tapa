@@ -56,7 +56,11 @@ tasks or a round trip through a PL task, keeps every stream access behind its
 earlier writes, the order software simulation runs it in. The AI Engine
 compiler would otherwise issue a read ahead of an earlier write, which the
 cycle turns into a deadlock. The price is less overlap between the loop
-iterations of that task; tasks off any cycle keep it.
+iterations of that task; tasks off any cycle keep it. HLS keeps no such order
+for a PL task, and within a pipelined loop may issue a read ahead of an
+earlier write. A ring that also builds for PL puts its writes and its reads in
+separate loops, writing no more at a time than its streams hold, as
+`tests/apps/cannon` does.
 
 Two habits decide AI Engine performance:
 

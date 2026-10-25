@@ -16,10 +16,13 @@
 // p x p PEs
 constexpr int p = TAPA_CANNON_P;
 
-// Keep the functional fixture small enough that each PE-to-PE exchange stays
-// below the native 16-deep inter-PE FIFOs while still exercising the
-// scatter/compute/communicate/gather flow across the whole PE grid.
-constexpr int kN = p * 3;
+// Each PE's block edge; a multiple of the PE's 8-lane vectors. Raise it with
+// `-DTAPA_CANNON_B=32` to give AI Engine PEs enough work to measure.
+#ifndef TAPA_CANNON_B
+#define TAPA_CANNON_B 8
+#endif
+
+constexpr int kN = p * TAPA_CANNON_B;
 
 void Cannon(tapa::mmap<const float> a_vec, tapa::mmap<const float> b_vec,
             tapa::mmap<float> c_vec, uint64_t n);
