@@ -51,6 +51,7 @@ type_erased_queue::LogContext::New(std::string_view name) {
   LOG(INFO) << "channel '" << name << "' is logged in '" << file_path << "'";
   auto log_context = std::make_unique<type_erased_queue::LogContext>();
   log_context->ofs = std::move(ofs);
+  log_context->words.open(StrCat({debug_stream_dir, "/", name, ".words"}));
   return log_context;
 }
 
