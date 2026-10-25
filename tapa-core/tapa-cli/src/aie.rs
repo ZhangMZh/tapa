@@ -81,6 +81,24 @@ fn kernel_sources(
     Ok(sources)
 }
 
+/// Each top scalar argument's index among the PL kernel's arguments, as
+/// `kernel.xml` numbers them: the runtime finds a runtime parameter's value
+/// by that index.
+fn rtp_args(graph: &Graph, partition: &AiePartition) -> Result<BTreeMap<String, u32>> {
+    let pl = partition.pl_projection(graph)?;
+    let top = &pl.tasks[&pl.top];
+    let mut ids = BTreeMap::new();
+    let mut next = 0u32;
+    for port in &top.ports {
+        let names = port.kernel_arg_names(tapa_ir::Target::XilinxVitis);
+        if port.cat.is_scalar() {
+            ids.insert(port.name.clone(), next);
+        }
+        next += u32::try_from(names.len()).unwrap_or(u32::MAX);
+    }
+    Ok(ids)
+}
+
 /// One graph build: where, for which target and device, at which PL clock,
 /// and with which simulator entry point.
 pub struct GraphBuild {
@@ -110,6 +128,7 @@ pub fn prepare(
     let tree = crate::util::utf8(work_dir.join(crate::tapacc::REWRITTEN_DIR));
     let options = GraphOptions {
         sources: kernel_sources(&tree, graph, partition)?,
+        rtp_args: rtp_args(graph, partition)?,
         plio_mhz: pl_freq_mhz,
         sim,
     };
