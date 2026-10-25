@@ -8,7 +8,7 @@ setup: `README.md`; user and developer docs: `docs/src/`.
 **Every commit message must carry the trailer:**
 
 ```text
-Co-Authored-By: Kimi K3 (1M) <noreply@moonshot.ai>
+Co-Authored-By: Kimi K3.1 Pro <noreply@moonshot.ai>
 ```
 
 This project is sponsored by Kimi; the trailer is mandatory on every
