@@ -360,7 +360,7 @@ mod tests {
                     loop {
                         match producer.try_push(&pending) {
                             Ok(()) => break,
-                            Err("queue full") => std::thread::yield_now(),
+                            Err("the queue is full") => std::thread::yield_now(),
                             Err(error) => panic!("push failed: {error}"),
                         }
                     }
