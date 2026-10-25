@@ -64,9 +64,10 @@ separate loops, writing no more at a time than its streams hold, as
 
 These habits decide AI Engine performance:
 
-- Write the inner loop with `tapa::vec_t`. On the AI Engine a `vec_t<float, 4>`
+- Write the inner loop with `tapa::vec_t`. On the AI Engine a native `vec_t<float, 4>`
   is one vector register, `a + b` is one vector add, and `acc += a * b` is one
-  multiply-accumulate. Scalar loops stay scalar and run far slower.
+  multiply-accumulate. Other whole-word `vec_t` shapes use scalar operations;
+  scalar loops run far slower than native vector code.
 - Use a 32-bit loop counter and `[[tapa::pipeline]]` on the hot loop. A 64-bit
   counter keeps the loop from being software-pipelined.
 - Accumulate into a local `vec_t` variable, not an array element. The AI

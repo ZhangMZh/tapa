@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <type_traits>
@@ -22,39 +23,92 @@ namespace tapa {
 namespace internal {
 namespace aie {
 
+// 32-bit words one element occupies on an ADF port or in a frame buffer.
 template <typename T>
-struct elem_io {
-  static_assert(sizeof(T) == 4 || sizeof(T) == 8,
-                "an AI Engine stream element must be a 32- or 64-bit scalar "
-                "or a tapa::vec_t of 32-bit elements");
+inline constexpr int kWords = (::tapa::widthof<T>() + 31) / 32;
+
+// Word-wise fallback for any trivially copyable whole-word element. Native
+// vector specializations below retain their single-instruction fast path.
+template <typename T>
+struct word_io {
   static TAPA_AIE_INLINE T read(input_stream<int32>* s) {
-    return readincr(reinterpret_cast<input_stream<T>*>(s));
+    std::array<int32, kWords<T>> words{};
+    for (auto& word : words) word = readincr(s);
+    T value{};
+    std::memcpy(&value, words.data(), sizeof(T));
+    return value;
   }
   static TAPA_AIE_INLINE void write(output_stream<int32>* s, const T& value) {
-    writeincr(reinterpret_cast<output_stream<T>*>(s), value);
+    std::array<int32, kWords<T>> words{};
+    std::memcpy(words.data(), &value, sizeof(T));
+    for (const auto word : words) writeincr(s, word);
   }
   static TAPA_AIE_INLINE T load(const int32* p) {
-    return *reinterpret_cast<const T*>(p);
+    T value{};
+    std::memcpy(&value, p, sizeof(T));
+    return value;
   }
   static TAPA_AIE_INLINE void store(int32* p, const T& value) {
-    *reinterpret_cast<T*>(p) = value;
+    std::memcpy(p, &value, sizeof(T));
+  }
+};
+
+template <typename T>
+struct elem_io {
+  static_assert(sizeof(T) % sizeof(int32) == 0 &&
+                    std::is_trivially_copyable<T>::value,
+                "an AI Engine stream element must be trivially copyable and "
+                "a whole number of 32-bit words");
+  static TAPA_AIE_INLINE T read(input_stream<int32>* s) {
+    return word_io<T>::read(s);
+  }
+  static TAPA_AIE_INLINE void write(output_stream<int32>* s, const T& value) {
+    word_io<T>::write(s, value);
+  }
+  static TAPA_AIE_INLINE T load(const int32* p) { return word_io<T>::load(p); }
+  static TAPA_AIE_INLINE void store(int32* p, const T& value) {
+    word_io<T>::store(p, value);
   }
 };
 
 template <typename E, int N>
 struct elem_io<vec_t<E, N>> {
   static TAPA_AIE_INLINE vec_t<E, N> read(input_stream<int32>* s) {
-    return readincr_v<N>(reinterpret_cast<input_stream<E>*>(s));
+    if constexpr (requires {
+                    typename ::aie::detail::native_vector_type_t<E, N>;
+                  }) {
+      return readincr_v<N>(reinterpret_cast<input_stream<E>*>(s));
+    } else {
+      return word_io<vec_t<E, N>>::read(s);
+    }
   }
   static TAPA_AIE_INLINE void write(output_stream<int32>* s,
                                     const vec_t<E, N>& value) {
-    writeincr(reinterpret_cast<output_stream<E>*>(s), value.v);
+    if constexpr (requires {
+                    typename ::aie::detail::native_vector_type_t<E, N>;
+                  }) {
+      writeincr(reinterpret_cast<output_stream<E>*>(s), value.v);
+    } else {
+      word_io<vec_t<E, N>>::write(s, value);
+    }
   }
   static TAPA_AIE_INLINE vec_t<E, N> load(const int32* p) {
-    return ::aie::load_v<N>(reinterpret_cast<const E*>(p));
+    if constexpr (requires {
+                    typename ::aie::detail::native_vector_type_t<E, N>;
+                  }) {
+      return ::aie::load_v<N>(reinterpret_cast<const E*>(p));
+    } else {
+      return word_io<vec_t<E, N>>::load(p);
+    }
   }
   static TAPA_AIE_INLINE void store(int32* p, const vec_t<E, N>& value) {
-    ::aie::store_v(reinterpret_cast<E*>(p), value.v);
+    if constexpr (requires {
+                    typename ::aie::detail::native_vector_type_t<E, N>;
+                  }) {
+      ::aie::store_v(reinterpret_cast<E*>(p), value.v);
+    } else {
+      word_io<vec_t<E, N>>::store(p, value);
+    }
   }
 };
 
@@ -70,10 +124,6 @@ TAPA_AIE_INLINE void after_write() {
   chess_separator_scheduler();
 #endif
 }
-
-// 32-bit words one element occupies on an ADF port or in a frame buffer.
-template <typename T>
-inline constexpr int kWords = (::tapa::widthof<T>() + 31) / 32;
 
 }  // namespace aie
 }  // namespace internal
