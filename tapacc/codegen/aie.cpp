@@ -13,6 +13,10 @@ namespace tapa::cc {
 void AieBackend::RewriteTaskFunc(const TaskModel& task, bool /*is_top*/,
                                  EditSink& edits) const {
   if (!task.def->hasBody()) return;
+  // chess keeps a large body out of line, and the kernel wrapper then hands
+  // it references to its port objects, so every stream or frame access
+  // reloads their state from memory. Inlined, that state stays in registers.
+  edits.InsertTextBefore(task.def->getTypeSpecStartLoc(), "TAPA_AIE_INLINE ");
   // The signature stub was captured before this runs, so the frame type
   // lands in the task's own variant only; every other variant keeps the
   // portable `tapa::istream<T>&` spelling.
