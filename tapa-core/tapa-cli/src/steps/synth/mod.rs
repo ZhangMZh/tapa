@@ -86,6 +86,11 @@ pub struct SynthArgs {
     #[arg(long = "skip-hls-based-on-mtime", default_value_t = false)]
     pub skip_hls_based_on_mtime: bool,
 
+    /// Require every task's cached HLS output and csynth report to be valid;
+    /// fail instead of running HLS or substituting defaults.
+    #[arg(long = "require-hls-cache", requires = "skip_hls_based_on_mtime")]
+    pub require_hls_cache: bool,
+
     /// Extra Tcl appended verbatim to every generated HLS script.
     #[arg(long = "other-hls-configs", default_value = "")]
     pub other_hls_configs: String,

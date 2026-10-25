@@ -45,6 +45,9 @@ pub struct HlsRunOptions {
     /// and manifest flags are prepended by [`task_cflags`].
     pub cflags: Vec<String>,
     pub skip_based_on_mtime: bool,
+    /// Fail on a cache miss or unusable cached report rather than running
+    /// HLS or using default metrics. Requires `skip_based_on_mtime`.
+    pub require_cache_hit: bool,
     /// Number of HLS runs executed in parallel. `None` or 1 → serial.
     pub jobs: Option<u32>,
     /// When `--keep-hls-work-dir` is set,
@@ -99,13 +102,16 @@ pub fn run_hls_for_leaves(
                 fs::create_dir_all(&layout.reports_dir)?;
                 // Reload existing csynth data so downstream report
                 // generation and the persisted graph keep correct metrics.
-                let csynth =
-                    find_and_parse_csynth(&layout.reports_dir, task_name).unwrap_or_else(|e| {
+                let csynth = match find_and_parse_csynth(&layout.reports_dir, task_name) {
+                    Ok(report) => report,
+                    Err(error) if options.require_cache_hit => return Err(error),
+                    Err(error) => {
                         log::warn!(
-                            "could not reload cached csynth for `{task_name}`: {e}; using defaults"
+                            "could not reload cached csynth for `{task_name}`: {error}; using defaults"
                         );
                         tapa_xilinx::CsynthReport::default()
-                    });
+                    }
+                };
                 let report_paths = walkdir::WalkDir::new(&layout.reports_dir)
                     .into_iter()
                     .filter_map(std::result::Result::ok)
@@ -125,6 +131,13 @@ pub fn run_hls_for_leaves(
                 ));
                 continue;
             }
+        }
+
+        if options.require_cache_hit {
+            return Err(CliError::Codegen(format!(
+                "cached HLS output for `{task_name}` is missing or stale; rerun without \
+                 `--require-hls-cache` to regenerate it"
+            )));
         }
 
         fs::create_dir_all(&layout.reports_dir)?;
@@ -397,6 +410,7 @@ mod tests {
             other_configs: String::new(),
             cflags: Vec::new(),
             skip_based_on_mtime: true,
+            require_cache_hit: false,
             jobs: Some(1),
             keep_work_dir: false,
         }
@@ -573,6 +587,7 @@ mod tests {
             other_configs: String::new(),
             cflags: Vec::new(),
             skip_based_on_mtime: true,
+            require_cache_hit: false,
             jobs: Some(1),
             keep_work_dir: false,
         };
@@ -593,6 +608,55 @@ mod tests {
             "the one call must be the Vitis HLS invocation",
         );
         let _ = ToolInvocation::default(); // silence unused import in some builds
+    }
+
+    #[test]
+    fn required_cache_miss_does_not_run_hls() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work = tmp.path();
+        seed_rewritten(work);
+        let design = leaf_design();
+        let runner = MockToolRunner::new();
+        let opts = HlsRunOptions {
+            require_cache_hit: true,
+            ..skip_hls_options()
+        };
+        let error = run_hls_for_leaves(&runner, work, &design, &staged(work, &design), &opts)
+            .expect_err("a required cache miss must fail");
+        assert!(error.to_string().contains("missing or stale"), "{error}");
+        assert!(runner.calls().is_empty(), "a strict miss must not run HLS");
+    }
+
+    #[test]
+    fn required_cache_rejects_a_missing_csynth_report() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let work = tmp.path();
+        seed_rewritten(work);
+        let hdl = work.join("hls").join("Add").join("verilog");
+        fs::create_dir_all(&hdl).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(
+            hdl.join("Add.v"),
+            b"module Add(); endmodule
+",
+        )
+        .unwrap();
+        let design = leaf_design();
+        let runner = MockToolRunner::new();
+        let opts = HlsRunOptions {
+            require_cache_hit: true,
+            ..skip_hls_options()
+        };
+        let error = run_hls_for_leaves(&runner, work, &design, &staged(work, &design), &opts)
+            .expect_err("a required report must be present");
+        assert!(
+            error.to_string().contains("cached csynth report"),
+            "{error}"
+        );
+        assert!(
+            runner.calls().is_empty(),
+            "a strict report miss must not run HLS"
+        );
     }
 
     /// Cache path still works: when `hdl_dir` already contains a `.v`
@@ -620,6 +684,7 @@ mod tests {
             other_configs: String::new(),
             cflags: Vec::new(),
             skip_based_on_mtime: true,
+            require_cache_hit: false,
             jobs: Some(1),
             keep_work_dir: false,
         };
@@ -756,6 +821,7 @@ mod tests {
             other_configs: String::new(),
             cflags: Vec::new(),
             skip_based_on_mtime: true,
+            require_cache_hit: false,
             jobs: Some(1),
             keep_work_dir: false,
         };

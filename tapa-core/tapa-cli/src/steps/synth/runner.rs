@@ -58,6 +58,7 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
         other_configs: args.other_hls_configs.clone(),
         cflags: build_hls_cflags(ctx.remote_config.is_some()),
         skip_based_on_mtime: args.skip_hls_based_on_mtime,
+        require_cache_hit: args.require_hls_cache,
         jobs: args.jobs,
         keep_work_dir: args.keep_hls_work_dir,
     };

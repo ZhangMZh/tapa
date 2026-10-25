@@ -147,6 +147,7 @@ the design's RTL. This stage can run on a remote host via `--remote-host`.
 | `--enable-synth-util` | Run out-of-context Vivado synthesis per task for accurate area numbers instead of the coarser HLS estimates. Costs one extra Vivado run per task. |
 | `--keep-hls-work-dir` | Keep each task's Vitis HLS project under `hls/<task>/project` instead of discarding it. Useful for post-mortem debugging of an HLS failure. |
 | `--skip-hls-based-on-mtime` | Reuse existing Verilog when the kernel sources and headers are unchanged. Useful for iterating on other parts of a design. |
+| `--require-hls-cache` | With `--skip-hls-based-on-mtime`, fail on a cache miss or unusable cached csynth report instead of running HLS or substituting defaults. |
 | `--other-hls-configs TCL` | Extra Tcl appended verbatim to every generated HLS script. |
 
 ### Example
