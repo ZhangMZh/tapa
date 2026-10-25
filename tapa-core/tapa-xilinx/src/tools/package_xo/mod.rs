@@ -66,8 +66,21 @@ fn m_axi_port_names(args: &KernelXmlArgs) -> Vec<String> {
         .collect()
 }
 
+/// The kernel's AXI-Stream interfaces, which Vivado names after the port.
+fn axis_port_names(args: &KernelXmlArgs) -> Vec<String> {
+    args.ports
+        .iter()
+        .filter(|p| matches!(p.category, PortCategory::IStream | PortCategory::OStream))
+        .map(|p| p.name.clone())
+        .collect()
+}
+
+/// Associate every bus interface with `ap_clk`. An unassociated AXIS
+/// interface has no clock, and `v++ --link` fails on it while wiring the
+/// stream to its peer (`get_property DIR` on an empty clock).
 fn render_bus_ifaces(
     s_axi: &[String],
+    axis: &[String],
     m_axi: &[String],
     params: &[(String, Vec<(String, String)>)],
 ) -> Result<String> {
@@ -75,6 +88,7 @@ fn render_bus_ifaces(
     #[template(path = "bus_ifaces.tcl.j2", escape = "none")]
     struct Template<'a> {
         s_axi: &'a [String],
+        axis: &'a [String],
         m_axi: &'a [String],
         m_axi_prefix: &'a str,
         params: &'a std::collections::HashMap<&'a str, &'a [(String, String)]>,
@@ -85,6 +99,7 @@ fn render_bus_ifaces(
         .collect();
     askama::Template::render(&Template {
         s_axi,
+        axis,
         m_axi,
         m_axi_prefix: M_AXI_PREFIX,
         params: &param_map,
@@ -299,7 +314,8 @@ pub fn pack_xo_without_redaction(
         inputs.s_axi_ifaces.clone()
     };
     let m_axi = m_axi_port_names(&inputs.kernel_xml);
-    let bus_ifaces = render_bus_ifaces(&s_axi, &m_axi, &inputs.m_axi_params)?;
+    let axis = axis_port_names(&inputs.kernel_xml);
+    let bus_ifaces = render_bus_ifaces(&s_axi, &axis, &m_axi, &inputs.m_axi_params)?;
     let cpp_kernels = render_cpp_kernels(&inputs.cpp_kernels);
     let tcl = format_package_xo_tcl(
         &inputs.top_name,
@@ -519,11 +535,16 @@ mod tests {
     fn render_bus_ifaces_includes_m_axi_prefix_and_params() {
         let s = render_bus_ifaces(
             &["s_axi_control".into()],
+            &["a".into()],
             &["gmem0".into()],
             &[("gmem0".into(), vec![("OFFSET".into(), "SLAVE".into())])],
         )
         .unwrap();
-        assert!(s.contains("-busif s_axi_control"));
+        assert!(s.contains("-busif s_axi_control -clock ap_clk"));
+        assert!(
+            s.contains("-busif a -clock ap_clk"),
+            "an AXIS port needs its clock for v++ to wire it: {s}"
+        );
         assert!(s.contains("-busif m_axi_gmem0"));
         assert!(s.contains("m_axi_gmem0") && s.contains("OFFSET") && s.contains("SLAVE"));
     }
