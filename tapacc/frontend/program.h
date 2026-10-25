@@ -108,6 +108,9 @@ struct TaskModel {
 
   std::vector<Port> ports;
   std::vector<AieLocation> aie_locations;
+  // AI Engine leaf tasks only: the bytes of the body's local variables,
+  // which the kernel keeps on its stack.
+  uint32_t aie_stack_bytes = 0;
   // Stream ports the body closes (`close()`/`try_close()`): an end-of-
   // transmission token must never cross into an AI Engine task.
   std::set<std::string> closed_ports;

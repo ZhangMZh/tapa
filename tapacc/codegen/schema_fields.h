@@ -52,6 +52,9 @@ inline constexpr const char* kFieldCol = "col";
 inline constexpr const char* kFieldRow = "row";
 inline constexpr const char* kFieldInstance = "instance";
 
+// ── AI Engine leaf stack (task "aie_stack_bytes") ───────────────────
+inline constexpr const char* kFieldAieStackBytes = "aie_stack_bytes";
+
 // ── Instance ────────────────────────────────────────────────────────
 inline constexpr const char* kFieldStep = "step";
 inline constexpr const char* kFieldArgs = "args";

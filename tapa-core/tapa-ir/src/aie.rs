@@ -46,6 +46,9 @@ pub struct AieKernel {
     pub ports: Vec<AieKernelPort>,
     /// A `[[tapa::aie_location]]` tile pin.
     pub location: Option<(u32, u32)>,
+    /// The bytes of the task's local variables, which the kernel's stack
+    /// must hold on top of its own needs.
+    pub stack_bytes: Option<u32>,
 }
 
 /// One parameter of an AI Engine kernel.
@@ -499,6 +502,7 @@ impl Builder<'_> {
             call: def.readable_name.clone(),
             ports,
             location,
+            stack_bytes: def.aie_stack_bytes,
         })
     }
 

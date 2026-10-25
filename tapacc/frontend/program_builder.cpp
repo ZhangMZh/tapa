@@ -805,7 +805,6 @@ void ProgramBuilder::FillOwnedTasks(int tu, Program& view,
     ReadAieAttrs(ctx, model);
     if (model.target == SynthTarget::kAie) {
       CheckAieTask(ctx, model);
-    } else if (model.target != SynthTarget::kIgnore) {
       if (model.level == TaskLevel::kLower) {
         model.aie_stack_bytes = LocalBytes(ctx, model.def);
       }
@@ -967,6 +966,9 @@ nlohmann::json ProgramBuilder::EmitJson() const {
       for (const AieLocation& location : model.aie_locations) {
         t[kFieldAieLocation].push_back(AieLocationJson(location));
       }
+    }
+    if (model.aie_stack_bytes > 0) {
+      t[kFieldAieStackBytes] = model.aie_stack_bytes;
     }
     if (model.level == TaskLevel::kUpper) {
       t[kFieldTasks] = nlohmann::json::object();

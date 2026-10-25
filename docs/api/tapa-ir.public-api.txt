@@ -196,6 +196,7 @@ pub tapa_ir::aie::AieKernel::call: alloc::string::String
 pub tapa_ir::aie::AieKernel::location: core::option::Option<(u32, u32)>
 pub tapa_ir::aie::AieKernel::name: alloc::string::String
 pub tapa_ir::aie::AieKernel::ports: alloc::vec::Vec<tapa_ir::aie::AieKernelPort>
+pub tapa_ir::aie::AieKernel::stack_bytes: core::option::Option<u32>
 pub tapa_ir::aie::AieKernel::task: alloc::string::String
 impl core::clone::Clone for tapa_ir::aie::AieKernel
 pub fn tapa_ir::aie::AieKernel::clone(&self) -> tapa_ir::aie::AieKernel
@@ -2418,6 +2419,7 @@ pub fn tapa_ir::task::AieLocation::from(T) -> T
 impl<T> serde_core::de::DeserializeOwned for tapa_ir::task::AieLocation where T: for<'de> serde_core::de::Deserialize<'de>
 pub struct tapa_ir::task::Task
 pub tapa_ir::task::Task::aie_location: alloc::vec::Vec<tapa_ir::task::AieLocation>
+pub tapa_ir::task::Task::aie_stack_bytes: core::option::Option<u32>
 pub tapa_ir::task::Task::clock_period: core::option::Option<tapa_ir::clock::ClockPeriod>
 pub tapa_ir::task::Task::defines: alloc::vec::Vec<alloc::string::String>
 pub tapa_ir::task::Task::fifos: alloc::collections::btree::map::BTreeMap<alloc::string::String, tapa_ir::interconnect::InterconnectDefinition>
@@ -3740,6 +3742,7 @@ pub tapa_ir::AieKernel::call: alloc::string::String
 pub tapa_ir::AieKernel::location: core::option::Option<(u32, u32)>
 pub tapa_ir::AieKernel::name: alloc::string::String
 pub tapa_ir::AieKernel::ports: alloc::vec::Vec<tapa_ir::aie::AieKernelPort>
+pub tapa_ir::AieKernel::stack_bytes: core::option::Option<u32>
 pub tapa_ir::AieKernel::task: alloc::string::String
 impl core::clone::Clone for tapa_ir::aie::AieKernel
 pub fn tapa_ir::aie::AieKernel::clone(&self) -> tapa_ir::aie::AieKernel
@@ -5208,6 +5211,7 @@ impl<T> core::convert::From<T> for tapa_ir::bindings::PortBinding<'a>
 pub fn tapa_ir::bindings::PortBinding<'a>::from(T) -> T
 pub struct tapa_ir::Task
 pub tapa_ir::Task::aie_location: alloc::vec::Vec<tapa_ir::task::AieLocation>
+pub tapa_ir::Task::aie_stack_bytes: core::option::Option<u32>
 pub tapa_ir::Task::clock_period: core::option::Option<tapa_ir::clock::ClockPeriod>
 pub tapa_ir::Task::defines: alloc::vec::Vec<alloc::string::String>
 pub tapa_ir::Task::fifos: alloc::collections::btree::map::BTreeMap<alloc::string::String, tapa_ir::interconnect::InterconnectDefinition>

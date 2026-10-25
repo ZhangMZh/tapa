@@ -68,6 +68,7 @@ fn task_graph(ports: Vec<Port>) -> TaskGraph {
             defines: Vec::new(),
             readable_name: "vadd".to_owned(),
             aie_location: Vec::new(),
+            aie_stack_bytes: None,
             synth: SynthTarget::Hls,
             ports,
             tasks: BTreeMap::new(),

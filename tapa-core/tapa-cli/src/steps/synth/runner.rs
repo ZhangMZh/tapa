@@ -420,6 +420,7 @@ mod tests {
             fifos: BTreeMap::new(),
             readable_name: String::new(),
             aie_location: Vec::new(),
+            aie_stack_bytes: None,
             synth: SynthTarget::Hls,
             self_area: Some(Area {
                 lut: 999,
@@ -476,6 +477,7 @@ mod tests {
                 fifos: BTreeMap::new(),
                 readable_name: String::new(),
                 aie_location: Vec::new(),
+                aie_stack_bytes: None,
                 synth: SynthTarget::Hls,
                 self_area: None,
                 total_area: None,
@@ -503,6 +505,7 @@ mod tests {
                 fifos: BTreeMap::new(),
                 readable_name: String::new(),
                 aie_location: Vec::new(),
+                aie_stack_bytes: None,
                 synth: SynthTarget::Hls,
                 self_area: None,
                 total_area: None,

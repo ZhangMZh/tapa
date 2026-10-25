@@ -152,6 +152,7 @@ mod tests {
                 fifos: BTreeMap::new(),
                 readable_name: "Top".to_owned(),
                 aie_location: Vec::new(),
+                aie_stack_bytes: None,
                 synth: SynthTarget::Hls,
                 self_area: None,
                 total_area: None,

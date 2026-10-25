@@ -67,6 +67,10 @@ pub struct Task {
     /// AI Engine tile pins (`[[tapa::aie_location]]`); empty otherwise.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aie_location: Vec<AieLocation>,
+    /// AI Engine leaf tasks: the bytes of the body's local variables, which
+    /// the kernel keeps on its stack. `None` when there are none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aie_stack_bytes: Option<u32>,
     /// External ports / interface definitions.
     #[serde(default)]
     pub ports: Vec<Port>,

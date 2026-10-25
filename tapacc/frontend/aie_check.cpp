@@ -1,5 +1,7 @@
 #include "aie_check.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
@@ -163,6 +165,28 @@ class StreamCalls : public clang::RecursiveASTVisitor<StreamCalls> {
   std::function<void(const clang::CXXMemberCallExpr&)> visit_;
 };
 
+class LocalVars : public clang::RecursiveASTVisitor<LocalVars> {
+ public:
+  explicit LocalVars(const clang::ASTContext& ctx) : ctx_(ctx) {}
+
+  bool VisitVarDecl(clang::VarDecl* var) {
+    const clang::QualType type = var->getType();
+    if (var->isLocalVarDecl() && !var->isStaticLocal() &&
+        !type->isDependentType() && !type->isIncompleteType() &&
+        type->isConstantSizeType()) {
+      bytes_ +=
+          static_cast<uint64_t>(ctx_.getTypeSizeInChars(type).getQuantity());
+    }
+    return true;
+  }
+
+  uint64_t bytes() const { return bytes_; }
+
+ private:
+  const clang::ASTContext& ctx_;
+  uint64_t bytes_ = 0;
+};
+
 const Port* FindPort(const TaskModel& task, const std::string& name) {
   for (const Port& port : task.ports) {
     if (port.name == name) return &port;
@@ -278,6 +302,13 @@ void CheckAieTask(const clang::ASTContext& ctx, const TaskModel& task) {
         << op << task.name << problem;
   });
   calls.TraverseStmt(task.def->getBody());
+}
+
+uint32_t LocalBytes(const clang::ASTContext& ctx,
+                    const clang::FunctionDecl* def) {
+  LocalVars locals(ctx);
+  locals.TraverseStmt(def->getBody());
+  return static_cast<uint32_t>(std::min<uint64_t>(locals.bytes(), UINT32_MAX));
 }
 
 std::set<std::string> ClosedPorts(const clang::FunctionDecl* def) {

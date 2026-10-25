@@ -243,6 +243,7 @@ mod tests {
             defines: defines.iter().map(|s| (*s).to_string()).collect(),
             readable_name: String::new(),
             aie_location: Vec::new(),
+            aie_stack_bytes: None,
             synth: SynthTarget::Hls,
             ports: Vec::new(),
             tasks: BTreeMap::new(),

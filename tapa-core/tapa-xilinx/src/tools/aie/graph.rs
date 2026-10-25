@@ -134,6 +134,18 @@ fn rtp_type(ctype: &str, width: u32) -> Result<&'static str> {
     Ok(ty)
 }
 
+/// ADF's default kernel stack, which holds the kernel's own frame and
+/// spills; the task's local variables come on top of it.
+const DEFAULT_STACK_BYTES: u32 = 1024;
+
+/// The stack a kernel whose task has `locals` bytes of local variables
+/// needs, kept 16-byte aligned.
+const fn stack_size(locals: u32) -> u32 {
+    DEFAULT_STACK_BYTES
+        .saturating_add(locals)
+        .next_multiple_of(16)
+}
+
 /// One ADF kernel parameter per stream channel, frame or runtime scalar.
 fn signature(kernel: &AieKernel) -> Result<String> {
     let mut params = Vec::new();
@@ -248,6 +260,13 @@ impl GraphText {
             let _ = writeln!(
                 self.body,
                 "    adf::location<adf::kernel>({k}) = adf::tile({col}, {row});"
+            );
+        }
+        if let Some(locals) = kernel.stack_bytes {
+            let _ = writeln!(
+                self.body,
+                "    adf::stack_size({k}) = {};",
+                stack_size(locals)
             );
         }
         // ADF numbers a kernel's inputs (streams, buffers, runtime
@@ -484,6 +503,7 @@ mod tests {
                         port("out", streams(false, vec![1, 2], None)),
                     ],
                     location: None,
+                    stack_bytes: None,
                 },
                 AieKernel {
                     name: "Join_0".into(),
@@ -513,6 +533,7 @@ mod tests {
                         ),
                     ],
                     location: Some((10, 1)),
+                    stack_bytes: Some(100),
                 },
             ],
             streams: vec![
@@ -573,6 +594,7 @@ mod tests {
             "adf::connect<adf::parameter>(rtp_3_Join_0_n, adf::async(k_Join_0.in[2]));",
             "adf::connect<adf::stream> n_c_q(k_Join_0.out[0], p_c_q.in[0]);",
             "adf::location<adf::kernel>(k_Join_0) = adf::tile(10, 1);",
+            "adf::stack_size(k_Join_0) = 1136;",
             "TapaAieGraph tapa_aie;",
         ] {
             assert!(graph.contains(line), "missing `{line}` in:\n{graph}");
