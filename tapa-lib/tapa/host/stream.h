@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <deque>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <memory>
 #include <mutex>
@@ -45,6 +46,8 @@ namespace internal {
 template <typename Param, typename Arg>
 struct accessor;
 
+struct stream_access;
+
 template <typename T>
 struct is_elem : std::false_type {};
 template <typename T>
@@ -65,6 +68,15 @@ class type_erased_queue {
   // instance the only party that can drain or fill it.
   virtual bool is_kernel_bound() const { return false; }
 
+  // A hybrid forwarder marks its destination when it has drained and exited;
+  // no later transfer can then complete, even if other kernels are running.
+  void mark_kernel_done() {
+    kernel_done_.store(true, std::memory_order_release);
+  }
+  bool is_kernel_done() const {
+    return kernel_done_.load(std::memory_order_acquire);
+  }
+
  protected:
   // Pops up to `n` elements and logs them as leftovers.
   virtual void log_leftovers(int n) = 0;
@@ -80,6 +92,7 @@ class type_erased_queue {
 
   std::string name;
   const std::unique_ptr<LogContext> log;
+  std::atomic<bool> kernel_done_ = false;
 
   type_erased_queue(const std::string& name);
 
@@ -271,6 +284,7 @@ class basic_stream {
  private:
   template <typename Param, typename Arg>
   friend struct internal::accessor;
+  friend struct internal::stream_access;
 
   std::shared_ptr<base_queue<elem_t<T>>> queue;
 };
@@ -360,8 +374,10 @@ void check_kernel_can_still_serve(const base_queue<T>& queue,
                                       const) {
   // A blocked poll yields before returning its readiness snapshot. The
   // kernel may complete its final transfer and finish during that yield.
-  if (queue.is_kernel_bound() && every_frt_instance_finished() &&
-      (queue.*is_blocked)()) {
+  const bool unservable =
+      queue.is_kernel_done() ||
+      (queue.is_kernel_bound() && every_frt_instance_finished());
+  if (unservable && (queue.*is_blocked)()) {
     LOG(FATAL) << "channel '" << queue.get_name() << "' is still "
                << waiting_for
                << " after every kernel instance finished; the kernel stopped "
@@ -855,6 +871,87 @@ template <typename T, uint64_t L, typename Arg>
 struct accessor<ostreams<T, L>, Arg> {
   using Self = ostreams<T, L>;
   TAPA_DISALLOWED_REFERENCE_PARAM_BODY("ostreams<T, L>&")
+};
+
+// One stream a recorded invoke touches (hybrid cosimulation, see
+// `hybrid_run`): the queue it names, the stream's name, whether the task
+// reads it, and how to hand it to a kernel argument. `frt_path` binds the
+// stream itself. `frt_path_dropping_eot` binds a fresh queue for the kernel
+// to write and sets `forward` to the task that moves its elements into the
+// stream with the end-of-transmission bit cleared, until the kernel is done
+// and the queue drained: a stream into the AI Engine asserts TLAST on every
+// beat, which the cosimulation reads as EoT.
+struct stream_use {
+  const void* queue;
+  std::string name;
+  bool task_reads;
+  std::function<std::string()> frt_path;
+  std::function<std::string(std::function<void()>& forward,
+                            std::function<bool()> kernel_done)>
+      frt_path_dropping_eot;
+};
+
+struct stream_access {
+  template <typename T>
+  static stream_use use(const basic_stream<T>& stream, bool task_reads) {
+    const std::string name = stream.get_queue().get_name();
+    return {&stream.get_queue(), name, task_reads,
+            [stream] { return stream.get_queue().get_frt_stream().path(); },
+            [stream, name](std::function<void()>& forward,
+                           std::function<bool()> kernel_done) {
+              auto beats = std::make_shared<frt_queue<elem_t<T>>>(
+                  kHybridForwardDepth, name + ".beats");
+              const std::string path = beats->get_frt_stream().path();
+              forward = [beats, stream, name, kernel_done] {
+                for (;;) {
+                  while (beats->empty()) {
+                    if (kernel_done()) {
+                      stream.get_queue().mark_kernel_done();
+                      return;
+                    }
+                    yield(name, "empty");
+                  }
+                  const elem_t<T> beat = beats->pop();
+                  while (stream.get_queue().full()) yield(name, "full");
+                  stream.get_queue().push({beat.val, false});
+                }
+              };
+              return path;
+            }};
+  }
+  static constexpr int64_t kHybridForwardDepth = 64;
+};
+
+// The streams one task argument touches; none for a non-stream argument.
+template <typename V, typename = void>
+struct stream_uses {
+  static void collect(const V&, std::vector<stream_use>&) {}
+};
+template <typename T>
+struct stream_uses<istream<T>> {
+  static void collect(const istream<T>& v, std::vector<stream_use>& out) {
+    out.push_back(stream_access::use(v, /*task_reads=*/true));
+  }
+};
+template <typename T>
+struct stream_uses<ostream<T>> {
+  static void collect(const ostream<T>& v, std::vector<stream_use>& out) {
+    out.push_back(stream_access::use(v, /*task_reads=*/false));
+  }
+};
+template <typename T, uint64_t S>
+struct stream_uses<istreams<T, S>> {
+  static void collect(const istreams<T, S>& v, std::vector<stream_use>& out) {
+    for (uint64_t i = 0; i < S; ++i)
+      stream_uses<istream<T>>::collect(v[i], out);
+  }
+};
+template <typename T, uint64_t S>
+struct stream_uses<ostreams<T, S>> {
+  static void collect(const ostreams<T, S>& v, std::vector<stream_use>& out) {
+    for (uint64_t i = 0; i < S; ++i)
+      stream_uses<ostream<T>>::collect(v[i], out);
+  }
 };
 
 #define TAPA_DEFINE_DEVICE_ACCESSOR(io, arg_ref)                             \

@@ -230,6 +230,19 @@ TEST(StreamCompletionDeathTest, FinalTransferAfterBlockedPollRemainsUsable) {
       testing::ExitedWithCode(0), "");
 }
 
+TEST(StreamCompletionDeathTest, HybridForwarderMarksDestinationDone) {
+  EXPECT_DEATH(
+      {
+        tapa::stream<int> stream("hybrid_done");
+        auto use = internal::stream_access::use(stream, /*task_reads=*/true);
+        std::function<void()> forward;
+        use.frt_path_dropping_eot(forward, [] { return true; });
+        forward();
+        (void)stream.read();
+      },
+      "still empty after every kernel instance finished");
+}
+
 TEST(StreamCompletionDeathTest, StillBlockedAfterCompletionAborts) {
   EXPECT_DEATH(
       {

@@ -103,6 +103,24 @@ per AI Engine cycle in total, however many stream ports it reads. That is one
 the port count. A frame port (`[[tapa::aie_frame(N)]]`) is filled by DMA and
 does not consume that budget.
 
+## Hybrid cosimulation
+
+The PL half of the design can run as RTL while the AI Engine tasks run in
+software, driven by the unchanged host program. Build the PL kernel without
+the AI Engine graph and pass the `.xo` as the bitstream:
+
+```bash
+tapa --work-dir work.out compile -f vadd.cpp -t VecAdd \
+  --platform xilinx_vck190_base_202520_1 --skip-aie -o vadd.xo
+./vadd-host --bitstream=vadd.xo 256
+```
+
+The kernel leaves one AXIS stream per AI Engine stream to the host. TAPA runs
+the top task's body, binds each of those streams by name, and runs in
+software the invocations on the AI Engine side of them. The PL invocations run
+in the kernel, as in any `.xo` cosimulation. As with `tapa aiesim`, name each
+boundary stream after its variable.
+
 ## Building and linking
 
 `tapa compile` (or `analyze`, `synth`, `pack`) builds both halves. The flow

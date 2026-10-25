@@ -46,3 +46,27 @@ sh_test(
     ],
     tags = ["manual"],
 )
+
+# Hybrid cosimulation: the PL kernel in xsim, `Add` in software, the same
+# host binary. Developer-run (needs Vitis and the VCK190 base platform).
+sh_test(
+    name = "aie-vadd-hybrid",
+    size = "enormous",
+    srcs = ["//bazel:v++_env.sh"],
+    args = [
+        "$(rootpath run_hybrid.sh)",
+        "$(rootpath //tapa-core:tapa)",
+        "$(rootpath :aie-vadd-host)",
+        "$(rootpath vadd.cpp)",
+        "xilinx_vck190_base_202520_1",
+    ],
+    data = [
+        "run_hybrid.sh",
+        "vadd.cpp",
+        "vadd.h",
+        ":aie-vadd-host",
+        "//fpga-runtime:cargo_release_artifacts",
+        "//tapa-core:tapa",
+    ],
+    tags = ["manual"],
+)

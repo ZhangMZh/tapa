@@ -17,8 +17,10 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include "tapa/host/frt/instance.h"
+#include "tapa/host/stream.h"
 
 namespace tapa {
 
@@ -48,13 +50,15 @@ struct accessor<T, seq> {
 void* allocate(size_t length);
 void deallocate(void* addr, size_t length);
 
+// Runs the kernel instance as a task; `on_finish` runs once it finished.
 template <typename InstancePtr>
-void schedule_frt_instance(InstancePtr instance) {
+void schedule_frt_instance(InstancePtr instance,
+                           std::function<void()> on_finish = {}) {
   schedule_cleanup([instance]() { instance->Kill(); });
   // Counted before the task is queued so a producer that blocks first sees
   // an instance in flight rather than "everything finished".
   note_frt_instance_scheduled();
-  schedule(/*detach=*/false, [instance]() {
+  schedule(/*detach=*/false, [instance, on_finish]() {
     instance->WriteToDevice();
     instance->Exec();
     instance->ReadFromDevice();
@@ -63,8 +67,40 @@ void schedule_frt_instance(InstancePtr instance) {
     }
     instance->Finish();
     note_frt_instance_finished();
+    if (on_finish) on_finish();
   });
 }
+
+// One invoke of a hybrid run's top body, recorded instead of run.
+struct recorded_invoke {
+  bool detach;
+  std::function<void()> functor;
+  std::vector<stream_use> uses;
+};
+
+// Collects the invokes of a hybrid run's top body (see `hybrid_run`).
+class hybrid_recorder {
+ public:
+  // The recorder of the top body running now, or null.
+  static hybrid_recorder* current();
+  void record(recorded_invoke invoke) { invokes_.push_back(std::move(invoke)); }
+
+ private:
+  friend bool hybrid_run(frt::Instance&, int, const std::function<void()>&);
+  std::vector<recorded_invoke> invokes_;
+};
+
+// Hybrid cosimulation of a kernel whose PL half leaves stream arguments to
+// the host: an AI Engine design's PL kernel has one AXIS port per stream
+// to or from the AI Engine. Runs `top_body` recording its invokes; an
+// invoke that reads a stream the kernel writes, or writes one the kernel
+// reads, is on the AI Engine side, and so is every invoke it shares a
+// stream with that is not a kernel port. Those run in software, with the
+// kernel's streams bound by name, alongside the kernel; the PL invokes run
+// in the kernel. Returns false, doing nothing, when the kernel leaves no
+// stream to the host past the `bound_args` the caller set.
+bool hybrid_run(frt::Instance& instance, int bound_args,
+                const std::function<void()>& top_body);
 
 // std::bind wrapper ensuring left-to-right argument evaluation.
 struct binder {
@@ -111,6 +147,12 @@ struct invoker {
 
   template <typename... Args>
   static void invoke(InvokeMode mode, F&& f, Args&&... args) {
+    if (hybrid_recorder* recorder = hybrid_recorder::current()) {
+      recorder->record(invoker::recorded(mode, std::forward<F>(f),
+                                         std::index_sequence_for<Args...>{},
+                                         std::forward<Args>(args)...));
+      return;
+    }
     auto functor = invoker::functor_with_accessors(
         mode == InvokeMode::kSequential, std::forward<F>(f),
         std::index_sequence_for<Args...>{}, std::forward<Args>(args)...);
@@ -135,14 +177,15 @@ struct invoker {
     }
   }
 
+  // Sets the kernel arguments; returns how many it set.
   template <typename Func, size_t... Is, typename... CapturedArgs>
-  static void set_fpga_args(frt::Instance& instance, Func&& func,
-                            std::index_sequence<Is...>,
-                            CapturedArgs&&... args) {
+  static int set_fpga_args(frt::Instance& instance, Func&& func,
+                           std::index_sequence<Is...>, CapturedArgs&&... args) {
     int idx = 0;
     (accessor<std::tuple_element_t<Is, Params>, CapturedArgs>::access(
          instance, idx, std::forward<CapturedArgs>(args)),
      ...);
+    return idx;
   }
 
  private:
@@ -157,13 +200,15 @@ struct invoker {
     frt_sync_kernel_instance = &instance;
     signal(SIGINT, &kill_frt_sync_kernel);
 
-    set_fpga_args(instance, std::forward<F>(f),
-                  std::index_sequence_for<Args...>{},
-                  std::forward<Args>(args)...);
-    instance.WriteToDevice();
-    instance.Exec();
-    instance.ReadFromDevice();
-    instance.Finish();
+    const int bound = set_fpga_args(instance, std::forward<F>(f),
+                                    std::index_sequence_for<Args...>{},
+                                    std::forward<Args>(args)...);
+    if (!hybrid_run(instance, bound, [&] { f(std::forward<Args>(args)...); })) {
+      instance.WriteToDevice();
+      instance.Exec();
+      instance.ReadFromDevice();
+      instance.Finish();
+    }
 
     // Unregister SIGINT handler.
     signal(SIGINT, SIG_DFL);
@@ -171,6 +216,27 @@ struct invoker {
     frt_sync_kernel_instance = nullptr;
 
     return instance.ComputeTimeNanoSeconds();
+  }
+
+  // The invoke as a hybrid run records it: the task applied to its
+  // accessed arguments, and the streams those arguments touch.
+  template <size_t... Is, typename... CapturedArgs>
+  static recorded_invoke recorded(InvokeMode mode, F&& func,
+                                  std::index_sequence<Is...>,
+                                  CapturedArgs&&... args) {
+    // Braced initialization evaluates the accessors left to right.
+    std::tuple<std::decay_t<std::tuple_element_t<Is, Params>>...> values{
+        accessor<std::tuple_element_t<Is, Params>, CapturedArgs>::access(
+            std::forward<CapturedArgs>(args), /*sequential=*/false)...};
+    recorded_invoke invoke;
+    invoke.detach = mode == InvokeMode::kDetach;
+    (stream_uses<std::decay_t<std::tuple_element_t<Is, Params>>>::collect(
+         std::get<Is>(values), invoke.uses),
+     ...);
+    invoke.functor = [func = FuncType(func), values]() mutable {
+      std::apply(func, values);
+    };
+    return invoke;
   }
 
   template <typename Func, size_t... Is, typename... CapturedArgs>

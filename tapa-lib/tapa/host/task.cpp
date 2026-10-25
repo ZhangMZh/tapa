@@ -202,6 +202,118 @@ void note_blocked_poll(const std::string& channel_name, const char* state) {
   }
 }
 
+namespace {
+
+hybrid_recorder* current_recorder = nullptr;
+
+// A stream name as a kernel argument spells it: a channel `a[2]` of a
+// stream array is the argument `a_2`.
+std::string KernelArgName(const std::string& name) {
+  std::string out;
+  for (char c : name) {
+    if (c == '[') {
+      out += '_';
+    } else if (c != ']') {
+      out += c;
+    }
+  }
+  return out;
+}
+
+}  // namespace
+
+hybrid_recorder* hybrid_recorder::current() { return current_recorder; }
+
+bool hybrid_run(frt::Instance& instance, int bound_args,
+                const std::function<void()>& top_body) {
+  std::unordered_map<std::string, frt::HostStream> ports;
+  for (const frt::HostStream& stream : instance.HostStreams()) {
+    if (stream.index >= bound_args) ports.emplace(stream.name, stream);
+  }
+  if (ports.empty()) return false;
+
+  hybrid_recorder recorder;
+  current_recorder = &recorder;
+  top_body();
+  current_recorder = nullptr;
+  std::vector<recorded_invoke>& invokes = recorder.invokes_;
+
+  // An invoke on the far side of a kernel stream runs in software, and so
+  // does everything it reaches through a stream the kernel does not own.
+  std::vector<bool> software(invokes.size(), false);
+  for (size_t i = 0; i < invokes.size(); ++i) {
+    for (const stream_use& use : invokes[i].uses) {
+      const auto port = ports.find(KernelArgName(use.name));
+      if (port != ports.end() && use.task_reads != port->second.kernel_reads) {
+        software[i] = true;
+      }
+    }
+  }
+  for (bool changed = true; changed;) {
+    changed = false;
+    std::set<const void*> reached;
+    for (size_t i = 0; i < invokes.size(); ++i) {
+      if (!software[i]) continue;
+      for (const stream_use& use : invokes[i].uses) {
+        if (ports.count(KernelArgName(use.name)) == 0)
+          reached.insert(use.queue);
+      }
+    }
+    for (size_t i = 0; i < invokes.size(); ++i) {
+      if (software[i]) continue;
+      for (const stream_use& use : invokes[i].uses) {
+        if (reached.count(use.queue) != 0) {
+          software[i] = true;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  auto kernel_done = std::make_shared<std::atomic<bool>>(false);
+  std::vector<std::function<void()>> forwards;
+  for (const auto& [name, port] : ports) {
+    const stream_use* bound = nullptr;
+    for (size_t i = 0; i < invokes.size() && bound == nullptr; ++i) {
+      if (!software[i]) continue;
+      for (const stream_use& use : invokes[i].uses) {
+        if (KernelArgName(use.name) == name) bound = &use;
+      }
+    }
+    LOG_IF(FATAL, bound == nullptr)
+        << "kernel stream '" << name << "' connects to no task of the top "
+        << "task; name the stream after its variable, e.g. "
+        << "tapa::stream<T> " << name << "(\"" << name << "\")";
+    if (port.kernel_reads) {
+      instance.SetStreamArg(port.index, bound->frt_path());
+    } else {
+      forwards.emplace_back();
+      instance.SetStreamArg(
+          port.index,
+          bound->frt_path_dropping_eot(forwards.back(), [kernel_done] {
+            return kernel_done->load(std::memory_order_acquire);
+          }));
+    }
+  }
+
+  size_t count = 0;
+  for (bool on_aie : software) count += on_aie ? 1 : 0;
+  LOG(INFO) << "hybrid cosimulation: " << count << " AI Engine task(s) run "
+            << "in software against the kernel's " << ports.size()
+            << " AI Engine stream(s)";
+  task scope;
+  for (const std::function<void()>& forward : forwards) {
+    schedule(/*detach=*/false, forward);
+  }
+  for (size_t i = 0; i < invokes.size(); ++i) {
+    if (software[i]) schedule(invokes[i].detach, invokes[i].functor);
+  }
+  schedule_frt_instance(&instance, [kernel_done] {
+    kernel_done->store(true, std::memory_order_release);
+  });
+  return true;
+}
+
 // Killed via SIGINT when tapa::invoke synchronous kernel is running.
 frt::Instance* frt_sync_kernel_instance = nullptr;
 extern "C" void kill_frt_sync_kernel(int) {
@@ -421,7 +533,7 @@ void schedule(bool detach, const std::function<void()>& f) {
 
 namespace {
 
-std::list<std::function<void()> > cleanup_tasks;
+std::list<std::function<void()>> cleanup_tasks;
 
 }  // namespace
 
