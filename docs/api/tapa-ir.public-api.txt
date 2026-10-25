@@ -335,6 +335,7 @@ impl<T> core::convert::From<T> for tapa_ir::aie::AiePartition
 pub fn tapa_ir::aie::AiePartition::from(T) -> T
 pub struct tapa_ir::aie::AieStream
 pub tapa_ir::aie::AieStream::fifo: alloc::string::String
+pub tapa_ir::aie::AieStream::frame: core::option::Option<u32>
 pub tapa_ir::aie::AieStream::kind: tapa_ir::aie::AieStreamKind
 pub tapa_ir::aie::AieStream::name: alloc::string::String
 pub tapa_ir::aie::AieStream::words: u32
@@ -3933,6 +3934,7 @@ impl<T> core::convert::From<T> for tapa_ir::aie::AiePartition
 pub fn tapa_ir::aie::AiePartition::from(T) -> T
 pub struct tapa_ir::AieStream
 pub tapa_ir::AieStream::fifo: alloc::string::String
+pub tapa_ir::AieStream::frame: core::option::Option<u32>
 pub tapa_ir::AieStream::kind: tapa_ir::aie::AieStreamKind
 pub tapa_ir::AieStream::name: alloc::string::String
 pub tapa_ir::AieStream::words: u32

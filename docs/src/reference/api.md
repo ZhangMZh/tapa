@@ -442,7 +442,7 @@ These C++ attributes are recognised by TAPA and lowered to vendor pragmas during
 | `[[tapa::aggregate]]` | `aggregate` | Pack a struct into a single wide word. |
 | `[[tapa::bind_op(op, impl, latency)]]` | `bind_op` | Bind an operation to a specific implementation, e.g. `("mul", "dsp")`. |
 | `[[tapa::array_map(instance, offset, orient)]]` | `array_map` | Map an array into a larger physical instance. `offset` is positional and optional — `-1` omits it. |
-| `[[tapa::aie_frame(N)]]` | — | On a stream parameter of an AI Engine leaf task: the stream arrives as frames of `N` elements in tile memory. See [AI Engine Tasks](../howto/aie.md). |
+| `[[tapa::aie_frame(N)]]` | — | On a stream parameter of an AI Engine leaf task: the stream arrives as frames of `N` elements in tile memory; final partial output frames are zero-padded. See [AI Engine Tasks](../howto/aie.md). |
 | `[[tapa::aie_plio(W)]]` | — | On a stream parameter of an AI Engine task: PLIO width of 32, 64 or 128 bits. |
 
 **On a function.**

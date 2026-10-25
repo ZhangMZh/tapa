@@ -12,14 +12,34 @@ pub struct PlioTrace {
     pub beat_times_ns: Vec<f64>,
 }
 
-/// The input file for a PLIO `beat_words` 32-bit words wide; the last beat
-/// is padded with zeros.
+/// The number of 32-bit words in a complete transfer: both a whole PLIO
+/// beat and a whole AIE frame, so a partial final frame can be zero-padded.
 #[must_use]
-pub fn render_input(words: &[u32], beat_words: usize) -> String {
+pub fn transfer_words(beat_words: usize, frame_words: usize) -> usize {
+    fn gcd(mut a: usize, mut b: usize) -> usize {
+        while b != 0 {
+            let r = a % b;
+            a = b;
+            b = r;
+        }
+        a
+    }
+    let a = beat_words.max(1);
+    let b = frame_words.max(1);
+    a / gcd(a, b) * b
+}
+
+/// The input file for a PLIO `beat_words` 32-bit words wide. Data is padded
+/// with zeros to a whole `transfer_words`, and every beat asserts TLAST.
+#[must_use]
+pub fn render_input(words: &[u32], beat_words: usize, transfer_words: usize) -> String {
+    let beat_words = beat_words.max(1);
+    let transfer_words = transfer_words.max(beat_words);
+    let mut padded = words.to_vec();
+    padded.resize(words.len().next_multiple_of(transfer_words), 0);
     let mut out = String::new();
-    for beat in words.chunks(beat_words.max(1)) {
-        let mut line: Vec<String> = beat.iter().map(|w| w.cast_signed().to_string()).collect();
-        line.resize(beat_words.max(1), "0".to_string());
+    for beat in padded.chunks(beat_words) {
+        let line: Vec<String> = beat.iter().map(|w| w.cast_signed().to_string()).collect();
         out.push_str(&line.join(" "));
         out.push_str("\nTLAST\n");
     }
@@ -66,11 +86,13 @@ mod tests {
     #[test]
     fn input_beats_pad_and_output_timestamps_scale() {
         assert_eq!(
-            render_input(&[1, 2, 3, 0xffff_ffff, 5], 4),
+            render_input(&[1, 2, 3, 0xffff_ffff, 5], 4, 4),
             "1 2 3 -1\nTLAST\n5 0 0 0\nTLAST\n"
         );
         let trace = parse_output("T 6956800 ps\n0 1 2 3\nT 6960 ns\nTLAST\n-1 5 6 7\n");
         assert_eq!(trace.words, [0, 1, 2, 3, 0xffff_ffff, 5, 6, 7]);
         assert_eq!(trace.beat_times_ns, [6956.8, 6960.0]);
+        assert_eq!(transfer_words(4, 12), 12);
+        assert_eq!(render_input(&[1, 2], 2, 4), "1 2\nTLAST\n0 0\nTLAST\n");
     }
 }

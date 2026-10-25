@@ -4,6 +4,17 @@
 
 #include "vadd.h"
 
+// The default test keeps ordinary stream ports. The manual frame test sets
+// this to 3, forcing a partial frame at the default element count.
+#ifndef TAPA_AIE_TEST_FRAME_SIZE
+#define TAPA_AIE_TEST_FRAME_SIZE 0
+#endif
+#if TAPA_AIE_TEST_FRAME_SIZE > 0
+#define TAPA_AIE_TEST_FRAME_ATTR [[tapa::aie_frame(TAPA_AIE_TEST_FRAME_SIZE)]]
+#else
+#define TAPA_AIE_TEST_FRAME_ATTR
+#endif
+
 void Mmap2Stream(tapa::mmap<vec4f> mmap, int n, tapa::ostream<vec4f>& stream) {
   for (int i = 0; i < n; ++i) {
     stream << mmap[i];
@@ -11,8 +22,9 @@ void Mmap2Stream(tapa::mmap<vec4f> mmap, int n, tapa::ostream<vec4f>& stream) {
 }
 
 [[tapa::target("aie")]]
-void Add(tapa::istream<vec4f>& a, tapa::istream<vec4f>& b,
-         tapa::ostream<vec4f>& c, int n) {
+void Add(TAPA_AIE_TEST_FRAME_ATTR tapa::istream<vec4f>& a,
+         TAPA_AIE_TEST_FRAME_ATTR tapa::istream<vec4f>& b,
+         TAPA_AIE_TEST_FRAME_ATTR tapa::ostream<vec4f>& c, int n) {
   [[tapa::pipeline]] for (int i = 0; i < n; ++i) {
     c.write(a.read() + b.read());
   }

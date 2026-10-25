@@ -78,6 +78,7 @@ fn boundary_streams_become_plios_and_scalars_runtime_parameters() {
                 name: "a_q".into(),
                 fifo: "a_q".into(),
                 words: 4,
+                frame: Some(64),
                 kind: AieStreamKind::Plio {
                     input: true,
                     width: 128
@@ -87,6 +88,7 @@ fn boundary_streams_become_plios_and_scalars_runtime_parameters() {
                 name: "c_q".into(),
                 fifo: "c_q".into(),
                 words: 1,
+                frame: None,
                 kind: AieStreamKind::Plio {
                     input: false,
                     width: 32

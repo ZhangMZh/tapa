@@ -487,12 +487,14 @@ mod tests {
             name: name.into(),
             fifo: name.into(),
             words: 4,
+            frame: None,
             kind: AieStreamKind::Plio { input, width: 128 },
         };
         let net = |name: &str| AieStream {
             name: name.into(),
             fifo: name.into(),
             words: 4,
+            frame: None,
             kind: AieStreamKind::Net { depth_words: 32 },
         };
         AiePartition {

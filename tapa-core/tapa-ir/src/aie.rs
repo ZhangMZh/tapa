@@ -108,6 +108,8 @@ pub struct AieStream {
     pub fifo: String,
     /// 32-bit words per element.
     pub words: u32,
+    /// Elements per frame on the AIE side, or `None` for a stream port.
+    pub frame: Option<u32>,
     pub kind: AieStreamKind,
 }
 
@@ -390,12 +392,13 @@ impl Builder<'_> {
                 let producer_aie = endpoint_on_aie(fifo.produced_by.as_ref());
                 let consumer_aie = endpoint_on_aie(fifo.consumed_by.as_ref());
                 let words = stream_words(graph, child, port)?;
+                let aie_port = task(graph, child)?.port(port);
+                let frame = aie_port.and_then(|port| port.aie_frame);
                 let kind = if producer_aie && consumer_aie {
                     AieStreamKind::Net {
                         depth_words: fifo.depth.unwrap_or(0) * words,
                     }
                 } else {
-                    let aie_port = task(graph, child)?.port(port);
                     let width = aie_port.and_then(|p| p.aie_plio).unwrap_or(words * 32);
                     let bits = words * 32;
                     if bits > MAX_PLIO_BITS {
@@ -411,7 +414,8 @@ impl Builder<'_> {
                         width: plio_width(width),
                     }
                 };
-                let index = self.push_stream(sanitize_identifier_name(name), name, words, kind);
+                let index =
+                    self.push_stream(sanitize_identifier_name(name), name, words, frame, kind);
                 self.top_streams.insert(name.clone(), index);
                 Ok(Binding::Stream(index))
             }
@@ -422,11 +426,19 @@ impl Builder<'_> {
         }
     }
 
-    fn push_stream(&mut self, name: String, fifo: &str, words: u32, kind: AieStreamKind) -> usize {
+    fn push_stream(
+        &mut self,
+        name: String,
+        fifo: &str,
+        words: u32,
+        frame: Option<u32>,
+        kind: AieStreamKind,
+    ) -> usize {
         self.partition.streams.push(AieStream {
             name,
             fifo: fifo.to_string(),
             words,
+            frame,
             kind,
         });
         self.partition.streams.len() - 1
@@ -456,10 +468,14 @@ impl Builder<'_> {
             };
             let port = child_port_for(def, &endpoint.0, endpoint.1, fifo_name).unwrap_or_default();
             let words = stream_words(graph, &endpoint.0, &port)?;
+            let frame = task(graph, &endpoint.0)?
+                .port(&port)
+                .and_then(|port| port.aie_frame);
             let stream = self.push_stream(
                 sanitize_identifier_name(&format!("{path}__{fifo_name}")),
                 fifo_name,
                 words,
+                frame,
                 AieStreamKind::Net {
                     depth_words: fifo.depth.unwrap_or(0) * words,
                 },

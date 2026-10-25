@@ -162,6 +162,10 @@ class iframe {
     value = read();
     return *this;
   }
+  // A final frame may be padded; unread padding is discarded on release.
+  ~iframe() {
+    if (pos_ != 0) buf_.release();
+  }
 
  private:
   buffer& buf_;
@@ -187,6 +191,14 @@ class oframe {
   TAPA_AIE_INLINE oframe& operator<<(const T& value) {
     write(value);
     return *this;
+  }
+  // A final partial frame is zero-padded and released when the task returns.
+  ~oframe() {
+    if (pos_ != 0) {
+      std::memset(buf_.data() + pos_ * internal::aie::kWords<T>, 0,
+                  (N - pos_) * internal::aie::kWords<T> * sizeof(int32));
+      buf_.release();
+    }
   }
 
  private:

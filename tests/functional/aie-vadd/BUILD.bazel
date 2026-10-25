@@ -50,6 +50,34 @@ sh_test(
     tags = ["manual"],
 )
 
+# Partial-frame padding: 1024 elements do not fill the last 3-element frame.
+# The same host and analysis shape as above, with frame ports on every AIE
+# boundary. Developer-run (needs Vitis with aiecompiler).
+sh_test(
+    name = "aie-frame-x86sim",
+    size = "medium",
+    srcs = ["//bazel:v++_env.sh"],
+    args = [
+        "$(rootpath //bazel:run_aiesim.sh)",
+        "$(rootpath //tapa-core:tapa)",
+        "$(rootpath :aie-vadd-host)",
+        "$(rootpath vadd.cpp)",
+        "VecAdd",
+        "--cflags=-DTAPA_AIE_TEST_FRAME_SIZE=3",
+        "--",
+        "--arg=n=1024",
+        "--part-num=xcvc1902-vsva2197-2MP-e-S",
+    ],
+    data = [
+        "vadd.cpp",
+        "vadd.h",
+        ":aie-vadd-host",
+        "//bazel:run_aiesim.sh",
+        "//tapa-core:tapa",
+    ],
+    tags = ["manual"],
+)
+
 # Hybrid cosimulation: the PL kernel in xsim, `Add` in software, the same
 # host binary. Developer-run (needs Vitis and the VCK190 base platform).
 sh_test(

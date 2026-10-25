@@ -13,7 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use clap::Parser;
-use tapa_ir::{AiePartition, AieStreamKind};
+use tapa_ir::{AiePartition, AieStream, AieStreamKind};
 use tapa_xilinx::tools::aie::graph::SimMain;
 use tapa_xilinx::tools::aie::{plio, simulate, simulator_output, AieTarget};
 
@@ -79,17 +79,27 @@ fn read_words(path: &std::path::Path) -> Result<Vec<u32>> {
         .collect()
 }
 
+fn transfer_words(stream: &AieStream) -> usize {
+    let AieStreamKind::Plio { width, .. } = stream.kind else {
+        unreachable!("only a PLIO has a transfer shape")
+    };
+    let beat_words = (width / 32).max(1) as usize;
+    let frame_words = stream.frame.map_or(beat_words, |elements| {
+        elements as usize * stream.words as usize
+    });
+    plio::transfer_words(beat_words, frame_words)
+}
+
 /// Compare one complete output stream, allowing only zero padding in its last
 /// PLIO beat. Returns the status line on either success or mismatch.
 fn compare_output(
     fifo: &str,
-    width: u32,
+    transfer_words: usize,
     trace: &plio::PlioTrace,
     expected: &[u32],
 ) -> std::result::Result<String, String> {
     let produced = &trace.words;
-    let beat_words = (width / 32).max(1) as usize;
-    let padded_len = expected.len().next_multiple_of(beat_words);
+    let padded_len = expected.len().next_multiple_of(transfer_words.max(1));
     let first_diff = produced
         .iter()
         .zip(expected)
@@ -189,7 +199,7 @@ fn run_with(
             let words = read_words(&args.stimulus.join(format!("{}.words", stream.fifo)))?;
             fs::write(
                 graph_dir.join("data").join(format!("{}.txt", stream.name)),
-                plio::render_input(&words, (width / 32) as usize),
+                plio::render_input(&words, (width / 32) as usize, transfer_words(stream)),
             )?;
         }
     }
@@ -204,10 +214,7 @@ fn run_with(
         let output = simulator_output(&graph_dir, target, &stream.name);
         let trace = plio::parse_output(&fs::read_to_string(&output)?);
         let expected = read_words(&args.stimulus.join(format!("{}.words", stream.fifo)))?;
-        let AieStreamKind::Plio { width, .. } = stream.kind else {
-            unreachable!()
-        };
-        let result = compare_output(&stream.fifo, width, &trace, &expected);
+        let result = compare_output(&stream.fifo, transfer_words(stream), &trace, &expected);
         if result.is_err() {
             mismatches.push(stream.fifo.clone());
         }
@@ -239,12 +246,17 @@ mod tests {
 
     #[test]
     fn output_comparison_rejects_short_surplus_and_nonzero_padding() {
-        compare_output("q", 32, &trace(&[1, 2]), &[1, 2]).unwrap();
-        compare_output("q", 32, &trace(&[1]), &[1, 2]).unwrap_err();
-        compare_output("q", 32, &trace(&[1, 2, 1, 2]), &[1, 2]).unwrap_err();
-        compare_output("q", 32, &trace(&[9]), &[]).unwrap_err();
-        compare_output("q", 128, &trace(&[1, 2, 3, 0]), &[1, 2, 3]).unwrap();
-        compare_output("q", 128, &trace(&[1, 2, 3, 4]), &[1, 2, 3]).unwrap_err();
-        compare_output("q", 128, &trace(&[1, 2, 0, 0, 0]), &[1, 2]).unwrap_err();
+        compare_output("q", 1, &trace(&[1, 2]), &[1, 2]).unwrap();
+        compare_output("q", 1, &trace(&[1]), &[1, 2]).unwrap_err();
+        compare_output("q", 1, &trace(&[1, 2, 1, 2]), &[1, 2]).unwrap_err();
+        compare_output("q", 1, &trace(&[9]), &[]).unwrap_err();
+        compare_output("q", 4, &trace(&[1, 2, 3, 0]), &[1, 2, 3]).unwrap();
+        compare_output("q", 4, &trace(&[1, 2, 3, 4]), &[1, 2, 3]).unwrap_err();
+        compare_output("q", 4, &trace(&[1, 2, 0, 0, 0]), &[1, 2]).unwrap_err();
+        let padded = [1, 2, 0, 0, 0, 0, 0, 0];
+        compare_output("q", 12, &trace(&padded), &[1, 2]).unwrap();
+        let mut non_multiple = padded;
+        non_multiple[3] = 9;
+        compare_output("q", 12, &trace(&non_multiple), &[1, 2]).unwrap_err();
     }
 }

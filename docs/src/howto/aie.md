@@ -82,7 +82,7 @@ These habits decide AI Engine performance:
 
 | Attribute | Where | Effect |
 |---|---|---|
-| `[[tapa::aie_frame(N)]]` | `istream`/`ostream` parameter of an AI Engine leaf | The stream arrives as frames of `N` elements in tile memory, filled by DMA, instead of through the core's stream port. The body is unchanged. |
+| `[[tapa::aie_frame(N)]]` | `istream`/`ostream` parameter of an AI Engine leaf | The stream arrives as frames of `N` elements in tile memory, filled by DMA, instead of through the core's stream port. The body is unchanged. A final partial output frame is zero-padded; an input frame releases and discards unused padding when the task returns. |
 | `[[tapa::aie_plio(W)]]` | `istream`/`ostream` parameter of an AI Engine task | PLIO width `W` of 32, 64 or 128 bits for a boundary stream. |
 | `[[tapa::aie_location(col, row)]]` | AI Engine leaf task | Pins the task to a tile. Add a third argument to pick one instance of a task invoked several times. |
 
@@ -105,7 +105,9 @@ tapa --work-dir work.out aiesim --stimulus logs --arg n=256 \
 
 `tapa aiesim` generates the ADF graph under `work.out/aie/sim/`, compiles it
 for `x86simulator`, feeds each PL-to-AI Engine stream from its
-`<stream>.words` log, and compares every AI Engine-to-PL stream with its log.
+`<stream>.words` log (zero-padded to a whole frame and PLIO beat), and compares
+every AI Engine-to-PL stream with its log. Only zero padding is ignored;
+surplus or nonzero output is an error.
 A boundary stream is found by its variable name, so name the stream after its
 variable: `tapa::stream<vec4f> a_q("a_q")`. Pass every top-task scalar the AI
 Engine tasks read with `--arg`.
