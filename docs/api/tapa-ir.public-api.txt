@@ -1761,6 +1761,8 @@ impl<T> core::convert::From<T> for tapa_ir::port::ArgCategory
 pub fn tapa_ir::port::ArgCategory::from(T) -> T
 impl<T> serde_core::de::DeserializeOwned for tapa_ir::port::ArgCategory where T: for<'de> serde_core::de::Deserialize<'de>
 pub struct tapa_ir::port::Port
+pub tapa_ir::port::Port::aie_frame: core::option::Option<u32>
+pub tapa_ir::port::Port::aie_plio: core::option::Option<u32>
 pub tapa_ir::port::Port::cat: tapa_ir::port::ArgCategory
 pub tapa_ir::port::Port::chan_count: core::option::Option<u32>
 pub tapa_ir::port::Port::chan_size: core::option::Option<u32>
@@ -1821,6 +1823,7 @@ pub fn tapa_ir::port::sanitize_array_name(&str) -> alloc::string::String
 pub fn tapa_ir::port::sanitize_identifier_name(&str) -> alloc::string::String
 pub mod tapa_ir::synth_target
 pub enum tapa_ir::synth_target::SynthTarget
+pub tapa_ir::synth_target::SynthTarget::Aie
 pub tapa_ir::synth_target::SynthTarget::Hls
 pub tapa_ir::synth_target::SynthTarget::Ignore
 impl core::clone::Clone for tapa_ir::synth_target::SynthTarget
@@ -1984,7 +1987,59 @@ pub unsafe fn tapa_ir::task::TaskLevel::clone_to_uninit(&self, *mut u8)
 impl<T> core::convert::From<T> for tapa_ir::task::TaskLevel
 pub fn tapa_ir::task::TaskLevel::from(T) -> T
 impl<T> serde_core::de::DeserializeOwned for tapa_ir::task::TaskLevel where T: for<'de> serde_core::de::Deserialize<'de>
+pub struct tapa_ir::task::AieLocation
+pub tapa_ir::task::AieLocation::col: u32
+pub tapa_ir::task::AieLocation::instance: core::option::Option<u32>
+pub tapa_ir::task::AieLocation::row: u32
+impl core::clone::Clone for tapa_ir::task::AieLocation
+pub fn tapa_ir::task::AieLocation::clone(&self) -> tapa_ir::task::AieLocation
+impl core::cmp::Eq for tapa_ir::task::AieLocation
+impl core::cmp::PartialEq for tapa_ir::task::AieLocation
+pub fn tapa_ir::task::AieLocation::eq(&self, &tapa_ir::task::AieLocation) -> bool
+impl core::fmt::Debug for tapa_ir::task::AieLocation
+pub fn tapa_ir::task::AieLocation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tapa_ir::task::AieLocation
+impl core::marker::StructuralPartialEq for tapa_ir::task::AieLocation
+impl serde_core::ser::Serialize for tapa_ir::task::AieLocation
+pub fn tapa_ir::task::AieLocation::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for tapa_ir::task::AieLocation
+pub fn tapa_ir::task::AieLocation::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for tapa_ir::task::AieLocation
+impl core::marker::Send for tapa_ir::task::AieLocation
+impl core::marker::Sync for tapa_ir::task::AieLocation
+impl core::marker::Unpin for tapa_ir::task::AieLocation
+impl core::marker::UnsafeUnpin for tapa_ir::task::AieLocation
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::task::AieLocation
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::task::AieLocation
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::task::AieLocation where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::task::AieLocation::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::task::AieLocation where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::task::AieLocation::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::task::AieLocation where U: core::convert::From<T>
+pub fn tapa_ir::task::AieLocation::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::task::AieLocation where U: core::convert::Into<T>
+pub type tapa_ir::task::AieLocation::Error = core::convert::Infallible
+pub fn tapa_ir::task::AieLocation::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::task::AieLocation where U: core::convert::TryFrom<T>
+pub type tapa_ir::task::AieLocation::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::task::AieLocation::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::task::AieLocation where T: core::clone::Clone
+pub type tapa_ir::task::AieLocation::Owned = T
+pub fn tapa_ir::task::AieLocation::clone_into(&self, &mut T)
+pub fn tapa_ir::task::AieLocation::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::task::AieLocation where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::task::AieLocation::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::task::AieLocation where T: ?core::marker::Sized
+pub fn tapa_ir::task::AieLocation::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::task::AieLocation where T: ?core::marker::Sized
+pub fn tapa_ir::task::AieLocation::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::task::AieLocation where T: core::clone::Clone
+pub unsafe fn tapa_ir::task::AieLocation::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::task::AieLocation
+pub fn tapa_ir::task::AieLocation::from(T) -> T
+impl<T> serde_core::de::DeserializeOwned for tapa_ir::task::AieLocation where T: for<'de> serde_core::de::Deserialize<'de>
 pub struct tapa_ir::task::Task
+pub tapa_ir::task::Task::aie_location: alloc::vec::Vec<tapa_ir::task::AieLocation>
 pub tapa_ir::task::Task::clock_period: core::option::Option<tapa_ir::clock::ClockPeriod>
 pub tapa_ir::task::Task::defines: alloc::vec::Vec<alloc::string::String>
 pub tapa_ir::task::Task::fifos: alloc::collections::btree::map::BTreeMap<alloc::string::String, tapa_ir::interconnect::InterconnectDefinition>
@@ -2914,6 +2969,7 @@ impl<T> core::convert::From<T> for tapa_ir::floorplan::RoutedChannel
 pub fn tapa_ir::floorplan::RoutedChannel::from(T) -> T
 impl<T> serde_core::de::DeserializeOwned for tapa_ir::floorplan::RoutedChannel where T: for<'de> serde_core::de::Deserialize<'de>
 pub enum tapa_ir::SynthTarget
+pub tapa_ir::SynthTarget::Aie
 pub tapa_ir::SynthTarget::Hls
 pub tapa_ir::SynthTarget::Ignore
 impl core::clone::Clone for tapa_ir::synth_target::SynthTarget
@@ -3109,6 +3165,57 @@ impl<T> core::borrow::BorrowMut<T> for tapa_ir::transforms::TransformError where
 pub fn tapa_ir::transforms::TransformError::borrow_mut(&mut self) -> &mut T
 impl<T> core::convert::From<T> for tapa_ir::transforms::TransformError
 pub fn tapa_ir::transforms::TransformError::from(T) -> T
+pub struct tapa_ir::AieLocation
+pub tapa_ir::AieLocation::col: u32
+pub tapa_ir::AieLocation::instance: core::option::Option<u32>
+pub tapa_ir::AieLocation::row: u32
+impl core::clone::Clone for tapa_ir::task::AieLocation
+pub fn tapa_ir::task::AieLocation::clone(&self) -> tapa_ir::task::AieLocation
+impl core::cmp::Eq for tapa_ir::task::AieLocation
+impl core::cmp::PartialEq for tapa_ir::task::AieLocation
+pub fn tapa_ir::task::AieLocation::eq(&self, &tapa_ir::task::AieLocation) -> bool
+impl core::fmt::Debug for tapa_ir::task::AieLocation
+pub fn tapa_ir::task::AieLocation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tapa_ir::task::AieLocation
+impl core::marker::StructuralPartialEq for tapa_ir::task::AieLocation
+impl serde_core::ser::Serialize for tapa_ir::task::AieLocation
+pub fn tapa_ir::task::AieLocation::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for tapa_ir::task::AieLocation
+pub fn tapa_ir::task::AieLocation::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for tapa_ir::task::AieLocation
+impl core::marker::Send for tapa_ir::task::AieLocation
+impl core::marker::Sync for tapa_ir::task::AieLocation
+impl core::marker::Unpin for tapa_ir::task::AieLocation
+impl core::marker::UnsafeUnpin for tapa_ir::task::AieLocation
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::task::AieLocation
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::task::AieLocation
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::task::AieLocation where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::task::AieLocation::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::task::AieLocation where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::task::AieLocation::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::task::AieLocation where U: core::convert::From<T>
+pub fn tapa_ir::task::AieLocation::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::task::AieLocation where U: core::convert::Into<T>
+pub type tapa_ir::task::AieLocation::Error = core::convert::Infallible
+pub fn tapa_ir::task::AieLocation::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::task::AieLocation where U: core::convert::TryFrom<T>
+pub type tapa_ir::task::AieLocation::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::task::AieLocation::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::task::AieLocation where T: core::clone::Clone
+pub type tapa_ir::task::AieLocation::Owned = T
+pub fn tapa_ir::task::AieLocation::clone_into(&self, &mut T)
+pub fn tapa_ir::task::AieLocation::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::task::AieLocation where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::task::AieLocation::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::task::AieLocation where T: ?core::marker::Sized
+pub fn tapa_ir::task::AieLocation::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::task::AieLocation where T: ?core::marker::Sized
+pub fn tapa_ir::task::AieLocation::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::task::AieLocation where T: core::clone::Clone
+pub unsafe fn tapa_ir::task::AieLocation::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::task::AieLocation
+pub fn tapa_ir::task::AieLocation::from(T) -> T
+impl<T> serde_core::de::DeserializeOwned for tapa_ir::task::AieLocation where T: for<'de> serde_core::de::Deserialize<'de>
 pub struct tapa_ir::Area
 pub tapa_ir::Area::bram_18k: u64
 pub tapa_ir::Area::dsp: u64
@@ -4246,6 +4353,8 @@ impl<T> core::convert::From<T> for tapa_ir::floorplan::PipelineRoute
 pub fn tapa_ir::floorplan::PipelineRoute::from(T) -> T
 impl<T> serde_core::de::DeserializeOwned for tapa_ir::floorplan::PipelineRoute where T: for<'de> serde_core::de::Deserialize<'de>
 pub struct tapa_ir::Port
+pub tapa_ir::Port::aie_frame: core::option::Option<u32>
+pub tapa_ir::Port::aie_plio: core::option::Option<u32>
 pub tapa_ir::Port::cat: tapa_ir::port::ArgCategory
 pub tapa_ir::Port::chan_count: core::option::Option<u32>
 pub tapa_ir::Port::chan_size: core::option::Option<u32>
@@ -4341,6 +4450,7 @@ pub unsafe fn tapa_ir::bindings::PortBinding<'a>::clone_to_uninit(&self, *mut u8
 impl<T> core::convert::From<T> for tapa_ir::bindings::PortBinding<'a>
 pub fn tapa_ir::bindings::PortBinding<'a>::from(T) -> T
 pub struct tapa_ir::Task
+pub tapa_ir::Task::aie_location: alloc::vec::Vec<tapa_ir::task::AieLocation>
 pub tapa_ir::Task::clock_period: core::option::Option<tapa_ir::clock::ClockPeriod>
 pub tapa_ir::Task::defines: alloc::vec::Vec<alloc::string::String>
 pub tapa_ir::Task::fifos: alloc::collections::btree::map::BTreeMap<alloc::string::String, tapa_ir::interconnect::InterconnectDefinition>

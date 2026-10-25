@@ -153,6 +153,14 @@ pub struct Port {
     /// Channel size for hierarchical memory ports.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chan_size: Option<u32>,
+    /// `[[tapa::aie_frame(N)]]`: an AI Engine task's stream port arrives
+    /// as frames of `N` elements in tile memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aie_frame: Option<u32>,
+    /// `[[tapa::aie_plio(W)]]`: the PLIO width (32, 64 or 128 bits) of an
+    /// AI Engine task's boundary stream port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aie_plio: Option<u32>,
     /// FIFO depth (elements) a cosimulation should model for this stream
     /// port. Stamped by `tapa pack` onto stream-category ports of the top
     /// task in the archive's embedded state copy; `None` everywhere else,

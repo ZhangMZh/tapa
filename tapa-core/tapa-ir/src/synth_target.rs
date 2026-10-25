@@ -4,11 +4,12 @@ use serde::{Deserialize, Serialize};
 
 /// Per-task synthesis policy.
 ///
-/// The pipeline only distinguishes `Ignore` (skip synthesis) from `Hls`
-/// (synthesize with Vitis HLS). Serializes as the wire strings `"hls"` /
-/// `"ignore"`; any other value is a hard deserialize error. Distinct from
-/// the flow-level [`crate::Target`] (`"xilinx-vitis"` / `"xilinx-hls"`),
-/// which lives once at the graph root.
+/// How the pipeline builds a task: synthesize it with Vitis HLS (`Hls`),
+/// skip it (`Ignore`), or compile it for the AI Engine array (`Aie`).
+/// Serializes as the wire strings `"hls"` / `"ignore"` / `"aie"`; any other
+/// value is a hard deserialize error. Distinct from the flow-level
+/// [`crate::Target`] (`"xilinx-vitis"` / `"xilinx-hls"`), which lives once
+/// at the graph root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SynthTarget {
@@ -16,6 +17,8 @@ pub enum SynthTarget {
     Hls,
     /// `"ignore"` — skip synthesis (custom-RTL / passthrough tasks).
     Ignore,
+    /// `"aie"` — an AI Engine kernel; never seen by HLS.
+    Aie,
 }
 
 #[cfg(test)]

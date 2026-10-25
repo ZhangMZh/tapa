@@ -67,6 +67,7 @@ fn task_graph(ports: Vec<Port>) -> TaskGraph {
             include_dirs: Vec::new(),
             defines: Vec::new(),
             readable_name: "vadd".to_owned(),
+            aie_location: Vec::new(),
             synth: SynthTarget::Hls,
             ports,
             tasks: BTreeMap::new(),
@@ -93,6 +94,8 @@ fn port(name: &str, cat: ArgCategory, width: u32, chan_count: Option<u32>) -> Po
         width,
         chan_count,
         chan_size: None,
+        aie_frame: None,
+        aie_plio: None,
         stream_depth: None,
         mmap_addr_width: None,
     }

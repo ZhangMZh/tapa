@@ -131,6 +131,8 @@ mod tests {
             width: 32,
             chan_count: None,
             chan_size: None,
+            aie_frame: None,
+            aie_plio: None,
             stream_depth: None,
             mmap_addr_width: None,
         }
@@ -149,6 +151,7 @@ mod tests {
                 tasks: BTreeMap::new(),
                 fifos: BTreeMap::new(),
                 readable_name: "Top".to_owned(),
+                aie_location: Vec::new(),
                 synth: SynthTarget::Hls,
                 self_area: None,
                 total_area: None,

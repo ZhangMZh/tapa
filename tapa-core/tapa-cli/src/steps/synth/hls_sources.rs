@@ -242,6 +242,7 @@ mod tests {
             include_dirs: include_dirs.iter().map(|s| (*s).to_string()).collect(),
             defines: defines.iter().map(|s| (*s).to_string()).collect(),
             readable_name: String::new(),
+            aie_location: Vec::new(),
             synth: SynthTarget::Hls,
             ports: Vec::new(),
             tasks: BTreeMap::new(),
@@ -459,6 +460,8 @@ mod tests {
             width: 32,
             chan_count: None,
             chan_size: None,
+            aie_frame: None,
+            aie_plio: None,
             stream_depth: None,
             mmap_addr_width: None,
         }];

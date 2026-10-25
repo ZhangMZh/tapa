@@ -19,6 +19,21 @@ pub enum TaskLevel {
     Upper,
 }
 
+/// A `[[tapa::aie_location(col, row[, instance])]]` tile pin of an AI
+/// Engine leaf task; `instance` picks one invocation of a task invoked
+/// several times.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AieLocation {
+    /// Tile column.
+    pub col: u32,
+    /// Tile row.
+    pub row: u32,
+    /// Instance index within the invoking task, when several exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<u32>,
+}
+
 /// A single task in the unified task graph.
 ///
 /// The tapacc output and the post-synthesis design share this one type:
@@ -47,8 +62,11 @@ pub struct Task {
     /// template specialization). Required: `tapacc` emits it unconditionally
     /// for every task, equal to the task name for non-template tasks.
     pub readable_name: String,
-    /// Per-task synthesis policy (`"hls"` / `"ignore"`).
+    /// Per-task synthesis policy (`"hls"` / `"ignore"` / `"aie"`).
     pub synth: SynthTarget,
+    /// AI Engine tile pins (`[[tapa::aie_location]]`); empty otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aie_location: Vec<AieLocation>,
     /// External ports / interface definitions.
     #[serde(default)]
     pub ports: Vec<Port>,

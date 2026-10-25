@@ -44,7 +44,7 @@ pub use memory::{MemoryGeometry, MemoryGeometryError};
 pub use port::{ArgCategory, Port};
 pub use synth_target::SynthTarget;
 pub use target::Target;
-pub use task::{Task, TaskLevel};
+pub use task::{AieLocation, Task, TaskLevel};
 pub use transforms::{flatten, TransformError};
 pub use work_state::{FlowSettings, WorkState};
 

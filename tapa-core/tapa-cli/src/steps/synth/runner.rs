@@ -33,6 +33,17 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
     // there is nothing left for this step to re-check: synthesis is Xilinx
     // HLS for every supported flow.
     let mut state = work_io::load(&ctx.work_dir)?;
+    if let Some(name) = state
+        .graph
+        .tasks
+        .iter()
+        .find_map(|(name, task)| (task.synth == tapa_ir::SynthTarget::Aie).then_some(name))
+    {
+        return Err(CliError::InvalidArg(format!(
+            "task `{name}` is an AI Engine task, which this `tapa synth` \
+             cannot build yet"
+        )));
+    }
 
     let device = resolve_device_info(args)?;
     state.flow.part_num = Some(device.part_num.clone());
@@ -358,6 +369,7 @@ mod tests {
             tasks: BTreeMap::new(),
             fifos: BTreeMap::new(),
             readable_name: String::new(),
+            aie_location: Vec::new(),
             synth: SynthTarget::Hls,
             self_area: Some(Area {
                 lut: 999,
@@ -413,6 +425,7 @@ mod tests {
                 tasks: BTreeMap::new(),
                 fifos: BTreeMap::new(),
                 readable_name: String::new(),
+                aie_location: Vec::new(),
                 synth: SynthTarget::Hls,
                 self_area: None,
                 total_area: None,
@@ -439,6 +452,7 @@ mod tests {
                 tasks: child_tasks,
                 fifos: BTreeMap::new(),
                 readable_name: String::new(),
+                aie_location: Vec::new(),
                 synth: SynthTarget::Hls,
                 self_area: None,
                 total_area: None,

@@ -155,6 +155,7 @@ mod tests {
                 tasks: BTreeMap::new(),
                 fifos: BTreeMap::new(),
                 readable_name: "Top".to_string(),
+                aie_location: Vec::new(),
                 synth: SynthTarget::Hls,
                 self_area: None,
                 total_area: None,
