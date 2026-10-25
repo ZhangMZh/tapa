@@ -1186,6 +1186,8 @@ pub tapa_rtl::BuilderError::DuplicatePort(alloc::string::String)
 pub tapa_rtl::BuilderError::DuplicateSignal(alloc::string::String)
 pub tapa_rtl::BuilderError::EmptyName
 pub tapa_rtl::BuilderError::NoPortConnections
+pub tapa_rtl::BuilderError::NoPortConnections::instance: alloc::string::String
+pub tapa_rtl::BuilderError::NoPortConnections::module: alloc::string::String
 impl core::error::Error for tapa_rtl::BuilderError
 impl core::fmt::Debug for tapa_rtl::BuilderError
 pub fn tapa_rtl::BuilderError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
