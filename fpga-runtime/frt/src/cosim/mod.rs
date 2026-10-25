@@ -645,6 +645,24 @@ impl Device for CosimDevice {
         Ok(())
     }
 
+    fn host_streams(&self) -> Vec<crate::device::HostStream> {
+        self.spec
+            .args
+            .iter()
+            .filter_map(|arg| match &arg.kind {
+                frt_cosim::metadata::ArgKind::Stream { dir, .. } => {
+                    Some(crate::device::HostStream {
+                        index: arg.id,
+                        name: arg.name.clone(),
+                        kernel_reads: *dir == frt_cosim::metadata::StreamDir::In,
+                    })
+                }
+                frt_cosim::metadata::ArgKind::Scalar { .. }
+                | frt_cosim::metadata::ArgKind::Mmap { .. } => None,
+            })
+            .collect()
+    }
+
     fn set_stream_arg(&mut self, index: u32, shm_path: &str) -> Result<()> {
         if shm_path.is_empty() {
             return Ok(());

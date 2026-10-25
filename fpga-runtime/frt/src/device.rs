@@ -39,7 +39,21 @@ impl BufferAccess {
     }
 }
 
+/// A stream argument the host binds, as the kernel metadata declares it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostStream {
+    pub index: u32,
+    pub name: String,
+    /// Whether the kernel reads the stream (the host writes it).
+    pub kernel_reads: bool,
+}
+
 pub trait Device: Send {
+    /// The stream arguments the host binds, in argument order. A backend
+    /// without host streams has none.
+    fn host_streams(&self) -> Vec<HostStream> {
+        Vec::new()
+    }
     fn set_scalar_arg(&mut self, index: u32, value: &[u8]) -> Result<()>;
     fn set_buffer_arg(
         &mut self,

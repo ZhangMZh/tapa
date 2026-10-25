@@ -55,6 +55,21 @@ int frt_instance_set_buffer_arg_typed(void *handle,
 
 int frt_instance_set_stream_arg(void *handle, uint32_t index, const char *shm_path);
 
+/// The number of stream arguments the host binds, which
+/// [`frt_instance_host_stream`] enumerates; -1 on an invalid handle.
+int frt_instance_host_stream_count(const void *handle);
+
+/// The `nth` stream argument the host binds, as its argument index.
+///
+/// Its NUL-terminated name goes to `name_out` (truncated to `name_len`
+/// bytes) and `*kernel_reads` says whether the kernel reads it. Returns -1
+/// when `nth` is out of range or the handle is invalid.
+int frt_instance_host_stream(const void *handle,
+                             uint32_t nth,
+                             char *name_out,
+                             uintptr_t name_len,
+                             int *kernel_reads);
+
 int frt_instance_write_to_device(void *handle);
 
 int frt_instance_read_from_device(void *handle);

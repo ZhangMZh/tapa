@@ -51,6 +51,11 @@ impl Instance {
         Ok(Self { device })
     }
 
+    /// The stream arguments the host binds, in argument order.
+    pub fn host_streams(&self) -> Vec<crate::device::HostStream> {
+        self.device.host_streams()
+    }
+
     pub fn set_scalar_arg_bytes(&mut self, index: u32, value: &[u8]) -> Result<()> {
         self.device.set_scalar_arg(index, value)
     }

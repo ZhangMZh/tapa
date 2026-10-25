@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "tapa/host/frt/c_api.h"
 #include "tapa/host/frt/types.h"
@@ -11,6 +12,13 @@
 namespace tapa {
 namespace internal {
 namespace frt {
+
+// A stream argument the host binds, as the kernel metadata declares it.
+struct HostStream {
+  int index;
+  std::string name;
+  bool kernel_reads;  // the host writes it
+};
 
 // Thin RAII handle over the Rust `frt_instance_*` C ABI. Argument lowering is
 // performed once by tapa-lib's accessors, which call the three `Set*Arg`
@@ -30,6 +38,9 @@ class Instance {
                     BufferAccess access);
   // Passes a shared-memory stream identified by `path`.
   void SetStreamArg(int index, const std::string& path);
+  // The stream arguments the host binds, in argument order; none on
+  // hardware.
+  std::vector<HostStream> HostStreams() const;
 
   void WriteToDevice();
   void ReadFromDevice();

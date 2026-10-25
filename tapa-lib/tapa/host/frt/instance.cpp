@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <glog/logging.h>
 
@@ -66,6 +67,22 @@ void Instance::SetScalarArg(int index, const void* data, size_t size) {
       frt_instance_set_scalar_bytes(
           impl_->handle, index, reinterpret_cast<const uint8_t*>(data), size),
       "set_scalar");
+}
+
+std::vector<HostStream> Instance::HostStreams() const {
+  std::vector<HostStream> streams;
+  if (!impl_->handle) return streams;
+  const int count = frt_instance_host_stream_count(impl_->handle);
+  LOG_IF(FATAL, count < 0) << "host_stream_count failed: " << LastErr();
+  for (int i = 0; i < count; ++i) {
+    char name[256];
+    int kernel_reads = 0;
+    const int index = frt_instance_host_stream(impl_->handle, i, name,
+                                               sizeof(name), &kernel_reads);
+    LOG_IF(FATAL, index < 0) << "host_stream failed: " << LastErr();
+    streams.push_back({index, name, kernel_reads != 0});
+  }
+  return streams;
 }
 
 void Instance::SetBufferArg(int index, const void* ptr, size_t bytes,

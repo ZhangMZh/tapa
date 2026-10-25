@@ -270,6 +270,60 @@ pub extern "C" fn frt_instance_set_stream_arg(
     0
 }
 
+/// The number of stream arguments the host binds, which
+/// [`frt_instance_host_stream`] enumerates; -1 on an invalid handle.
+#[no_mangle]
+pub extern "C" fn frt_instance_host_stream_count(handle: *const std::ffi::c_void) -> c_int {
+    clear_last_error();
+    let Some(h) = with_handle_ref(handle) else {
+        return -1;
+    };
+    c_int::try_from(h.instance.host_streams().len()).unwrap_or(-1)
+}
+
+/// The `nth` stream argument the host binds, as its argument index.
+///
+/// Its NUL-terminated name goes to `name_out` (truncated to `name_len`
+/// bytes) and `*kernel_reads` says whether the kernel reads it. Returns -1
+/// when `nth` is out of range or the handle is invalid.
+#[no_mangle]
+pub extern "C" fn frt_instance_host_stream(
+    handle: *const std::ffi::c_void,
+    nth: u32,
+    name_out: *mut c_char,
+    name_len: usize,
+    kernel_reads: *mut c_int,
+) -> c_int {
+    clear_last_error();
+    let Some(h) = with_handle_ref(handle) else {
+        return -1;
+    };
+    let streams = h.instance.host_streams();
+    let Some(stream) = streams.get(nth as usize) else {
+        set_last_error(format!(
+            "host stream {nth} out of range ({} declared)",
+            streams.len()
+        ));
+        return -1;
+    };
+    if !name_out.is_null() && name_len > 0 {
+        let bytes = stream.name.as_bytes();
+        let len = bytes.len().min(name_len - 1);
+        // SAFETY: the caller provides `name_len` writable bytes at
+        // `name_out`, and `len < name_len`.
+        let out = unsafe { std::slice::from_raw_parts_mut(name_out, len + 1) };
+        for (dst, src) in out.iter_mut().zip(bytes) {
+            *dst = c_char::from_ne_bytes([*src]);
+        }
+        out[len] = 0;
+    }
+    if !kernel_reads.is_null() {
+        // SAFETY: the caller provides a writable `c_int`.
+        unsafe { *kernel_reads = c_int::from(stream.kernel_reads) };
+    }
+    c_int::try_from(stream.index).unwrap_or(-1)
+}
+
 #[no_mangle]
 pub extern "C" fn frt_instance_write_to_device(handle: *mut std::ffi::c_void) -> c_int {
     instance_method_call(handle, Instance::write_to_device)
