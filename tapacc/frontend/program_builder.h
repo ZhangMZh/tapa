@@ -76,9 +76,18 @@ class ProgramBuilder {
   void IndexTu(clang::ASTContext& ctx,
                const std::vector<IncludeDirective>& log);
 
+  // Per-task target mappings (`--task-target NAME:T`), applied over the
+  // sightings' attributes at the start of MergeAndDiscover.
+  void SetTaskTargets(std::map<std::string, SynthTarget> targets);
+
   // Merge + discovery. Returns false (and fills `errors()`) on a violated
-  // merge rule; the caller must not run pass 2 afterwards.
+  // merge rule; the caller must not run pass 2 afterwards. It also puts
+  // the subtree of every AI Engine upper task on the AI Engine.
   bool MergeAndDiscover();
+
+  // After pass 2: rejects a PL task that closes a stream feeding an AI
+  // Engine task. Returns false (and fills `errors()`) on a violation.
+  bool CheckAieEot();
 
   // Pass 2: apply one guarded rewrite across the mirror and absorb the TU
   // while its SourceManager-bound include log is alive. `tokens` is the
@@ -146,11 +155,12 @@ class ProgramBuilder {
     std::string loc;  // rendered file:line:col of the definition
     int tu = 0;
     bool is_spec = false;
-    bool implicit_spec = false;  // an implicit instantiation, only sighted
-                                 // through the invoke that triggered it
-    bool task_shaped = false;    // the body builds a tapa::task
-    bool ignored = false;        // [[tapa::target("ignore")]]
-    bool internal = false;       // static / anonymous namespace / a method
+    bool implicit_spec = false;    // an implicit instantiation, only sighted
+                                   // through the invoke that triggered it
+    bool task_shaped = false;      // the body builds a tapa::task
+    bool ignored = false;          // [[tapa::target("ignore")]]
+    bool explicit_target = false;  // a target attribute or mapping
+    bool internal = false;         // static / anonymous namespace / a method
     TaskLevel level = TaskLevel::kLower;
     SynthTarget target = SynthTarget::kXilinxHls;
   };
@@ -205,6 +215,8 @@ class ProgramBuilder {
   int RegisterTu(const std::string& file);
   int TuOf(const std::string& file) const;
   void Fail(std::string message);
+  bool ApplyTaskTargets();
+  bool PropagateAie();
   std::string ScannedTus() const;
   const DefSighting& FirstSighting(const std::string& key) const;
 
@@ -221,6 +233,7 @@ class ProgramBuilder {
   // merged task key -> the task (discovered only).
   std::map<std::string, MergedTask> tasks_;
   std::vector<std::string> errors_;
+  std::map<std::string, SynthTarget> task_targets_;
 };
 
 }  // namespace tapa::cc

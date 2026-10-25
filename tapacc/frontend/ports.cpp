@@ -116,6 +116,21 @@ void CheckParamShape(const clang::ASTContext& ctx,
   }
 }
 
+// A port as the parameter spells it; the AI Engine knobs are read later,
+// once the task's target is known.
+Port MakePort(std::string name, TapaKind kind, std::string ctype,
+              uint32_t width, std::optional<uint32_t> chan_count,
+              std::optional<uint32_t> chan_size) {
+  Port port;
+  port.name = std::move(name);
+  port.kind = kind;
+  port.ctype = std::move(ctype);
+  port.width = width;
+  port.chan_count = chan_count;
+  port.chan_size = chan_size;
+  return port;
+}
+
 }  // namespace
 
 std::vector<Port> BuildPorts(const clang::ASTContext& ctx,
@@ -133,43 +148,43 @@ std::vector<Port> BuildPorts(const clang::ASTContext& ctx,
       case TapaKind::kImmap:
       case TapaKind::kOmmap:
       case TapaKind::kAsyncMmap:
-        ports.push_back(Port{name, kind, elem + "*", elem_width, std::nullopt,
-                             std::nullopt});
+        ports.push_back(MakePort(name, kind, elem + "*", elem_width,
+                                 std::nullopt, std::nullopt));
         break;
 
       case TapaKind::kMmaps: {
         // Expand to one `mmap` port per channel (name[i]).
         const uint32_t n = IntArg(param, 1).value_or(0);
         for (uint32_t i = 0; i < n; ++i) {
-          ports.push_back(Port{ArrayNameAt(name, static_cast<int>(i)),
-                               TapaKind::kMmap, elem + "*", elem_width,
-                               std::nullopt, std::nullopt});
+          ports.push_back(MakePort(ArrayNameAt(name, static_cast<int>(i)),
+                                   TapaKind::kMmap, elem + "*", elem_width,
+                                   std::nullopt, std::nullopt));
         }
         break;
       }
 
       case TapaKind::kHmap:
-        ports.push_back(Port{name, kind, elem + "*", elem_width,
-                             IntArg(param, 1), IntArg(param, 2)});
+        ports.push_back(MakePort(name, kind, elem + "*", elem_width,
+                                 IntArg(param, 1), IntArg(param, 2)));
         break;
 
       case TapaKind::kIStream:
       case TapaKind::kOStream:
         ports.push_back(
-            Port{name, kind, elem, elem_width, std::nullopt, std::nullopt});
+            MakePort(name, kind, elem, elem_width, std::nullopt, std::nullopt));
         break;
 
       case TapaKind::kIStreams:
       case TapaKind::kOStreams:
-        ports.push_back(
-            Port{name, kind, elem, elem_width, IntArg(param, 1), std::nullopt});
+        ports.push_back(MakePort(name, kind, elem, elem_width, IntArg(param, 1),
+                                 std::nullopt));
         break;
 
       default:
         // Scalar: the parameter's own type and width.
-        ports.push_back(
-            Port{name, TapaKind::kNotTapa, param->getType().getAsString(),
-                 BitWidth(ctx, param->getType()), std::nullopt, std::nullopt});
+        ports.push_back(MakePort(
+            name, TapaKind::kNotTapa, param->getType().getAsString(),
+            BitWidth(ctx, param->getType()), std::nullopt, std::nullopt));
         break;
     }
   }

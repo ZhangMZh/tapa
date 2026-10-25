@@ -1,7 +1,11 @@
 #include "rewrite.h"
 
+#include <functional>
+#include <map>
 #include <set>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "clang/AST/Attr.h"
 #include "clang/AST/Decl.h"
@@ -72,6 +76,9 @@ const clang::Stmt* GetRegionBody(const clang::Stmt* stmt) {
 constexpr bool IsTapaAttr(clang::attr::Kind kind) {
   switch (kind) {
     case clang::attr::TapaAggregate:
+    case clang::attr::TapaAieFrame:
+    case clang::attr::TapaAieLocation:
+    case clang::attr::TapaAiePlio:
     case clang::attr::TapaArrayMap:
     case clang::attr::TapaBalance:
     case clang::attr::TapaBindOp:
@@ -90,11 +97,12 @@ constexpr bool IsTapaAttr(clang::attr::Kind kind) {
   }
 }
 
-// TapaPipeline belongs on functions and statements, TapaTarget on
-// functions. Neither is a variable pragma.
+// TapaPipeline belongs on functions and statements, TapaTarget and
+// TapaAieLocation on functions. None is a variable pragma.
 constexpr bool IsTapaDeclAttr(clang::attr::Kind kind) {
   return IsTapaAttr(kind) && kind != clang::attr::TapaPipeline &&
-         kind != clang::attr::TapaTarget;
+         kind != clang::attr::TapaTarget &&
+         kind != clang::attr::TapaAieLocation;
 }
 
 // Lower a function-level [[tapa::pipeline]] into the function's body.
@@ -106,16 +114,18 @@ void LowerFuncAttrPragmas(const clang::FunctionDecl* func,
   for (const clang::Attr* attr : func->attrs()) {
     if (attr->getKind() != clang::attr::TapaPipeline) continue;
     const auto* pa = llvm::cast<clang::TapaPipelineAttr>(attr);
-    backend.LowerPipeline(pa->getII(), pa->getStyle().str(), body, edits);
+    backend.LowerFuncPipeline(pa->getII(), pa->getStyle().str(), body, edits);
   }
 }
 
 // Drop a function-level [[tapa::pipeline]] without lowering it: a task's
 // stub branch keeps only its signature, so no body carries the pragma, but
-// the attribute text must not reach the vendor.
+// the attribute text must not reach the vendor. An AI Engine tile pin has
+// already been read into the task graph.
 void RemoveFuncAttrs(const clang::FunctionDecl* func, EditSink& edits) {
   for (const clang::Attr* attr : func->attrs()) {
-    if (attr->getKind() == clang::attr::TapaPipeline) {
+    if (attr->getKind() == clang::attr::TapaPipeline ||
+        attr->getKind() == clang::attr::TapaAieLocation) {
       RemoveLoweredAttr(edits, attr->getRange());
     }
   }
@@ -411,17 +421,18 @@ const clang::FunctionDecl* SpecPrimary(const TaskModel& model) {
 
 namespace {
 
-const Backend& BackendFor(SynthTarget target, const Backend& hls,
-                          const Backend& vitis, const Backend& ignore) {
+const Backend& BackendFor(SynthTarget target, const Backends& backends) {
   switch (target) {
     case SynthTarget::kXilinxHls:
-      return hls;
+      return backends.hls;
     case SynthTarget::kXilinxVitis:
-      return vitis;
+      return backends.vitis;
     case SynthTarget::kIgnore:
-      return ignore;
+      return backends.ignore;
+    case SynthTarget::kAie:
+      return backends.aie;
   }
-  return hls;
+  return backends.hls;
 }
 
 std::string RewrittenSignature(const clang::FunctionDecl* func,
@@ -483,14 +494,24 @@ std::string GuardOpening(const std::vector<std::string>& defines) {
   return opening + "\n";
 }
 
+std::string GuardElif(const std::vector<std::string>& defines) {
+  std::string opening = "#elif ";
+  if (defines.size() == 1)
+    return opening + "defined(" + defines.front() + ")\n";
+  for (size_t i = 0; i < defines.size(); ++i) {
+    if (i > 0) opening += " || ";
+    opening += "defined(" + defines[i] + ")";
+  }
+  return opening + "\n";
+}
+
 }  // namespace
 
 void RewriteTreeFiles(const Program& program, SynthTarget default_target,
-                      const Backend& hls, const Backend& vitis,
-                      const Backend& ignore, clang::ASTContext& ctx,
+                      const Backends& backends, clang::ASTContext& ctx,
                       TreeSession& session) {
   EditSink& edits = session.edits();
-  const Backend& shared = BackendFor(default_target, hls, vitis, ignore);
+  const Backend& shared = BackendFor(default_target, backends);
 
   std::map<const clang::FunctionDecl*, std::vector<const TaskModel*>> specs;
   for (const auto& [name, model] : program.tasks) {
@@ -548,10 +569,65 @@ void RewriteTreeFiles(const Program& program, SynthTarget default_target,
         session.InsertGuardClosing(definition, closing, construct);
       };
 
+  using MixedVariant = std::pair<TaskModel, std::vector<std::string>>;
+  using BodyRewrite =
+      std::function<void(TaskModel&, const Backend&, EditSink&)>;
+  auto guard_mixed_definition = [&](const std::vector<MixedVariant>& variants,
+                                    const clang::FunctionDecl* func,
+                                    const BodyRewrite& rewrite_body) {
+    const clang::SourceRange definition = DefinitionRange(func, edits);
+    const TaskModel& representative = variants.front().first;
+    if (definition.getBegin().isMacroID()) {
+      ReportCustomDiag(ctx, clang::DiagnosticsEngine::Error,
+                       definition.getBegin(),
+                       "task '%0' is defined by a macro invocation: its "
+                       "signature has no spelled source text for the "
+                       "guard's signature-only stub (a macro may spell "
+                       "the body, not the whole definition); spell the "
+                       "definition outside the macro")
+          .AddString(representative.name);
+      return;
+    }
+    RemoveParamAttrs(func, edits);
+    RemoveFuncAttrs(func, edits);
+    const std::string stub =
+        RewrittenSignature(func, definition.getBegin(), edits);
+    std::string guarded;
+    for (size_t i = 0; i < variants.size(); ++i) {
+      auto [model, defines] = variants[i];
+      model.def = func;
+      guarded += i == 0 ? GuardOpening(defines) : GuardElif(defines);
+      const Backend& backend = BackendFor(model.target, backends);
+      clang::Rewriter variant_rewriter(edits.getSourceMgr(),
+                                       edits.getLangOpts());
+      EditSink variant_edits(ctx, variant_rewriter);
+      variant_edits.TrackFile(
+          edits.getSourceMgr().getFileID(definition.getBegin()),
+          [](clang::SourceLocation, unsigned, llvm::StringRef) {
+            return true;
+          });
+      rewrite_body(model, backend, variant_edits);
+      guarded += variant_edits.getRewrittenText(definition);
+      guarded += "\n";
+    }
+    guarded += "\n#else\n" + stub + ";\n#endif\n";
+    if (TreeFileBuffer* buffer =
+            session.BufferForLocation(definition.getBegin())) {
+      (void)buffer->ReplaceWithLineResnap(
+          clang::CharSourceRange::getTokenRange(definition), guarded);
+    }
+  };
+
+  std::map<SynthTarget, std::vector<std::string>> target_defines;
+  for (const auto& [name, model] : program.tasks) {
+    (void)name;
+    target_defines[model.target].push_back(TaskGuardDefine(model.name));
+  }
+
   // Plain task definitions: unconditional signatures, one guarded body each.
   for (const auto& [name, model] : program.tasks) {
     if (model.is_template_spec) continue;
-    const Backend& backend = BackendFor(model.target, hls, vitis, ignore);
+    const Backend& backend = BackendFor(model.target, backends);
     if (!model.def->isThisDeclarationADefinition()) {
       // A TU holding only a declaration of the task (the shared header
       // announcing a task another TU defines) takes the declaration-level
@@ -585,17 +661,41 @@ void RewriteTreeFiles(const Program& program, SynthTarget default_target,
 
     const clang::FunctionDecl* canonical = func->getCanonicalDecl();
     if (const auto spec = specs.find(canonical); spec != specs.end()) {
-      const TaskModel& representative = *spec->second.front();
-      TaskModel primary = representative;
-      primary.def = func;
-      std::vector<std::string> defines;
-      defines.reserve(spec->second.size());
+      std::map<SynthTarget, std::vector<const TaskModel*>> by_target;
       for (const TaskModel* model : spec->second) {
-        defines.push_back(TaskGuardDefine(model->name));
+        by_target[model->target].push_back(model);
       }
-      guard_definition(primary, func, /*is_top=*/false,
-                       BackendFor(representative.target, hls, vitis, ignore),
-                       defines, /*rewrite_signature=*/false);
+      const auto rewrite_task = [](TaskModel& model, const Backend& backend,
+                                   EditSink& variant_edits) {
+        backend.RewriteTaskFunc(model, /*is_top=*/false, variant_edits);
+        LowerParamAttrPragmas(model.def, backend, variant_edits);
+        LowerFuncAttrPragmas(model.def, backend, variant_edits);
+        LowerAttrs(model.def->getBody(), variant_edits.getASTContext(), backend,
+                   variant_edits, /*in_block=*/false);
+      };
+      if (by_target.size() == 1) {
+        const TaskModel& representative = *spec->second.front();
+        TaskModel primary = representative;
+        primary.def = func;
+        std::vector<std::string> defines;
+        defines.reserve(spec->second.size());
+        for (const TaskModel* model : spec->second) {
+          defines.push_back(TaskGuardDefine(model->name));
+        }
+        guard_definition(primary, func, /*is_top=*/false,
+                         BackendFor(representative.target, backends), defines,
+                         /*rewrite_signature=*/false);
+      } else {
+        std::vector<MixedVariant> variants;
+        for (const auto& [target, models] : by_target) {
+          std::vector<std::string> defines;
+          for (const TaskModel* model : models) {
+            defines.push_back(TaskGuardDefine(model->name));
+          }
+          variants.emplace_back(*models.front(), std::move(defines));
+        }
+        guard_mixed_definition(variants, func, rewrite_task);
+      }
     } else if (GetTapaTaskObject(func->getBody()) != nullptr) {
       TaskModel model;
       model.def = func;
@@ -606,23 +706,63 @@ void RewriteTreeFiles(const Program& program, SynthTarget default_target,
       shared.StripOtherTask(func, edits);
     } else {
       edits.Describe("helper function '" + func->getNameAsString() + "'");
-      shared.RewriteHelperFunc(func, edits);
-      LowerFuncAttrs(func, shared, edits);
-      if (func->isThisDeclarationADefinition()) {
-        LowerParamAttrs(func, shared, edits);
-        LowerAttrs(func->getBody(), ctx, shared, edits,
-                   /*in_block=*/false);
+      if (target_defines.size() > 1 && func->isThisDeclarationADefinition()) {
+        std::vector<MixedVariant> variants;
+        for (const auto& [target, defines] : target_defines) {
+          TaskModel model;
+          model.name = func->getNameAsString();
+          model.def = func;
+          model.target = target;
+          variants.emplace_back(std::move(model), defines);
+        }
+        const auto rewrite_helper = [func](TaskModel&, const Backend& backend,
+                                           EditSink& variant_edits) {
+          backend.RewriteHelperFunc(func, variant_edits);
+          LowerFuncAttrs(func, backend, variant_edits);
+          LowerParamAttrs(func, backend, variant_edits);
+          LowerAttrs(func->getBody(), variant_edits.getASTContext(), backend,
+                     variant_edits, /*in_block=*/false);
+        };
+        guard_mixed_definition(variants, func, rewrite_helper);
+      } else {
+        shared.RewriteHelperFunc(func, edits);
+        LowerFuncAttrs(func, shared, edits);
+        if (func->isThisDeclarationADefinition()) {
+          LowerParamAttrs(func, shared, edits);
+          LowerAttrs(func->getBody(), ctx, shared, edits,
+                     /*in_block=*/false);
+        }
       }
     }
   }
 
   for (const clang::FunctionDecl* func : program.local_funcs) {
     edits.Describe("helper function '" + func->getNameAsString() + "'");
-    shared.RewriteHelperFunc(func, edits);
-    LowerParamAttrs(func, shared, edits);
-    LowerFuncAttrs(func, shared, edits);
-    LowerAttrs(func->getBody(), ctx, shared, edits,
-               /*in_block=*/false);
+    if (target_defines.size() > 1) {
+      std::vector<MixedVariant> variants;
+      for (const auto& [target, defines] : target_defines) {
+        TaskModel model;
+        model.name = func->getNameAsString();
+        model.def = func;
+        model.target = target;
+        variants.emplace_back(std::move(model), defines);
+      }
+      const auto rewrite_helper = [func](TaskModel&, const Backend& backend,
+                                         EditSink& variant_edits) {
+        backend.RewriteHelperFunc(func, variant_edits);
+        LowerFuncAttrs(func, backend, variant_edits);
+        LowerParamAttrs(func, backend, variant_edits);
+        LowerAttrs(func->getBody(), variant_edits.getASTContext(), backend,
+                   variant_edits, /*in_block=*/false);
+      };
+      guard_mixed_definition(variants, func, rewrite_helper);
+    } else {
+      shared.RewriteHelperFunc(func, edits);
+      LowerParamAttrs(func, shared, edits);
+      LowerFuncAttrs(func, shared, edits);
+      LowerAttrs(func->getBody(), ctx, shared, edits,
+                 /*in_block=*/false);
+    }
   }
 
   // Insert wrappers only after every definition guard is in place. A wrapper
@@ -631,7 +771,7 @@ void RewriteTreeFiles(const Program& program, SynthTarget default_target,
   for (const auto& [name, model] : program.tasks) {
     if (!model.is_template_spec || model.invoker == nullptr) continue;
     const std::string define = TaskGuardDefine(model.name);
-    const Backend& backend = BackendFor(model.target, hls, vitis, ignore);
+    const Backend& backend = BackendFor(model.target, backends);
     edits.Describe("wrapper for template task '" + name + "'");
     edits.InsertTextAfterToken(model.invoker->getEndLoc(),
                                "\n#ifdef " + define + "\n" +

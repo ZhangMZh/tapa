@@ -72,6 +72,7 @@ class EditSink {
   bool DropSpliceTokens(ExpansionSplice* splice, size_t first, size_t last,
                         llvm::StringRef text);
 
+  clang::ASTContext& getASTContext() const { return ctx_; }
   std::string getRewrittenText(clang::SourceRange range) const;
   std::string getRewrittenText(clang::CharSourceRange range) const;
   clang::SourceManager& getSourceMgr() const;

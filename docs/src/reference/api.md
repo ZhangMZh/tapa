@@ -442,12 +442,16 @@ These C++ attributes are recognised by TAPA and lowered to vendor pragmas during
 | `[[tapa::aggregate]]` | `aggregate` | Pack a struct into a single wide word. |
 | `[[tapa::bind_op(op, impl, latency)]]` | `bind_op` | Bind an operation to a specific implementation, e.g. `("mul", "dsp")`. |
 | `[[tapa::array_map(instance, offset, orient)]]` | `array_map` | Map an array into a larger physical instance. `offset` is positional and optional — `-1` omits it. |
+| `[[tapa::aie_frame(N)]]` | — | On a stream parameter of an AI Engine leaf task: the stream arrives as frames of `N` elements in tile memory. See [AI Engine Tasks](../howto/aie.md). |
+| `[[tapa::aie_plio(W)]]` | — | On a stream parameter of an AI Engine task: PLIO width of 32, 64 or 128 bits. |
 
 **On a function.**
 
 | Attribute | Description |
 |-----------|-------------|
 | `[[tapa::target("ignore")]]` | Mark a task for custom RTL replacement. TAPA generates a port-signature template but does not synthesize the task body. |
+| `[[tapa::target("aie")]]` | Run the task, or an upper task's whole subtree, on the Versal AI Engine array. See [AI Engine Tasks](../howto/aie.md). |
+| `[[tapa::aie_location(col, row)]]` | Pin an AI Engine leaf task to a tile; a third argument picks one instance. |
 
 ```admonish note
 The `-1` sentinel in `partition` and `array_map` exists because the arguments are positional and zero is a meaningful value (`dim = 0` means *all* dimensions). Passing a dim where a factor is expected is silently accepted by the vendor and partitions the wrong dimension, so spell the sentinel rather than dropping the argument.

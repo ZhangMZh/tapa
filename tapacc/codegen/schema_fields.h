@@ -43,6 +43,14 @@ inline constexpr const char* kFieldType = "type";
 inline constexpr const char* kFieldWidth = "width";
 inline constexpr const char* kFieldChanCount = "chan_count";
 inline constexpr const char* kFieldChanSize = "chan_size";
+inline constexpr const char* kFieldAieFrame = "aie_frame";
+inline constexpr const char* kFieldAiePlio = "aie_plio";
+
+// ── AI Engine tile pin (task "aie_location" entries) ────────────────
+inline constexpr const char* kFieldAieLocation = "aie_location";
+inline constexpr const char* kFieldCol = "col";
+inline constexpr const char* kFieldRow = "row";
+inline constexpr const char* kFieldInstance = "instance";
 
 // ── Instance ────────────────────────────────────────────────────────
 inline constexpr const char* kFieldStep = "step";

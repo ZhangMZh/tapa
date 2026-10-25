@@ -66,6 +66,13 @@ class Backend {
                              EditSink& edits) const = 0;
   virtual void LowerUnroll(int factor, const clang::Stmt* body,
                            EditSink& edits) const = 0;
+  //  - LowerFuncPipeline: lower a function-level [[tapa::pipeline]] into
+  //    the function body; the loop form's lowering unless overridden.
+  virtual void LowerFuncPipeline(int ii, const std::string& style,
+                                 const clang::Stmt* body,
+                                 EditSink& edits) const {
+    LowerPipeline(ii, style, body, edits);
+  }
   //  - LowerStmtAttr: lower a non-pipeline/unroll statement attribute
   //    (tripcount, flatten, latency, dependence, balance) attached to a
   //    loop. Backends that ignore attributes need not override.

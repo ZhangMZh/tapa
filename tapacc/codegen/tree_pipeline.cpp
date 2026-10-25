@@ -106,13 +106,15 @@ class PipelineAction : public clang::ASTFrontendAction {
 TreePipelineRun RunTreePipeline(
     const std::vector<VirtualTu>& tus, const std::string& top,
     const std::string& out_root, const std::vector<std::string>& args,
-    const clang::tooling::FileContentMappings& virtual_files) {
+    const clang::tooling::FileContentMappings& virtual_files,
+    std::map<std::string, SynthTarget> task_targets) {
   std::vector<std::string> main_files;
   main_files.reserve(tus.size());
   for (const VirtualTu& tu : tus) main_files.push_back(CanonicalPath(tu.path));
   CollectingDiagConsumer diags;
   ProgramBuilder builder(top, SynthTarget::kXilinxHls,
                          TreeConfig{out_root, std::move(main_files)});
+  builder.SetTaskTargets(std::move(task_targets));
 
   // The stub declarations ride in front of each TU's own text; virtual
   // header files stand alone so several TUs can sight one shared header.
@@ -134,7 +136,8 @@ TreePipelineRun RunTreePipeline(
   if (ok) {
     run_pass(/*index_pass=*/false);
     std::string error;
-    ok = diags.errors.empty() && builder.WriteTree(&error);
+    ok = diags.errors.empty() && builder.CheckAieEot() &&
+         builder.WriteTree(&error);
   }
 
   TreePipelineRun run{std::move(builder)};

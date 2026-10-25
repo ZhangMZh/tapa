@@ -163,9 +163,13 @@ portable form.
 [[tapa::aggregate]]                       // pack a struct into one wide word
 [[tapa::bind_op("mul", "dsp")]]           // bind an operation to an implementation
 [[tapa::array_map("inst", -1, "vertical")]]
+[[tapa::aie_frame(256)]]                  // AI Engine stream port as 256-element frames
+[[tapa::aie_plio(128)]]                   // AI Engine boundary stream on a 128-bit PLIO
 
 // On a function
 [[tapa::target("ignore")]]                // mark task for custom RTL replacement
+[[tapa::target("aie")]]                   // run the task on the AI Engine array
+[[tapa::aie_location(10, 0)]]             // pin an AI Engine task to a tile
 ```
 
 Inlining follows the `inline` keyword, not an attribute: `inline` emits the

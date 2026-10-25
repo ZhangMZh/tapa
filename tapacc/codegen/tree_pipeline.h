@@ -46,13 +46,16 @@ struct TreePipelineRun {
 
 // Runs exactly what `tapacc` runs over the virtual TUs: an index action per
 // TU (include log recorded, no tokens), the merge, then a rewrite action per
-// TU with the token stream recorded, then the tree materialization under
-// `out_root` (wiped and created). `virtual_files` maps extra virtual paths
-// (shared headers) to content, taken verbatim with no stubs.
+// TU with the token stream recorded, the AI Engine end-of-transmission
+// check, then the tree materialization under `out_root` (wiped and
+// created). `task_targets` are the `--task-target` mappings. `virtual_files`
+// maps extra virtual paths (shared headers) to content, taken verbatim with no
+// stubs.
 TreePipelineRun RunTreePipeline(
     const std::vector<VirtualTu>& tus, const std::string& top,
     const std::string& out_root, const std::vector<std::string>& args,
-    const clang::tooling::FileContentMappings& virtual_files = {});
+    const clang::tooling::FileContentMappings& virtual_files = {},
+    std::map<std::string, SynthTarget> task_targets = {});
 
 }  // namespace tapa::cc::test_support
 

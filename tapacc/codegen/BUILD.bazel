@@ -134,6 +134,19 @@ cc_library(
 )
 
 cc_library(
+    name = "aie",
+    srcs = ["aie.cpp"],
+    hdrs = ["aie.h"],
+    copts = TAPACC_COPTS,
+    includes = [".."],
+    deps = [
+        ":backend",
+        ":edit_sink",
+        CLANG_TOOLING,
+    ],
+)
+
+cc_library(
     name = "ignore",
     srcs = ["ignore.cpp"],
     hdrs = ["ignore.h"],
@@ -261,6 +274,19 @@ cc_test(
         ":tree_pipeline",
         "@googletest//:gtest",
         "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "aie_test",
+    srcs = ["aie_test.cpp"],
+    copts = TAPACC_COPTS,
+    includes = [".."],
+    deps = [
+        ":tree_pipeline",
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
+        "@nlohmann_json//:json",
     ],
 )
 

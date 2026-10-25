@@ -28,6 +28,7 @@
 - [Remote Execution](howto/remote-execution.md)
 - [Floorplan for Timing Closure](howto/floorplan.md)
 - [Performance Tuning](howto/performance-tuning.md)
+- [AI Engine Tasks](howto/aie.md)
 
 # Tutorials
 

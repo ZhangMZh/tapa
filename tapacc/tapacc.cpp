@@ -33,10 +33,11 @@
 // Two distinct notions of "target" live in that schema, and the tapa-ir
 // crate parses both as closed enums with deny_unknown_fields:
 //   - root "target": the vendor FLOW, kebab-case "xilinx-vitis"/"xilinx-hls".
-//   - per-task "synth": the synthesis POLICY, "hls"/"ignore" only -- it answers
-//     just "synthesize or skip". The internal three-valued SynthTarget still
-//     carries the flow per task so the right backend gets picked, but that
-//     distinction collapses on the wire.
+//   - per-task "synth": the synthesis POLICY, "hls"/"ignore"/"aie" -- it
+//     answers how the task is built: HLS, skipped, or on the AI Engine. The
+//     internal SynthTarget still carries the flow per task so the right
+//     backend gets picked, but the HLS/Vitis distinction collapses on the
+//     wire.
 //
 // Changing what this file emits changes a contract with Rust code that cannot
 // see it. `bazel test //tapa-core:tapacc_conformance_test` (Linux only) is the
@@ -46,7 +47,9 @@
 // someone's build.
 
 #include <iostream>
+#include <map>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -94,6 +97,14 @@ llvm::cl::opt<CliTarget> g_target(
     llvm::cl::values(
         clEnumValN(CliTarget::kHls, "xilinx-hls", "Xilinx HLS (default)"),
         clEnumValN(CliTarget::kVitis, "xilinx-vitis", "Xilinx Vitis")));
+
+// Per-task target mappings from `tapa analyze --target TASK:T`; they win
+// over the source attribute so one source builds both PL-only and PL+AIE.
+llvm::cl::list<std::string> g_task_targets(
+    "task-target",
+    llvm::cl::desc("Map one task to a target, TASK:TARGET with TARGET one of "
+                   "aie, hls, ignore; overrides [[tapa::target]]"),
+    llvm::cl::value_desc("task:target"), llvm::cl::cat(g_category));
 
 // One frontend action over one TU, feeding the shared builder. The index
 // pass also carries the vendor scan (attached once per TU, preprocessor
@@ -192,10 +203,29 @@ int main(int argc, const char** argv) {
     main_files.push_back(CanonicalPath(source));
   }
   const bool is_vitis = g_target == CliTarget::kVitis;
+  const SynthTarget flow =
+      is_vitis ? SynthTarget::kXilinxVitis : SynthTarget::kXilinxHls;
+  std::map<std::string, SynthTarget> task_targets;
+  for (const std::string& mapping : g_task_targets) {
+    const size_t colon = mapping.rfind(':');
+    const std::string task = mapping.substr(0, colon);
+    const std::string target =
+        colon == std::string::npos ? "" : mapping.substr(colon + 1);
+    if (task.empty() ||
+        (target != "aie" && target != "hls" && target != "ignore")) {
+      llvm::errs() << "error: -task-target " << mapping
+                   << " is not TASK:TARGET with TARGET one of aie, hls, "
+                      "ignore\n";
+      return 1;
+    }
+    task_targets[task] = target == "aie"      ? SynthTarget::kAie
+                         : target == "ignore" ? SynthTarget::kIgnore
+                                              : flow;
+  }
   ProgramBuilder builder(
-      g_top.getValue(),
-      is_vitis ? SynthTarget::kXilinxVitis : SynthTarget::kXilinxHls,
+      g_top.getValue(), flow,
       TreeConfig{g_emit_dir.getValue(), std::move(main_files)});
+  builder.SetTaskTargets(std::move(task_targets));
 
   clang::tooling::ClangTool index_tool(parser->getCompilations(),
                                        parser->getSourcePathList());
@@ -214,6 +244,12 @@ int main(int argc, const char** argv) {
   BuilderActionFactory rewrite_factory(builder, /*index_pass=*/false);
   rc = rewrite_tool.run(&rewrite_factory);
   if (rc != 0) return rc;
+  if (!builder.CheckAieEot()) {
+    for (const std::string& error : builder.errors()) {
+      llvm::errs() << "error: " << error << "\n";
+    }
+    return 1;
+  }
 
   std::string error;
   if (!builder.WriteTree(&error)) {

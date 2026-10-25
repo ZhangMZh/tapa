@@ -1,5 +1,6 @@
 #include "program_builder.h"
 
+#include <functional>
 #include <queue>
 #include <set>
 
@@ -8,8 +9,10 @@
 #include "clang/Basic/SourceManager.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include "aie_check.h"
 #include "build_program.h"
 #include "classify.h"
+#include "codegen/aie.h"
 #include "codegen/conventions.h"
 #include "codegen/ignore.h"
 #include "codegen/rewrite.h"
@@ -107,13 +110,15 @@ const char* LevelStr(TaskLevel level) {
 }
 
 // Maps the per-task synthesis policy to its wire string. tapa-ir's SynthTarget
-// is closed over {"hls", "ignore"}, so both HLS and Vitis tasks collapse to
-// "hls": the per-task field only says whether to synthesize. The flow itself
-// is emitted once at the graph root (see FlowStr).
+// is closed over {"hls", "ignore", "aie"}, so both HLS and Vitis tasks
+// collapse to "hls": the per-task field only says how to build the task. The
+// flow itself is emitted once at the graph root (see FlowStr).
 const char* SynthStr(SynthTarget target) {
   switch (target) {
     case SynthTarget::kIgnore:
       return "ignore";
+    case SynthTarget::kAie:
+      return "aie";
     case SynthTarget::kXilinxHls:
     case SynthTarget::kXilinxVitis:
       return "hls";
@@ -137,6 +142,14 @@ nlohmann::json PortJson(const Port& port) {
                    {kFieldWidth, port.width}};
   if (port.chan_count) j[kFieldChanCount] = *port.chan_count;
   if (port.chan_size) j[kFieldChanSize] = *port.chan_size;
+  if (port.aie_frame) j[kFieldAieFrame] = *port.aie_frame;
+  if (port.aie_plio) j[kFieldAiePlio] = *port.aie_plio;
+  return j;
+}
+
+nlohmann::json AieLocationJson(const AieLocation& location) {
+  nlohmann::json j{{kFieldCol, location.col}, {kFieldRow, location.row}};
+  if (location.instance) j[kFieldInstance] = *location.instance;
   return j;
 }
 
@@ -226,6 +239,7 @@ ProgramBuilder::DefSighting ProgramBuilder::MakeFacts(
   sighting.readable_name = ReadableTaskName(ctx, def);
   sighting.task_shaped = GetTapaTaskObject(def->getBody()) != nullptr;
   sighting.ignored = IsIgnored(def);
+  sighting.explicit_target = def->hasAttr<clang::TapaTargetAttr>();
   sighting.internal = !def->isGlobal();
   sighting.level = LevelOf(def);
   sighting.target = ResolveTarget(def, default_target_);
@@ -397,7 +411,99 @@ const ProgramBuilder::DefSighting& ProgramBuilder::FirstSighting(
   return defs_.at(key).front();
 }
 
+void ProgramBuilder::SetTaskTargets(
+    std::map<std::string, SynthTarget> targets) {
+  task_targets_ = std::move(targets);
+}
+
+bool ProgramBuilder::ApplyTaskTargets() {
+  // A `--task-target` mapping wins over the source attribute, so one source
+  // builds both PL-only and PL+AI Engine. It is applied to every sighting
+  // before any merge rule reads a task's level or target.
+  for (const auto& [name, target] : task_targets_) {
+    bool matched = false;
+    for (auto& [key, sightings] : defs_) {
+      for (DefSighting& sighting : sightings) {
+        if (sighting.internal ||
+            (sighting.plain_name != name && sighting.name != name &&
+             sighting.readable_name != name)) {
+          continue;
+        }
+        matched = true;
+        sighting.target = target;
+        sighting.explicit_target = true;
+        sighting.ignored = target == SynthTarget::kIgnore;
+        sighting.level = !sighting.ignored && sighting.task_shaped
+                             ? TaskLevel::kUpper
+                             : TaskLevel::kLower;
+      }
+    }
+    if (!matched) {
+      Fail("--target maps '" + name +
+           "', but no task of that name is defined (scanned translation "
+           "units: " +
+           ScannedTus() + ")");
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ProgramBuilder::PropagateAie() {
+  // Recursive invocations are not a task tree. Diagnose them before target
+  // propagation or recursive AIE flattening can loop forever.
+  std::map<std::string, int> state;
+  std::function<bool(const std::string&)> has_cycle =
+      [&](const std::string& key) {
+        state[key] = 1;
+        for (auto [it, end] = edges_.equal_range(key); it != end; ++it) {
+          const std::string& child = it->second.callee_key;
+          if (state[child] == 1) return true;
+          if (state[child] == 0 && has_cycle(child)) return true;
+        }
+        state[key] = 2;
+        return false;
+      };
+  for (const auto& [key, task] : tasks_) {
+    if (state[key] == 0 && has_cycle(key)) {
+      Fail("task invocation cycle reaches '" + key + "'");
+      return false;
+    }
+  }
+
+  // An AI Engine upper task puts its whole subtree on the AI Engine. A
+  // descendant explicitly marked for another target contradicts that.
+  std::queue<std::string> work;
+  for (const auto& [key, task] : tasks_) {
+    if (task.model.target == SynthTarget::kAie &&
+        task.model.level == TaskLevel::kUpper) {
+      work.push(key);
+    }
+  }
+  while (!work.empty()) {
+    const std::string key = work.front();
+    work.pop();
+    for (auto [it, end] = edges_.equal_range(key); it != end; ++it) {
+      MergedTask& child = tasks_.at(it->second.callee_key);
+      const DefSighting& facts = FirstSighting(it->second.callee_key);
+      if (facts.explicit_target && facts.target != SynthTarget::kAie) {
+        Fail("task '" + child.model.name + "' is invoked by the AI Engine " +
+             "task '" + tasks_.at(key).model.name + "' at " + it->second.loc +
+             " but is marked for another target; an AI Engine upper task "
+             "puts its whole subtree on the AI Engine");
+        return false;
+      }
+      child.model.target = SynthTarget::kAie;
+      if (child.model.level == TaskLevel::kUpper)
+        work.push(it->second.callee_key);
+    }
+  }
+  return true;
+}
+
 bool ProgramBuilder::MergeAndDiscover() {
+  if (!ApplyTaskTargets()) return false;
+
   // Rule 2: one key, one task. Sighted definitions must agree on
   // level/target/readable_name/signature; anything else is two different
   // functions wearing one identity. They must also sight the same graph:
@@ -504,6 +610,12 @@ bool ProgramBuilder::MergeAndDiscover() {
          top_candidates[0]->loc + ")");
     return false;
   }
+  if (top_candidates[0]->target == SynthTarget::kAie) {
+    Fail("top-level task '" + top_ + "' (defined at " + top_candidates[0]->loc +
+         ") cannot be an AI Engine task: the PL kernel owns the control "
+         "interface, so mark the tasks it invokes instead");
+    return false;
+  }
 
   // Discovery: breadth-first over the merged invoke edges.
   std::queue<std::string> work;
@@ -567,6 +679,7 @@ bool ProgramBuilder::MergeAndDiscover() {
                callee.is_spec ? std::optional<std::string>(key) : std::nullopt);
     }
   }
+  if (!PropagateAie()) return false;
 
   // Rule 2, site half: the mirror writes one file per source path, so a
   // task sighted at two distinct sites would need two different rewrites of
@@ -689,6 +802,17 @@ void ProgramBuilder::FillOwnedTasks(int tu, Program& view,
     TaskModel& model = view.tasks.at(task.model.name);
     // Ports, instances, and streams exist only where the definition is.
     model.ports = BuildPorts(ctx, model.def);
+    ReadAieAttrs(ctx, model);
+    if (model.target == SynthTarget::kAie) {
+      CheckAieTask(ctx, model);
+    } else if (model.level == TaskLevel::kLower &&
+               model.target != SynthTarget::kIgnore) {
+      if (model.level == TaskLevel::kLower) {
+        model.aie_stack_bytes = LocalBytes(ctx, model.def);
+      }
+    } else if (model.target != SynthTarget::kIgnore) {
+      model.closed_ports = ClosedPorts(model.def);
+    }
     if (model.level == TaskLevel::kUpper) {
       ParseUpperTask(ctx, model, /*is_top=*/model.name == top_, parameter_name);
     }
@@ -706,8 +830,10 @@ void ProgramBuilder::RewriteTreeTu(clang::ASTContext& ctx,
   const XilinxBackend hls(/*is_vitis=*/false);
   const XilinxBackend vitis(/*is_vitis=*/true);
   const IgnoreBackend ignore;
+  const AieBackend aie;
   TreeSession session(ctx, log, tree_config_.main_files, tokens);
-  RewriteTreeFiles(view, default_target_, hls, vitis, ignore, ctx, session);
+  RewriteTreeFiles(view, default_target_, Backends{hls, vitis, ignore, aie},
+                   ctx, session);
   session.FlushMacroSplices();
 
   std::string error;
@@ -722,6 +848,71 @@ void ProgramBuilder::RewriteTreeTu(clang::ASTContext& ctx,
   for (const auto& [path, buffer] : session.buffers()) {
     ReportLeakedAttrs(buffer->Render(), path, ctx);
   }
+}
+
+bool ProgramBuilder::CheckAieEot() {
+  // A PL task that closes a stream feeding an AI Engine task would put an
+  // end-of-transmission token on it; the AI Engine reads that as data.
+  std::map<std::string, const TaskModel*> by_name;
+  for (const auto& [key, task] : tasks_) {
+    by_name.emplace(task.model.name, &task.model);
+  }
+  std::map<const TaskModel*, std::set<std::string>> close_cache;
+  std::function<std::set<std::string>(const TaskModel&)> closed_ports =
+      [&](const TaskModel& task) -> std::set<std::string> {
+    if (const auto it = close_cache.find(&task); it != close_cache.end()) {
+      return it->second;
+    }
+    std::set<std::string> closed = task.closed_ports;
+    for (const auto& [child_name, instances] : task.instances) {
+      const auto child = by_name.find(child_name);
+      if (child == by_name.end()) continue;
+      for (const auto& instance : instances) {
+        const auto child_closed = closed_ports(*child->second);
+        for (const auto& [port, arg] : instance.args) {
+          const std::string child_port = port.substr(0, port.find('['));
+          if (child_closed.count(child_port) == 0 || arg.arg.empty()) continue;
+          const std::string upper_port = arg.arg.substr(0, arg.arg.find('['));
+          bool is_upper_port = false;
+          for (const Port& candidate : task.ports) {
+            if (candidate.name == upper_port) is_upper_port = true;
+          }
+          if (is_upper_port) closed.insert(upper_port);
+        }
+      }
+    }
+    return close_cache[&task] = std::move(closed);
+  };
+  for (const auto& [key, task] : tasks_) {
+    const TaskModel& upper = task.model;
+    for (const auto& [fifo, stream] : upper.streams) {
+      if (!stream.produced_by || !stream.consumed_by) continue;
+      const auto producer = by_name.find(stream.produced_by->task);
+      const auto consumer = by_name.find(stream.consumed_by->task);
+      if (producer == by_name.end() || consumer == by_name.end() ||
+          consumer->second->target != SynthTarget::kAie) {
+        continue;
+      }
+      const auto instances = upper.instances.find(producer->first);
+      if (instances == upper.instances.end() ||
+          stream.produced_by->index >= instances->second.size()) {
+        continue;
+      }
+      for (const auto& [port, arg] :
+           instances->second[stream.produced_by->index].args) {
+        if (arg.arg != fifo) continue;
+        const std::string base = port.substr(0, port.find('['));
+        if (closed_ports(*producer->second).count(base) == 0) continue;
+        Fail("task '" + producer->first + "' closes its stream '" + base +
+             "', which feeds the AI Engine task '" + consumer->first +
+             "' through '" + fifo + "' in '" + upper.name +
+             "'; AI Engine streams carry no end-of-transmission token, so "
+             "send an element count instead of closing the stream");
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 const TaskModel* ProgramBuilder::FindTask(const std::string& name) const {
@@ -771,6 +962,12 @@ nlohmann::json ProgramBuilder::EmitJson() const {
     t[kFieldPorts] = nlohmann::json::array();
     for (const Port& port : model.ports) {
       t[kFieldPorts].push_back(PortJson(port));
+    }
+    if (!model.aie_locations.empty()) {
+      t[kFieldAieLocation] = nlohmann::json::array();
+      for (const AieLocation& location : model.aie_locations) {
+        t[kFieldAieLocation].push_back(AieLocationJson(location));
+      }
     }
     if (model.level == TaskLevel::kUpper) {
       t[kFieldTasks] = nlohmann::json::object();

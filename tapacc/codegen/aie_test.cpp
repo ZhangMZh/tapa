@@ -1,0 +1,382 @@
+// The AI Engine half of the frontend contract: which tasks land on the AI
+// Engine (attribute, `--task-target` mapping, upper-task propagation), the
+// eligibility rules, the knobs on the wire, and the task's own variant of
+// the rewritten tree that the AI Engine compiler builds.
+
+#include <map>
+#include <string>
+
+#include "gtest/gtest.h"
+
+#include "nlohmann/json.hpp"
+
+#include "tree_pipeline.h"
+
+namespace tapa::cc {
+namespace {
+
+using test_support::TreePipelineRun;
+using test_support::VirtualTu;
+
+TreePipelineRun Analyze(const std::string& name, const std::string& code,
+                        std::map<std::string, SynthTarget> task_targets = {}) {
+  return test_support::RunTreePipeline(
+      {VirtualTu{"/proj/src/" + name + ".cpp", code}}, "Top",
+      testing::TempDir() + "/aie_" + name, {"-std=c++17"}, {},
+      std::move(task_targets));
+}
+
+bool AnyDiagContains(const TreePipelineRun& run, const std::string& needle) {
+  for (const std::string& diag : run.diags) {
+    if (diag.find(needle) != std::string::npos) return true;
+  }
+  for (const std::string& error : run.builder.errors()) {
+    if (error.find(needle) != std::string::npos) return true;
+  }
+  return false;
+}
+
+// A PL loader feeding an AI Engine adder; `kAdd` is spliced in.
+std::string Design(const std::string& add, const std::string& load = R"cpp(
+  void Load(tapa::mmap<const float> mem, int n, tapa::ostream<float>& out) {
+    for (int i = 0; i < n; ++i) out.write(mem[i]);
+  }
+)cpp") {
+  return load + add + R"cpp(
+    void Store(tapa::istream<float>& in, tapa::mmap<float> mem, int n) {
+      for (int i = 0; i < n; ++i) mem[i] = in.read();
+    }
+    void Top(tapa::mmap<const float> a, tapa::mmap<float> c, int n) {
+      tapa::stream<float> a_q;
+      tapa::stream<float> c_q;
+      tapa::task()
+          .invoke(Load, a, n, a_q)
+          .invoke(Add, a_q, c_q, n)
+          .invoke(Store, c_q, c, n);
+    }
+  )cpp";
+}
+
+TEST(AieTest, LeafKnobsReachTheGraphAndItsOwnVariant) {
+  const TreePipelineRun run = Analyze(
+      "leaf", Design(R"cpp(
+        [[tapa::target("aie")]] [[tapa::aie_location(10, 0)]]
+        void Add([[tapa::aie_frame(64)]] tapa::istream<float>& a,
+                 [[tapa::aie_plio(128)]] tapa::ostream<float>& c, int n) {
+          [[tapa::pipeline]] for (int i = 0; i < n; ++i)
+            c.write(a.read() + 1);
+        }
+      )cpp"));
+  ASSERT_TRUE(run.ok) << (run.diags.empty() ? "" : run.diags.front());
+  const nlohmann::json add = nlohmann::json::parse(run.json)["tasks"]["Add"];
+  EXPECT_EQ(add["synth"], "aie");
+  EXPECT_EQ(add["ports"][0]["aie_frame"], 64);
+  EXPECT_EQ(add["ports"][1]["aie_plio"], 128);
+  EXPECT_EQ(add["aie_location"],
+            nlohmann::json::parse(R"([{"col": 10, "row": 0}])"));
+
+  // The full definition takes the frame type and the chess keyword; the
+  // stub every other variant sees keeps the portable signature.
+  const std::string& tu = run.files.at("leaf.cpp");
+  const size_t guard = tu.find("#ifdef TAPA_TASK_DEF_Add");
+  const size_t stub = tu.find("#else", guard);
+  ASSERT_NE(guard, std::string::npos);
+  const std::string full = tu.substr(guard, stub - guard);
+  const std::string other = tu.substr(stub, tu.find("#endif", stub) - stub);
+  EXPECT_NE(full.find("tapa::aie::frame_t<tapa::istream<float>, 64>& a"),
+            std::string::npos)
+      << full;
+  EXPECT_NE(full.find("chess_prepare_for_pipelining c.write"),
+            std::string::npos)
+      << full;
+  EXPECT_NE(other.find("tapa::istream<float>& a"), std::string::npos) << other;
+  EXPECT_EQ(tu.find("aie_frame"), std::string::npos) << "attribute lowered";
+  EXPECT_EQ(full.find("#pragma HLS"), std::string::npos)
+      << "no HLS interface pragmas in the AI Engine variant: " << full;
+}
+
+TEST(AieTest, MappingWinsOverTheAttributeAndNamesARealTask) {
+  const std::string add = R"cpp(
+    [[tapa::target("aie")]]
+    void Add(tapa::istream<float>& a, tapa::ostream<float>& c, int n) {
+      for (int i = 0; i < n; ++i) c.write(a.read());
+    }
+  )cpp";
+  const TreePipelineRun pl =
+      Analyze("map_hls", Design(add), {{"Add", SynthTarget::kXilinxHls}});
+  ASSERT_TRUE(pl.ok);
+  EXPECT_EQ(nlohmann::json::parse(pl.json)["tasks"]["Add"]["synth"], "hls");
+
+  const TreePipelineRun aie = Analyze(
+      "map_aie", Design(R"cpp(
+        void Add(tapa::istream<float>& a, tapa::ostream<float>& c, int n) {
+          for (int i = 0; i < n; ++i) c.write(a.read());
+        }
+      )cpp"),
+      {{"Add", SynthTarget::kAie}});
+  ASSERT_TRUE(aie.ok);
+  EXPECT_EQ(nlohmann::json::parse(aie.json)["tasks"]["Add"]["synth"], "aie");
+
+  const TreePipelineRun typo =
+      Analyze("map_typo", Design(add), {{"Ad", SynthTarget::kAie}});
+  EXPECT_FALSE(typo.ok);
+  EXPECT_TRUE(AnyDiagContains(typo, "--target maps 'Ad'"));
+}
+
+TEST(AieTest, AnUpperTaskPutsItsSubtreeOnTheAiEngine) {
+  const std::string leaves = R"cpp(
+    void Inc(tapa::istream<float>& a, tapa::ostream<float>& c, int n) {
+      for (int i = 0; i < n; ++i) c.write(a.read() + 1);
+    }
+  )cpp";
+  const std::string upper = R"cpp(
+    [[tapa::target("aie")]]
+    void Add(tapa::istream<float>& a, tapa::ostream<float>& c, int n) {
+      tapa::stream<float> mid;
+      tapa::task().invoke(Inc, a, mid, n).invoke(Inc, mid, c, n);
+    }
+  )cpp";
+  const TreePipelineRun run = Analyze("upper", Design(leaves + upper));
+  ASSERT_TRUE(run.ok) << (run.diags.empty() ? "" : run.diags.front());
+  const nlohmann::json tasks = nlohmann::json::parse(run.json)["tasks"];
+  EXPECT_EQ(tasks["Add"]["synth"], "aie");
+  EXPECT_EQ(tasks["Inc"]["synth"], "aie");
+  EXPECT_EQ(tasks["Load"]["synth"], "hls");
+
+  const TreePipelineRun conflict =
+      Analyze("upper_conflict",
+              Design("[[tapa::target(\"xilinx_hls\")]]" + leaves + upper));
+  EXPECT_FALSE(conflict.ok);
+  EXPECT_TRUE(AnyDiagContains(conflict, "marked for another target"));
+}
+
+TEST(AieTest, IneligibleConstructsAreRejectedAtTheirSite) {
+  const struct {
+    const char* name;
+    const char* add;
+    const char* message;
+  } cases[] = {
+      {"close", R"cpp(
+         [[tapa::target("aie")]]
+         void Add(tapa::istream<float>& a, tapa::ostream<float>& c, int n) {
+           for (int i = 0; i < n; ++i) c.write(a.read());
+           c.close();
+         })cpp",
+       "'close' in AI Engine task 'Add' has no AI Engine form"},
+      {"peek", R"cpp(
+         [[tapa::target("aie")]]
+         void Add(tapa::istream<float>& a, tapa::ostream<float>& c, int n) {
+           c.write(a.peek(nullptr));
+         })cpp",
+       "blocking and expose no occupancy"},
+      {"function_pipeline", R"cpp(
+         [[tapa::target("aie")]] [[tapa::pipeline]]
+         void Add(tapa::istream<float>& a, tapa::ostream<float>& c, int n) {
+           for (int i = 0; i < n; ++i) c.write(a.read());
+         })cpp",
+       "function-level [[tapa::pipeline]] has no AI Engine lowering"},
+      {"partition", R"cpp(
+         [[tapa::target("aie")]]
+         void Add(tapa::istream<float>& a, tapa::ostream<float>& c, int n) {
+           [[tapa::partition("complete")]] float bias[4] = {};
+           for (int i = 0; i < n; ++i) c.write(a.read() + bias[i % 4]);
+         })cpp",
+       "[[tapa::partition]] has no AI Engine lowering"},
+      {"narrow", R"cpp(
+         [[tapa::target("aie")]]
+         void Add(tapa::istream<float>& a, tapa::ostream<float>& c, int n,
+                  tapa::istream<short>& s) {
+           for (int i = 0; i < n; ++i) c.write(a.read());
+         })cpp",
+       "carries 16-bit elements"},
+      {"knob_on_pl", R"cpp(
+         void Add(tapa::istream<float>& a,
+                  [[tapa::aie_plio(64)]] tapa::ostream<float>& c, int n) {
+           for (int i = 0; i < n; ++i) c.write(a.read());
+         })cpp",
+       "[[tapa::aie_plio(W)]] needs W of 32, 64 or 128"},
+  };
+  for (const auto& c : cases) {
+    const TreePipelineRun run = Analyze(c.name, Design(c.add));
+    EXPECT_FALSE(run.ok) << c.name;
+    EXPECT_TRUE(AnyDiagContains(run, c.message)) << c.name;
+  }
+
+  const TreePipelineRun top = Analyze("top", R"cpp(
+    [[tapa::target("aie")]] void Top(tapa::istream<float>& a) {
+      a.read();
+    }
+  )cpp");
+  EXPECT_FALSE(top.ok);
+  EXPECT_TRUE(AnyDiagContains(top, "cannot be an AI Engine task"));
+}
+
+TEST(AieTest, MixedTemplateTargetsGetIndependentBackends) {
+  const TreePipelineRun run = Analyze("mixed_template", R"cpp(
+    template <typename T>
+    void Pass(tapa::istream<T>& in, tapa::ostream<T>& out) {
+      [[tapa::pipeline]] for (int i = 0; i < 1; ++i)
+        out.write(in.read());
+    }
+    [[tapa::target("aie")]]
+    void AieUpper(tapa::istream<float>& in, tapa::ostream<float>& out) {
+      tapa::task().invoke(Pass<float>, in, out);
+    }
+    void SrcF(tapa::ostream<float>& out) { out.write(0.f); }
+    void SinkF(tapa::istream<float>& in) { in.read(); }
+    void SrcI(tapa::ostream<int>& out) { out.write(0); }
+    void SinkI(tapa::istream<int>& in) { in.read(); }
+    void Top() {
+      tapa::stream<float> af, bf;
+      tapa::stream<int> ai, bi;
+      tapa::task()
+          .invoke(SrcF, af)
+          .invoke(AieUpper, af, bf)
+          .invoke(SinkF, bf)
+          .invoke(SrcI, ai)
+          .invoke(Pass<int>, ai, bi)
+          .invoke(SinkI, bi);
+    }
+  )cpp");
+  ASSERT_TRUE(run.ok) << (run.diags.empty() ? "" : run.diags.front());
+  const std::string& tu = run.files.at("mixed_template.cpp");
+  EXPECT_NE(tu.find("#elif "), std::string::npos) << tu;
+  EXPECT_NE(tu.find("TAPA_AIE_INLINE void Pass"), std::string::npos) << tu;
+  EXPECT_NE(tu.find("chess_prepare_for_pipelining"), std::string::npos) << tu;
+  EXPECT_NE(tu.find("_Pragma(\"HLS pipeline\")"), std::string::npos) << tu;
+}
+
+TEST(AieTest, HelpersGetTargetVariants) {
+  const TreePipelineRun run = Analyze(
+      "helper_pipeline", Design(R"cpp(
+        void Copy(tapa::istream<float>& in, tapa::ostream<float>& out, int n) {
+          [[tapa::pipeline]] for (int i = 0; i < n; ++i)
+            out.write(in.read());
+        }
+        [[tapa::target("aie")]]
+        void Add(tapa::istream<float>& in, tapa::ostream<float>& out, int n) {
+          Copy(in, out, n);
+        }
+      )cpp"));
+  ASSERT_TRUE(run.ok) << (run.diags.empty() ? "" : run.diags.front());
+  const std::string& tu = run.files.at("helper_pipeline.cpp");
+  EXPECT_NE(tu.find("#elif "), std::string::npos) << tu;
+  EXPECT_NE(tu.find("__attribute__((noinline))"), std::string::npos) << tu;
+  EXPECT_NE(tu.find("chess_prepare_for_pipelining"), std::string::npos) << tu;
+}
+
+TEST(AieTest, RecursiveUpperTasksAreRejectedInsteadOfLooping) {
+  const TreePipelineRun run = Analyze("recursive_upper", R"cpp(
+    void B();
+    [[tapa::target("aie")]] void A() { tapa::task().invoke(B); }
+    void B() { tapa::task().invoke(A); }
+    void Top() { tapa::task().invoke(A); }
+  )cpp");
+  EXPECT_FALSE(run.ok);
+  EXPECT_TRUE(AnyDiagContains(run, "task invocation cycle"));
+}
+
+TEST(AieTest, APlTaskMustNotCloseThroughHelpersAliasesOrUpperTasks) {
+  const std::string add = R"cpp(
+    [[tapa::target("aie")]]
+    void Add(tapa::istream<float>& a, tapa::ostream<float>& c, int n) {
+      for (int i = 0; i < n; ++i) c.write(a.read());
+    }
+  )cpp";
+  const struct {
+    const char* name;
+    const char* load;
+  } cases[] = {
+      {"helper_eot", R"cpp(
+         void Finish(tapa::ostream<float>& out) {
+           out.close();
+         }
+         void Load(tapa::mmap<const float> mem, int n, tapa::ostream<float>& out) {
+           for (int i = 0; i < n; ++i) out.write(mem[i]);
+           Finish(out);
+         })cpp"},
+      {"alias_eot", R"cpp(
+         void Load(tapa::mmap<const float> mem, int n,
+                   tapa::ostream<float>& out) {
+           for (int i = 0; i < n; ++i) out.write(mem[i]);
+           auto& alias = out;
+           alias.close();
+         })cpp"},
+      {"upper_eot", R"cpp(
+         void Leaf(tapa::ostream<float>& out) { out.close(); }
+         void Load(tapa::mmap<const float> mem, int n, tapa::ostream<float>& out) {
+           tapa::task().invoke(Leaf, out);
+         })cpp"},
+  };
+  for (const auto& c : cases) {
+    const TreePipelineRun run = Analyze(c.name, Design(add, c.load));
+    EXPECT_FALSE(run.ok) << c.name;
+    EXPECT_TRUE(AnyDiagContains(run, "closes its stream")) << c.name;
+  }
+}
+
+TEST(AieTest, ForwardDeclarationsCarryAieKnobsWithoutLeaking) {
+  const std::string code = Design(R"cpp(
+    [[tapa::aie_location(10, 0)]]
+    void Add([[tapa::aie_frame(64)]] tapa::istream<float>& a,
+             tapa::ostream<float>& c, int n);
+    [[tapa::target("aie")]]
+    void Add(tapa::istream<float>& a, tapa::ostream<float>& c, int n) {
+      for (int i = 0; i < n; ++i) c.write(a.read());
+    }
+  )cpp");
+  const TreePipelineRun aie = Analyze("decl_aie", code);
+  ASSERT_TRUE(aie.ok) << (aie.diags.empty() ? "" : aie.diags.front());
+  const nlohmann::json add = nlohmann::json::parse(aie.json)["tasks"]["Add"];
+  EXPECT_EQ(add["ports"][0]["aie_frame"], 64);
+  EXPECT_EQ(add["aie_location"],
+            nlohmann::json::parse(R"([{"col": 10, "row": 0}])"));
+  const std::string& tu = aie.files.at("decl_aie.cpp");
+  EXPECT_NE(tu.find("tapa::aie::frame_t<tapa::istream<float>, 64>& a"),
+            std::string::npos)
+      << tu;
+  EXPECT_EQ(tu.find("aie_frame"), std::string::npos) << tu;
+  EXPECT_EQ(tu.find("aie_location"), std::string::npos) << tu;
+
+  const TreePipelineRun pl =
+      Analyze("decl_hls", code, {{"Add", SynthTarget::kXilinxHls}});
+  ASSERT_TRUE(pl.ok) << (pl.diags.empty() ? "" : pl.diags.front());
+  const nlohmann::json pl_add = nlohmann::json::parse(pl.json)["tasks"]["Add"];
+  EXPECT_FALSE(pl_add["ports"][0].contains("aie_frame"));
+  EXPECT_FALSE(pl_add.contains("aie_location"));
+  EXPECT_EQ(pl.files.at("decl_hls.cpp").find("aie_frame"), std::string::npos);
+  EXPECT_EQ(pl.files.at("decl_hls.cpp").find("aie_location"),
+            std::string::npos);
+}
+
+TEST(AieTest, APlTaskMustNotCloseAStreamIntoTheAiEngine) {
+  const TreePipelineRun run = Analyze("eot", R"cpp(
+    void Load(tapa::mmap<const float> mem, int n, tapa::ostream<float>& out) {
+      for (int i = 0; i < n; ++i) out.write(mem[i]);
+      out.close();
+    }
+    [[tapa::target("aie")]]
+    void Add(tapa::istream<float>& a, tapa::ostream<float>& c, int n) {
+      for (int i = 0; i < n; ++i) c.write(a.read());
+    }
+    void Store(tapa::istream<float>& in, tapa::mmap<float> mem, int n) {
+      for (int i = 0; i < n; ++i) mem[i] = in.read();
+    }
+    void Top(tapa::mmap<const float> a, tapa::mmap<float> c, int n) {
+      tapa::stream<float> a_q;
+      tapa::stream<float> c_q;
+      tapa::task()
+          .invoke(Load, a, n, a_q)
+          .invoke(Add, a_q, c_q, n)
+          .invoke(Store, c_q, c, n);
+    }
+  )cpp");
+  EXPECT_FALSE(run.ok);
+  EXPECT_TRUE(AnyDiagContains(
+      run,
+      "task 'Load' closes its stream 'out', which feeds the AI Engine "
+      "task 'Add' through 'a_q' in 'Top'"));
+}
+
+}  // namespace
+}  // namespace tapa::cc

@@ -455,30 +455,30 @@ TEST(Rewrite, VitisDeclarationOnlyTuClosesExternCAtSemicolon) {
             R"tapa(extern "C" {
 
 
-#line 70 "/proj/src/adjacent.cpp"
+#line 71 "/proj/src/adjacent.cpp"
 void Top(uint64_t mem_offset);
-#line 70 "tapa:/proj/src/adjacent.cpp"
+#line 71 "tapa:/proj/src/adjacent.cpp"
 
 
 }  // extern "C"
 
 
-#line 71 "/proj/src/adjacent.cpp"
+#line 72 "/proj/src/adjacent.cpp"
 int Next();
 )tapa");
   EXPECT_EQ(suffix(run.files.at("blank.cpp")),
             R"tapa(extern "C" {
 
 
-#line 70 "/proj/src/blank.cpp"
+#line 71 "/proj/src/blank.cpp"
 void Top(uint64_t mem_offset);
-#line 70 "tapa:/proj/src/blank.cpp"
+#line 71 "tapa:/proj/src/blank.cpp"
 
 
 }  // extern "C"
 
 
-#line 71 "/proj/src/blank.cpp"
+#line 72 "/proj/src/blank.cpp"
 
 int Next();
 )tapa");

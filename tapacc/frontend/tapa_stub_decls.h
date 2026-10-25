@@ -16,6 +16,7 @@ inline constexpr char kTapaStubDecls[] = R"cpp(
   template <typename T>
   struct ostream {
     void write(const T&);
+    void close();
   };
   template <typename T, int Depth = 2>
   struct stream : istream<T>, ostream<T> {};

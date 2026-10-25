@@ -84,6 +84,8 @@ SynthTarget ResolveTarget(const clang::FunctionDecl* func,
       return SynthTarget::kXilinxVitis;
     case TT::Ignore:
       return SynthTarget::kIgnore;
+    case TT::Aie:
+      return SynthTarget::kAie;
     default:
       return default_target;
   }
