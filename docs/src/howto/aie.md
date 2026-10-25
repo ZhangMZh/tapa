@@ -62,13 +62,21 @@ earlier write. A ring that also builds for PL puts its writes and its reads in
 separate loops, writing no more at a time than its streams hold, as
 `tests/apps/cannon` does.
 
-Two habits decide AI Engine performance:
+These habits decide AI Engine performance:
 
 - Write the inner loop with `tapa::vec_t`. On the AI Engine a `vec_t<float, 4>`
   is one vector register, `a + b` is one vector add, and `acc += a * b` is one
   multiply-accumulate. Scalar loops stay scalar and run far slower.
 - Use a 32-bit loop counter and `[[tapa::pipeline]]` on the hot loop. A 64-bit
   counter keeps the loop from being software-pipelined.
+- Accumulate into a local `vec_t` variable, not an array element. The AI
+  Engine compiler keeps an array in memory, so each multiply-accumulate would
+  wait on a load and a store.
+- Move whole vectors rather than single lanes. Reading or writing one lane of
+  a `vec_t` costs several instructions and a branch, even in an unrolled
+  loop, and in the hot loop it costs more than the arithmetic it feeds.
+  `tests/apps/cannon` keeps the rows of B as vectors and sends them around its
+  ring whole.
 
 ## Knobs
 
