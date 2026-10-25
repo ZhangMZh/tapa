@@ -58,7 +58,7 @@ pub(super) fn resolve_device_info(args: &SynthArgs) -> Result<DeviceInfo> {
     })
 }
 
-fn resolve_platform_dir(platform: &str) -> Option<Utf8PathBuf> {
+pub fn resolve_platform_dir(platform: &str) -> Option<Utf8PathBuf> {
     let raw = Path::new(platform);
     let parent = raw.parent().map(Path::to_path_buf).unwrap_or_default();
     let basename = raw.file_name().map_or_else(

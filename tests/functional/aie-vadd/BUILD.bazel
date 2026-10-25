@@ -1,0 +1,48 @@
+"""Vector add with one task on the AI Engine."""
+
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+cc_binary(
+    name = "aie-vadd-host",
+    srcs = glob([
+        "*.cpp",
+        "*.h",
+    ]),
+    deps = [
+        "//tapa-lib:tapa-host",
+        "@gflags",
+    ],
+)
+
+# Software simulation: the AI Engine task runs as an ordinary task.
+sh_test(
+    name = "aie-vadd",
+    size = "small",
+    srcs = ["//bazel:sim_env.sh"],
+    args = ["$(rootpath :aie-vadd-host)"],
+    data = [":aie-vadd-host"],
+)
+
+# The AI Engine graph on x86sim, replaying the software-simulation streams.
+# Developer-run (needs Vitis with aiecompiler): not part of `bazel test //...`.
+sh_test(
+    name = "aie-vadd-x86sim",
+    size = "medium",
+    srcs = ["//bazel:v++_env.sh"],
+    args = [
+        "$(rootpath run_aiesim.sh)",
+        "$(rootpath //tapa-core:tapa)",
+        "$(rootpath :aie-vadd-host)",
+        "$(rootpath vadd.cpp)",
+        "--part-num=xcvc1902-vsva2197-2MP-e-S",
+    ],
+    data = [
+        "run_aiesim.sh",
+        "vadd.cpp",
+        "vadd.h",
+        ":aie-vadd-host",
+        "//tapa-core:tapa",
+    ],
+    tags = ["manual"],
+)

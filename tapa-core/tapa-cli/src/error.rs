@@ -56,6 +56,9 @@ pub enum CliError {
     #[error(transparent)]
     Xilinx(#[from] tapa_xilinx::XilinxError),
 
+    #[error(transparent)]
+    Aie(#[from] tapa_ir::AieError),
+
     #[error("`tapacc` resource `{name}` not found; searched: {searched}")]
     TapaccNotFound { name: String, searched: String },
 
@@ -95,6 +98,7 @@ impl CliError {
             | Self::Json(..)
             | Self::Schema(..)
             | Self::Xilinx(..)
+            | Self::Aie(..)
             | Self::Archive(..)
             | Self::Update(..)
             | Self::Codegen(..)

@@ -1,6 +1,7 @@
 //! `tapa` CLI library — exposes argument parsing, dispatch, and step
 //! handlers so integration tests can drive them without forking a binary.
 
+mod aie;
 pub mod chain;
 pub mod context;
 pub mod error;
