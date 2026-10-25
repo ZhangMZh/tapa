@@ -195,6 +195,7 @@ pub struct tapa_ir::aie::AieKernel
 pub tapa_ir::aie::AieKernel::call: alloc::string::String
 pub tapa_ir::aie::AieKernel::location: core::option::Option<(u32, u32)>
 pub tapa_ir::aie::AieKernel::name: alloc::string::String
+pub tapa_ir::aie::AieKernel::ordered: bool
 pub tapa_ir::aie::AieKernel::ports: alloc::vec::Vec<tapa_ir::aie::AieKernelPort>
 pub tapa_ir::aie::AieKernel::stack_bytes: core::option::Option<u32>
 pub tapa_ir::aie::AieKernel::task: alloc::string::String
@@ -3741,6 +3742,7 @@ pub struct tapa_ir::AieKernel
 pub tapa_ir::AieKernel::call: alloc::string::String
 pub tapa_ir::AieKernel::location: core::option::Option<(u32, u32)>
 pub tapa_ir::AieKernel::name: alloc::string::String
+pub tapa_ir::AieKernel::ordered: bool
 pub tapa_ir::AieKernel::ports: alloc::vec::Vec<tapa_ir::aie::AieKernelPort>
 pub tapa_ir::AieKernel::stack_bytes: core::option::Option<u32>
 pub tapa_ir::AieKernel::task: alloc::string::String

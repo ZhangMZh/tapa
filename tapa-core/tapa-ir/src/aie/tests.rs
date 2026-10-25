@@ -312,3 +312,53 @@ fn the_pl_projection_turns_plios_into_top_axis_ports() {
         "the top writes what the AI Engine reads, and reads what it writes"
     );
 }
+
+/// Only a kernel a stream cycle runs through keeps its stream accesses in
+/// program order; a pipeline stays free to overlap them.
+#[test]
+fn kernels_on_a_stream_cycle_are_ordered() {
+    let add = leaf(
+        &json!([stream("istream", "a", 32), stream("ostream", "c", 32)]),
+        "aie",
+    );
+    let chain = AiePartition::derive(&vadd(&add, 32))
+        .expect("derive")
+        .expect("aie");
+    assert!(!chain.kernels[0].ordered);
+
+    // `Add` writes `c_q` to the PL task `Echo`, which writes `b_q` back.
+    let through_pl = graph(json!({
+        "Top": {"level": "upper", "synth": "hls", "ports": [],
+            "tasks": {
+                "Load": [{"args": {"out": arg("a_q", "ostream")}}],
+                "Add": [{"args": {"a": arg("a_q", "istream"), "b": arg("b_q", "istream"),
+                                  "c": arg("c_q", "ostream")}}],
+                "Echo": [{"args": {"in": arg("c_q", "istream"), "out": arg("b_q", "ostream")}}]},
+            "fifos": {
+                "a_q": {"depth": 2, "produced_by": ["Load", 0], "consumed_by": ["Add", 0]},
+                "b_q": {"depth": 2, "produced_by": ["Echo", 0], "consumed_by": ["Add", 0]},
+                "c_q": {"depth": 2, "produced_by": ["Add", 0], "consumed_by": ["Echo", 0]}}},
+        "Load": leaf(&json!([stream("ostream", "out", 32)]), "hls"),
+        "Add": leaf(&json!([stream("istream", "a", 32), stream("istream", "b", 32),
+                            stream("ostream", "c", 32)]), "aie"),
+        "Echo": leaf(&json!([stream("istream", "in", 32), stream("ostream", "out", 32)]), "hls"),
+    }));
+    let partition = AiePartition::derive(&through_pl)
+        .expect("derive")
+        .expect("aie");
+    assert!(partition.kernels[0].ordered);
+
+    // Two kernels exchanging over nets, as cannon's PEs do.
+    let ring = graph(json!({
+        "Top": {"level": "upper", "synth": "hls", "ports": [],
+            "tasks": {"Pe": [
+                {"args": {"out": arg("x", "ostream"), "in": arg("y", "istream")}},
+                {"args": {"out": arg("y", "ostream"), "in": arg("x", "istream")}}]},
+            "fifos": {
+                "x": {"depth": 2, "produced_by": ["Pe", 0], "consumed_by": ["Pe", 1]},
+                "y": {"depth": 2, "produced_by": ["Pe", 1], "consumed_by": ["Pe", 0]}}},
+        "Pe": leaf(&json!([stream("ostream", "out", 32), stream("istream", "in", 32)]), "aie"),
+    }));
+    let partition = AiePartition::derive(&ring).expect("derive").expect("aie");
+    assert!(partition.kernels.iter().all(|kernel| kernel.ordered));
+}

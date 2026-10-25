@@ -58,6 +58,19 @@ struct elem_io<vec_t<E, N>> {
   }
 };
 
+// Keeps every later operation behind a stream write in a kernel a stream
+// cycle runs through (the graph defines `TAPA_AIE_ORDERED_STREAMS` for it).
+// The AI Engine compiler otherwise issues a read of another port ahead of an
+// earlier write, which such a cycle turns into a deadlock where software
+// simulation, running in program order, makes progress. Elsewhere the
+// overlap is safe and worth keeping: the fence makes each element of a
+// pipelined read-compute-write loop take about 60% longer.
+TAPA_AIE_INLINE void after_write() {
+#if defined(__AIENGINE__) && defined(TAPA_AIE_ORDERED_STREAMS)
+  chess_separator_scheduler();
+#endif
+}
+
 // 32-bit words one element occupies on an ADF port or in a frame buffer.
 template <typename T>
 inline constexpr int kWords = (::tapa::widthof<T>() + 31) / 32;
@@ -85,6 +98,7 @@ class ostream {
   TAPA_AIE_INLINE explicit ostream(output_stream<int32>* port) : port_(port) {}
   TAPA_AIE_INLINE void write(const T& value) {
     internal::aie::elem_io<T>::write(port_, value);
+    internal::aie::after_write();
   }
   TAPA_AIE_INLINE ostream& operator<<(const T& value) {
     write(value);

@@ -51,6 +51,13 @@ kernel owns the control interface.
 A PL task must not `close()` a stream that feeds an AI Engine task, because
 the end-of-transmission token would be read as data.
 
+An AI Engine task that a cycle of streams runs through, such as a ring of
+tasks or a round trip through a PL task, keeps every stream access behind its
+earlier writes, the order software simulation runs it in. The AI Engine
+compiler would otherwise issue a read ahead of an earlier write, which the
+cycle turns into a deadlock. The price is less overlap between the loop
+iterations of that task; tasks off any cycle keep it.
+
 Two habits decide AI Engine performance:
 
 - Write the inner loop with `tapa::vec_t`. On the AI Engine a `vec_t<float, 4>`

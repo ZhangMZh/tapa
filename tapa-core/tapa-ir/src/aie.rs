@@ -8,9 +8,10 @@
 //! Engine task is a PLIO. In this version AI Engine tasks are invoked by the
 //! top task, so every PLIO is a FIFO the top declares.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::instance::{ArgSource, WireValue};
+use crate::interconnect::EndpointRef;
 use crate::port::{sanitize_identifier_name, ArgCategory};
 use crate::synth_target::SynthTarget;
 use crate::task::{Task, TaskLevel};
@@ -49,6 +50,11 @@ pub struct AieKernel {
     /// The bytes of the task's local variables, which the kernel's stack
     /// must hold on top of its own needs.
     pub stack_bytes: Option<u32>,
+    /// A cycle of streams runs through the kernel, so its stream accesses
+    /// must keep program order: the AI Engine compiler may otherwise issue
+    /// a read ahead of an earlier write, which the cycle turns into a
+    /// deadlock.
+    pub ordered: bool,
 }
 
 /// One parameter of an AI Engine kernel.
@@ -176,6 +182,7 @@ impl AiePartition {
             }
         }
         builder.check_locations()?;
+        builder.partition.mark_cycles(graph, top);
         Ok(Some(builder.partition))
     }
 }
@@ -257,6 +264,74 @@ impl AiePartition {
         }
         Ok(pl)
     }
+}
+
+/// A node of the stream graph cycles are found on: a kernel, or an instance
+/// of a PL task the top invokes (a PL upper task counts as one node).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Node {
+    Kernel(usize),
+    Pl(String, u32),
+}
+
+impl AiePartition {
+    /// Sets [`AieKernel::ordered`] on every kernel a stream cycle runs
+    /// through, by way of other kernels or the top's PL instances.
+    fn mark_cycles(&mut self, graph: &TaskGraph, top: &Task) {
+        let pl = |end: Option<&EndpointRef>| {
+            end.filter(|end| {
+                graph
+                    .tasks
+                    .get(&end.0)
+                    .is_some_and(|t| t.synth != SynthTarget::Aie)
+            })
+            .map(|end| Node::Pl(end.0.clone(), end.1))
+        };
+        let mut ends = vec![(None, None); self.streams.len()];
+        for (index, kernel) in self.kernels.iter().enumerate() {
+            for port in &kernel.ports {
+                if let AiePortKind::Streams { input, streams, .. } = &port.kind {
+                    for &stream in streams {
+                        let (producer, consumer) = &mut ends[stream];
+                        *if *input { consumer } else { producer } = Some(Node::Kernel(index));
+                    }
+                }
+            }
+        }
+        let mut edges: BTreeMap<Node, BTreeSet<Node>> = BTreeMap::new();
+        for (stream, (producer, consumer)) in self.streams.iter().zip(ends) {
+            let fifo = top.fifos.get(&stream.fifo);
+            let producer = producer.or_else(|| pl(fifo.and_then(|f| f.produced_by.as_ref())));
+            let consumer = consumer.or_else(|| pl(fifo.and_then(|f| f.consumed_by.as_ref())));
+            if let (Some(from), Some(to)) = (producer, consumer) {
+                edges.entry(from).or_default().insert(to);
+            }
+        }
+        for fifo in top.fifos.values() {
+            if let (Some(from), Some(to)) =
+                (pl(fifo.produced_by.as_ref()), pl(fifo.consumed_by.as_ref()))
+            {
+                edges.entry(from).or_default().insert(to);
+            }
+        }
+        for (index, kernel) in self.kernels.iter_mut().enumerate() {
+            kernel.ordered = reaches_itself(&edges, &Node::Kernel(index));
+        }
+    }
+}
+
+fn reaches_itself(edges: &BTreeMap<Node, BTreeSet<Node>>, start: &Node) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut stack: Vec<&Node> = edges.get(start).into_iter().flatten().collect();
+    while let Some(node) = stack.pop() {
+        if node == start {
+            return true;
+        }
+        if seen.insert(node) {
+            stack.extend(edges.get(node).into_iter().flatten());
+        }
+    }
+    false
 }
 
 fn task<'g>(graph: &'g TaskGraph, name: &str) -> Result<&'g Task, AieError> {
@@ -503,6 +578,7 @@ impl Builder<'_> {
             ports,
             location,
             stack_bytes: def.aie_stack_bytes,
+            ordered: false,
         })
     }
 
