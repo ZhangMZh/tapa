@@ -24,7 +24,6 @@ RUN yum update -y && \
     echo "Installing system dependencies as of 20261021" && \
     yum install -y \
         gcc-c++ \
-        ocl-icd-devel \
         git \
         glibc-langpack-en \
         hostname \

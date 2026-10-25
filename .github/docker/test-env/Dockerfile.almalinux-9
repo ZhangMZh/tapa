@@ -34,16 +34,12 @@ ARG PARALLEL_SHA256=afe4b572a4334aac3a002a080ad618249f00b84d7659d03e77412727d18f
 RUN yum update -y && \
     # Update the following line to the latest date for retriggering the docker build
     echo "Installing system dependencies as of 20261021" && \
-    # ocl-icd-devel ships only in CRB, which is disabled by default on
-    # EL9 and on Rocky 10; enabling it explicitly is a no-op where it is
-    # already on.
-    yum install -y --enablerepo=crb \
+    yum install -y \
         autoconf \
         bison \
         bzip2 \
         flex \
         gcc-c++ \
-        ocl-icd-devel \
         git \
         glibc-langpack-en \
         gperf \
