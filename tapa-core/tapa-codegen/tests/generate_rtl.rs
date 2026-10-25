@@ -544,6 +544,91 @@ fn test_generate_rtl_vitis_top_streams_use_axis_adapters() {
     );
 }
 
+/// A top port the AI Engine PL projection adds has no HLS-made AXIS ports
+/// (the top's C++ never named it): codegen declares them, and a stream into
+/// the AI Engine asserts TLAST on every beat.
+#[test]
+fn test_generate_rtl_plio_ports_get_axis_ports_and_per_beat_tlast() {
+    let top = task("top", "upper", |t| {
+        t["ports"] = serde_json::json!([
+            {"cat": "ostream", "name": "a_q", "type": "float", "width": 32, "aie_plio": 32},
+            {"cat": "istream", "name": "c_q", "type": "float", "width": 32, "aie_plio": 32}
+        ]);
+        t["tasks"] = serde_json::json!({
+            "load": [{"args": {"out": {"arg": "a_q", "cat": "ostream"}}}],
+            "store": [{"args": {"in": {"arg": "c_q", "cat": "istream"}}}]
+        });
+        t["fifos"] = serde_json::json!({
+            "a_q": {"produced_by": ["load", 0]},
+            "c_q": {"consumed_by": ["store", 0]}
+        });
+    });
+    let load = task("load", "lower", |t| {
+        t["ports"] = serde_json::json!([
+            {"cat": "ostream", "name": "out", "type": "float", "width": 32}
+        ]);
+    });
+    let store = task("store", "lower", |t| {
+        t["ports"] = serde_json::json!([
+            {"cat": "istream", "name": "in", "type": "float", "width": 32}
+        ]);
+    });
+    let prog = design(
+        "top",
+        "xilinx-vitis",
+        &[("top", top), ("load", load), ("store", store)],
+    );
+    let manifest = run_manifest(
+        prog,
+        &[],
+        &[
+            (
+                "top",
+                "module top(\n\
+                 input wire ap_clk,\n\
+                 input wire ap_rst_n\n\
+                 );\n\
+                 endmodule",
+            ),
+            (
+                "load",
+                "module load(\n\
+                 input wire ap_clk,\n\
+                 input wire ap_rst_n,\n\
+                 output wire [32:0] out_s_din,\n\
+                 input wire out_s_full_n,\n\
+                 output wire out_s_write\n\
+                 );\nendmodule",
+            ),
+            (
+                "store",
+                "module store(\n\
+                 input wire ap_clk,\n\
+                 input wire ap_rst_n,\n\
+                 input wire [32:0] in_s_dout,\n\
+                 input wire in_s_empty_n,\n\
+                 output wire in_s_read\n\
+                 );\nendmodule",
+            ),
+        ],
+    );
+    let top_v = rtl_file(&manifest, "top.v");
+    check(
+        top_v,
+        &[
+            "output wire [31:0] a_q_TDATA",
+            "input wire a_q_TREADY",
+            "output wire a_q_TLAST",
+            "input wire [31:0] c_q_TDATA",
+            "output wire c_q_TREADY",
+            ".m_axis_tlast(a_q_eot_unused)",
+            "assign a_q_TLAST = 1'b1;",
+            ".s_axis_tlast(c_q_TLAST)",
+        ],
+        &[".m_axis_tlast(a_q_TLAST)"],
+    );
+}
+
 // ------------------------------------------------------------------
 // 4. Upper task with a FIFO between producer and consumer children
 // ------------------------------------------------------------------

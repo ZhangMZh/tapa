@@ -171,6 +171,33 @@ pub fn build_axis_adapter(fifo_name: &str, data_width: u32, is_input: bool) -> M
         .with_ports(ports)
 }
 
+/// The AXIS ports of a top-level stream wired to an AI Engine PLIO; the
+/// kernel reads the stream when `is_input`.
+fn add_plio_axis_ports(
+    mm: &mut tapa_rtl::mutation::MutableModule,
+    fifo_name: &str,
+    width: u32,
+    is_input: bool,
+) {
+    use tapa_rtl::mutation::{simple_port, wide_port};
+    use tapa_rtl::port::Direction::{Input, Output};
+    let base = sanitize_array_name(fifo_name);
+    let (data, ready) = if is_input {
+        (Input, Output)
+    } else {
+        (Output, Input)
+    };
+    let msb = (width - 1).to_string();
+    for port in [
+        wide_port(format!("{base}_TDATA"), data, &msb, "0"),
+        simple_port(format!("{base}_TVALID"), data),
+        simple_port(format!("{base}_TREADY"), ready),
+        simple_port(format!("{base}_TLAST"), data),
+    ] {
+        let _ = mm.add_port(port);
+    }
+}
+
 /// Instantiate FIFOs for a task.
 ///
 /// Internal FIFOs (with depth) get a `fifo` module instance.
@@ -367,11 +394,43 @@ pub fn connect_fifos(
                 }
             }
 
+            // A port of the PL projection wired to an AI Engine PLIO: the
+            // top's C++ signature never named it, so HLS made no AXIS ports.
+            let to_aie = task
+                .port(fifo_name)
+                .is_some_and(|port| port.aie_plio.is_some());
+            if is_vitis_top_axis && to_aie {
+                if let Some(mm) = modules.get_mut(task_name) {
+                    add_plio_axis_ports(mm, fifo_name, stream_width, has_consumer);
+                }
+            }
+
             // Check if this should be an AXIS adapter
             if is_vitis_top_axis {
                 // Instantiate AXIS adapter
                 let is_input = has_consumer;
-                let adapter = build_axis_adapter(fifo_name, stream_width, is_input);
+                let mut adapter = build_axis_adapter(fifo_name, stream_width, is_input);
+                if to_aie && !is_input {
+                    // A lone 32-bit word without TLAST waits in the AI
+                    // Engine interface's 32-to-64-bit upsizer for a second
+                    // one. AI Engine streams carry no end-of-transmission
+                    // token, so every beat into the AI Engine asserts TLAST
+                    // and the adapter's own TLAST goes unused.
+                    let base = tapa_rtl::module::sanitize_array_name(fifo_name);
+                    let unused = format!("{base}_eot_unused");
+                    for port in &mut adapter.ports {
+                        if port.port_name == "m_axis_tlast" {
+                            port.connection = Expr::ident(&unused);
+                        }
+                    }
+                    if let Some(mm) = modules.get_mut(task_name) {
+                        let _ = mm.add_signal(tapa_rtl::mutation::wire(&unused));
+                        mm.add_assign(ContinuousAssign::new(
+                            Expr::ident(format!("{base}_TLAST")),
+                            Expr::lit("1'b1"),
+                        ));
+                    }
+                }
                 if let Some(mm) = modules.get_mut(task_name) {
                     mm.add_instance(adapter);
                     if !is_input {
