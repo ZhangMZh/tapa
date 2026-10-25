@@ -130,7 +130,8 @@ spelling (see the [API reference](api.md)).
 ## tapa synth
 
 Run Vitis HLS using the task graph produced by `tapa analyze` and generate
-the design's RTL. This stage can run on a remote host via `--remote-host`.
+the design's RTL, or rebuild only its AI Engine graph with `--aie-only`.
+This stage can run on a remote host via `--remote-host`.
 
 ### Required flags
 
@@ -145,12 +146,28 @@ the design's RTL. This stage can run on a remote host via `--remote-host`.
 |------|-------------|
 | `--clock-period NS` | Target clock period in nanoseconds. Derived from `--platform` if not set explicitly. |
 | `--skip-aie` | Build only the PL half of a design with AI Engine tasks, without compiling the AI Engine graph; the `.xo` then serves hybrid cosimulation. |
+| `--aie-only` | Build only the hardware AI Engine graph. Requires an AI Engine partition and conflicts with `--skip-aie`; does not run HLS, RTL codegen, post-synthesis utilization, or PL timing reporting. |
 | `-j N` / `--jobs N` | Number of parallel HLS and post-synthesis jobs (default: the host's available parallelism). |
 | `--enable-synth-util` | Run out-of-context Vivado synthesis per task for accurate area numbers instead of the coarser HLS estimates. Costs one extra Vivado run per task. |
 | `--keep-hls-work-dir` | Keep each task's Vitis HLS project under `hls/<task>/project` instead of discarding it. Useful for post-mortem debugging of an HLS failure. |
 | `--skip-hls-based-on-mtime` | Reuse existing Verilog when the kernel sources and headers are unchanged. Useful for iterating on other parts of a design. |
 | `--require-hls-cache` | With `--skip-hls-based-on-mtime`, fail on a cache miss or unusable cached csynth report instead of running HLS or substituting defaults. |
 | `--other-hls-configs TCL` | Extra Tcl appended verbatim to every generated HLS script. |
+
+An AIE-only build preserves synthesized PL artifacts and floorplan state only
+when the resolved part number, platform, and requested clock period all match
+the previous PL synthesis. Changing any of them clears `flow.synthed` and the
+floorplan, requiring a full synth before packing; running `analyze` also leaves
+the state unsynthesized, and AIE-only never promotes it. The graph's existing
+PL metrics remain stored in `tapa.json`.
+
+With valid synthesized PL state and existing root reports, AIE-only rewrites
+those reports from the preserved PL metrics and the new AIE mapping. This drops
+`aie.aiesim`, so rerun `tapa aiesim --cycle-accurate` for timing of the new
+graph. It does not create or refresh root reports without valid synthesized PL
+state, nor create them when none exist; the AIE compiler output and console
+remain available. Reports invalidated by `analyze` or changed PL inputs stay
+stale and are not treated as current.
 
 ### Example
 

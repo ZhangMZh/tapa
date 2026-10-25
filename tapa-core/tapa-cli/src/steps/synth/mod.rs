@@ -111,6 +111,15 @@ pub struct SynthArgs {
     #[arg(long = "skip-aie", default_value_t = false)]
     pub skip_aie: bool,
 
+    /// Build only the AI Engine graph, reusing PL synthesis results only
+    /// when their device, platform, and requested clock are unchanged.
+    #[arg(
+        long = "aie-only",
+        default_value_t = false,
+        conflicts_with = "skip_aie"
+    )]
+    pub aie_only: bool,
+
     /// Stamp `report.json` / `report.yaml` with this schema version
     /// instead of the built-in one. For report-consumer testing.
     #[arg(long = "override-report-schema-version", default_value = "")]
@@ -119,7 +128,7 @@ pub struct SynthArgs {
 
 /// Top-level dispatcher.
 ///
-/// The HLS + codegen pipeline is the only path. When
+/// AIE-only returns before the HLS + codegen pipeline. When
 /// `ctx.remote_config` is populated (via `~/.taparc` or
 /// `--remote-host`), HLS dispatches through `RemoteToolRunner`;
 /// otherwise `LocalToolRunner`.

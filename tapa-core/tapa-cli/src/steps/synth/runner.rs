@@ -1,7 +1,8 @@
 //! `run_native` orchestrator for `tapa synth`.
 //!
-//! Threads device resolution → state persistence → manifest staging →
-//! HLS runs → RTL codegen → final state persistence. Also
+//! The AIE-only branch returns after its graph build and optional report
+//! refresh. Otherwise this threads device resolution → state persistence →
+//! manifest staging → HLS runs → RTL codegen → final state persistence. Also
 //! owns the unsupported-flag gating, the HLS cflag construction, and
 //! the recursive Verilog-file walker that feeds the codegen step.
 
@@ -34,6 +35,12 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
     // HLS for every supported flow.
     let mut state = work_io::load(&ctx.work_dir)?;
     let partition = tapa_ir::AiePartition::derive(&state.graph)?;
+    if args.aie_only && partition.is_none() {
+        return Err(CliError::InvalidArg(
+            "`--aie-only` requires an AI Engine partition, but the design has no AI Engine task"
+                .to_string(),
+        ));
+    }
     if partition.is_some() && state.graph.target != tapa_ir::Target::XilinxVitis {
         return Err(CliError::InvalidArg(
             "AI Engine tasks are linked by `v++`; analyze with `--target xilinx-vitis`".to_string(),
@@ -44,12 +51,23 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
     }
 
     let device = resolve_device_info(args)?;
-    state.flow.part_num = Some(device.part_num.clone());
-    state.flow.platform.clone_from(&args.platform);
     // The vendor tools speak nanoseconds in text; this is the one place
     // that reading becomes our own typed quantity.
     let clock_period = ClockPeriod::from_nanoseconds_str(&device.clock_period)
         .map_err(|error| CliError::InvalidArg(format!("invalid synthesis target: {error}")))?;
+    if args.aie_only {
+        return run_aie_only(
+            args,
+            ctx,
+            runner,
+            state,
+            partition.as_ref().expect("checked above"),
+            &device.part_num,
+            clock_period,
+        );
+    }
+    state.flow.part_num = Some(device.part_num.clone());
+    state.flow.platform.clone_from(&args.platform);
     state.flow.clock_period = Some(clock_period);
     // A synthesis rerun may change RTL, area, device, or timing inputs. Make
     // every result derived from the previous RTL inactive before the long HLS
@@ -156,6 +174,54 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
 
     report_timing_summary(clock_period, &pl_graph);
 
+    Ok(())
+}
+
+/// Rebuild only the AI Engine graph. PL results remain reusable only while
+/// all inputs that produced them are unchanged; this path never creates PL
+/// results or promotes an analyzed/failed state to synthesized.
+fn run_aie_only(
+    args: &SynthArgs,
+    ctx: &CliContext,
+    runner: &dyn ToolRunner,
+    mut state: WorkState,
+    partition: &tapa_ir::AiePartition,
+    part_num: &str,
+    clock_period: ClockPeriod,
+) -> Result<()> {
+    let pl_inputs_unchanged = state.flow.part_num.as_deref() == Some(part_num)
+        && state.flow.platform == args.platform
+        && state.flow.clock_period == Some(clock_period);
+    if !pl_inputs_unchanged {
+        state.flow.synthed = false;
+        state.floorplan = None;
+    }
+    state.flow.part_num = Some(part_num.to_string());
+    state.flow.platform.clone_from(&args.platform);
+    state.flow.clock_period = Some(clock_period);
+    // Persist invalidation before the build, but keep the previous skip
+    // policy until a replacement AI Engine graph has actually been built.
+    work_io::store(&ctx.work_dir, &state)?;
+
+    let aie_report = build_aie(args, ctx, runner, &state, partition, clock_period)?;
+    state.flow.skip_aie = false;
+    work_io::store(&ctx.work_dir, &state)?;
+
+    let report_exists =
+        ctx.work_dir.join("report.json").exists() || ctx.work_dir.join("report.yaml").exists();
+    if state.flow.synthed && report_exists {
+        let pl_graph = crate::aie::pl_graph(&state.graph)?;
+        write_top_report(
+            &ctx.work_dir,
+            &pl_graph,
+            &args.override_report_schema_version,
+            Some((&aie_report, partition)),
+        )?;
+        log::info!(
+            "refreshed the root report with the new AI Engine mapping; rerun \
+             `tapa aiesim --cycle-accurate` to measure its timing"
+        );
+    }
     Ok(())
 }
 
@@ -302,8 +368,11 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use tapa_ir::{Area, FloorplanResult, SynthTarget, Target, TaskGraph, TaskLevel};
-    use tapa_xilinx::{ToolInvocation, ToolOutput};
+    use tapa_ir::{
+        Area, ArgCategory, FloorplanResult, Port, SynthTarget, Target, TaskGraph, TaskLevel,
+    };
+    use tapa_xilinx::tools::aie::report::{AieKernelReport, AieReport, AieTile};
+    use tapa_xilinx::{MockToolRunner, ToolInvocation, ToolOutput};
 
     use crate::globals::GlobalArgs;
     use crate::state::work::WorkState;
@@ -322,6 +391,323 @@ mod tests {
         ])
         .expect("parse globals");
         CliContext::from_globals(&globals)
+    }
+
+    const AIE_PART: &str = "xcvc1902-vsva2197-2MP-e-S";
+
+    fn task(name: &str, level: TaskLevel, synth: SynthTarget) -> Task {
+        Task {
+            level,
+            srcs: vec![format!("{name}.cpp")],
+            include_dirs: Vec::new(),
+            defines: Vec::new(),
+            ports: Vec::new(),
+            tasks: BTreeMap::new(),
+            fifos: BTreeMap::new(),
+            readable_name: name.to_string(),
+            aie_location: Vec::new(),
+            aie_stack_bytes: None,
+            synth,
+            self_area: None,
+            total_area: None,
+            clock_period: None,
+        }
+    }
+
+    /// Smallest valid hybrid graph: one AIE leaf and a scalar PL control
+    /// argument. It needs no FIFO fixture to exercise the AIE-only boundary.
+    fn aie_work_state() -> WorkState {
+        let mut top = task("Top", TaskLevel::Upper, SynthTarget::Hls);
+        top.ports.push(Port {
+            cat: ArgCategory::Scalar,
+            name: "n".to_string(),
+            ctype: "int".to_string(),
+            width: 32,
+            chan_count: None,
+            chan_size: None,
+            aie_frame: None,
+            aie_plio: None,
+            stream_depth: None,
+            mmap_addr_width: None,
+        });
+        top.tasks.insert(
+            "Add".to_string(),
+            vec![tapa_ir::TaskInstance {
+                name: None,
+                args: BTreeMap::new(),
+                step: 0,
+            }],
+        );
+        WorkState::new(TaskGraph {
+            schema_version: tapa_ir::graph::SCHEMA_VERSION,
+            top: "Top".to_string(),
+            target: Target::XilinxVitis,
+            tasks: BTreeMap::from([
+                (
+                    "Add".to_string(),
+                    task("Add", TaskLevel::Lower, SynthTarget::Aie),
+                ),
+                ("Top".to_string(), top),
+            ]),
+            cflags: Vec::new(),
+        })
+    }
+
+    fn prepare_aie_work(work: &Path, state: &WorkState) {
+        work_io::store(work, state).expect("store state");
+        let rewritten = work.join(crate::tapacc::REWRITTEN_DIR);
+        fs_err::create_dir_all(&rewritten).expect("mkdir rewritten");
+        fs_err::write(rewritten.join("Add.cpp"), "void Add() {}\n").expect("write AIE source");
+    }
+
+    fn aie_only_args(part: &str, clock: &str) -> SynthArgs {
+        parse_synth(&["--aie-only", "--part-num", part, "--clock-period", clock])
+    }
+
+    fn mock_aie_compile(work: &Path, program_bytes: u64) -> MockToolRunner {
+        let runner = MockToolRunner::new();
+        runner.push_ok(
+            "aiecompiler",
+            ToolOutput {
+                exit_code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+        );
+        let reports = work.join("aie/hw/Work/reports");
+        runner.attach_download(
+            crate::util::utf8(reports.join("compiler_report.json")),
+            br#"{
+              "blockTypes": {
+                "kernel": {"type": "function", "function": "tapa_aie_Add_0"}
+              },
+              "blockInstances": {
+                "k": {"blockType": "kernel", "fabric": "me"}
+              },
+              "mapping": {"blockInstanceMapping": {
+                "k": {"coreInfo": {"column": 1, "row": 0}}
+              }}
+            }"#
+            .to_vec(),
+        );
+        runner.attach_download(
+            crate::util::utf8(reports.join("report_pm.txt")),
+            format!("Note: All sizes are in bytes\nCore 1_0\nPM Size Used = {program_bytes}\n")
+                .into_bytes(),
+        );
+        runner
+    }
+
+    fn floorplan_fixture() -> FloorplanResult {
+        FloorplanResult {
+            device: "vck190".to_string(),
+            grid: (1, 1),
+            regions: BTreeMap::new(),
+            routes: Vec::new(),
+            slot_usage: BTreeMap::new(),
+        }
+    }
+
+    fn synthesized_aie_state() -> WorkState {
+        let mut state = aie_work_state();
+        state.flow.part_num = Some(AIE_PART.to_string());
+        state.flow.clock_period = Some(ClockPeriod::from_picoseconds(3330));
+        state.flow.synthed = true;
+        state.floorplan = Some(floorplan_fixture());
+        let top = state.graph.tasks.get_mut("Top").expect("top");
+        top.clock_period = Some(ClockPeriod::from_picoseconds(2000));
+        top.self_area = Some(Area {
+            lut: 7,
+            ..Area::default()
+        });
+        state
+    }
+
+    fn write_current_report(work: &Path, state: &WorkState, program_bytes: u64) {
+        let partition = tapa_ir::AiePartition::derive(&state.graph)
+            .expect("derive partition")
+            .expect("AIE partition");
+        let pl_graph = crate::aie::pl_graph(&state.graph).expect("PL graph");
+        let aie = AieReport {
+            tiles_used: 1,
+            plio_map: BTreeMap::new(),
+            per_kernel: BTreeMap::from([(
+                "tapa_aie_Add_0".to_string(),
+                AieKernelReport {
+                    tile: AieTile { column: 1, row: 0 },
+                    program_bytes,
+                    data_bytes: None,
+                },
+            )]),
+        };
+        write_top_report(work, &pl_graph, "", Some((&aie, &partition))).expect("write report");
+    }
+
+    #[test]
+    fn aie_only_conflicts_with_skip_aie() {
+        let error = SynthArgs::try_parse_from(["synth", "--aie-only", "--skip-aie"])
+            .expect_err("conflicting one-sided builds");
+        assert!(error.to_string().contains("--skip-aie"), "{error}");
+    }
+
+    #[test]
+    fn aie_only_rejects_a_design_without_an_aie_partition() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = aie_work_state();
+        state.graph.tasks.get_mut("Add").expect("Add").synth = SynthTarget::Hls;
+        work_io::store(dir.path(), &state).expect("store state");
+        let runner = MockToolRunner::new();
+
+        let error = run_native(
+            &aie_only_args(AIE_PART, "3.33"),
+            &ctx_with_work_dir(dir.path()),
+            &runner,
+        )
+        .expect_err("no AIE partition");
+
+        assert!(error.to_string().contains("no AI Engine task"), "{error}");
+        assert!(runner.calls().is_empty(), "no tool may run");
+    }
+
+    #[test]
+    fn aie_only_runs_no_pl_stage_or_fabricates_a_report() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let work = dir.path();
+        let state = aie_work_state();
+        prepare_aie_work(work, &state);
+        let runner = mock_aie_compile(work, 4096);
+        let mut args = aie_only_args(AIE_PART, "3.33");
+        args.enable_synth_util = true;
+
+        run_native(&args, &ctx_with_work_dir(work), &runner).expect("AIE-only synth");
+
+        assert_eq!(
+            runner
+                .calls()
+                .iter()
+                .map(|call| call.program.as_str())
+                .collect::<Vec<_>>(),
+            ["aiecompiler"]
+        );
+        for artifact in [
+            "hls",
+            "rtl",
+            "templates_info.json",
+            "report.json",
+            "report.yaml",
+        ] {
+            assert!(!work.join(artifact).exists(), "unexpected {artifact}");
+        }
+        let persisted = work_io::load(work).expect("load state");
+        assert!(!persisted.flow.synthed, "analyze state is never promoted");
+        assert!(!persisted.flow.skip_aie);
+        assert_eq!(persisted.flow.part_num.as_deref(), Some(AIE_PART));
+        assert_eq!(persisted.graph, state.graph, "PL metrics are untouched");
+    }
+
+    #[test]
+    fn aie_only_reuses_matching_pl_results_and_refreshes_current_reports() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let work = dir.path();
+        let mut state = synthesized_aie_state();
+        state.flow.skip_aie = true;
+        prepare_aie_work(work, &state);
+        write_current_report(work, &state, 1);
+        super::super::report::fold_aiesim_timing(
+            work,
+            &super::super::report::AiesimSection::default(),
+        )
+        .expect("add stale aiesim timing");
+        let runner = mock_aie_compile(work, 4096);
+
+        run_native(
+            &aie_only_args(AIE_PART, "3.33"),
+            &ctx_with_work_dir(work),
+            &runner,
+        )
+        .expect("AIE-only synth");
+
+        let persisted = work_io::load(work).expect("load state");
+        assert!(persisted.flow.synthed);
+        assert!(!persisted.flow.skip_aie, "pack expects the new AIE sidecar");
+        assert_eq!(persisted.floorplan, state.floorplan);
+        assert_eq!(
+            persisted.graph, state.graph,
+            "typed PL metrics are preserved"
+        );
+        let report: serde_json::Value = serde_json::from_str(
+            &fs_err::read_to_string(work.join("report.json")).expect("read report"),
+        )
+        .expect("parse report");
+        assert_eq!(
+            report["aie"]["per_kernel"]["tapa_aie_Add_0"]["program_bytes"],
+            4096
+        );
+        assert!(
+            report["aie"].get("aiesim").is_none(),
+            "old timing is invalidated"
+        );
+        assert_eq!(report["performance"]["clock_period"], "2");
+        assert_eq!(report["area"]["total"]["LUT"], 7);
+    }
+
+    #[test]
+    fn aie_only_changed_part_or_clock_invalidates_pl_results() {
+        for (part, clock) in [("xcvc1902-changed", "3.33"), (AIE_PART, "4.0")] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let work = dir.path();
+            let state = synthesized_aie_state();
+            prepare_aie_work(work, &state);
+            write_current_report(work, &state, 1);
+            let runner = mock_aie_compile(work, 4096);
+
+            run_native(
+                &aie_only_args(part, clock),
+                &ctx_with_work_dir(work),
+                &runner,
+            )
+            .expect("AIE-only synth");
+
+            let persisted = work_io::load(work).expect("load state");
+            assert!(!persisted.flow.synthed, "changed inputs: {part} at {clock}");
+            assert!(persisted.floorplan.is_none());
+            assert_eq!(
+                persisted.graph, state.graph,
+                "PL metrics remain typed state"
+            );
+            let report: serde_json::Value = serde_json::from_str(
+                &fs_err::read_to_string(work.join("report.json")).expect("read stale report"),
+            )
+            .expect("parse stale report");
+            assert_eq!(
+                report["aie"]["per_kernel"]["tapa_aie_Add_0"]["program_bytes"], 1,
+                "invalidated reports are not refreshed as current"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_aie_only_build_keeps_the_previous_skip_policy() {
+        for skip_aie in [false, true] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let work = dir.path();
+            let mut state = synthesized_aie_state();
+            state.flow.skip_aie = skip_aie;
+            prepare_aie_work(work, &state);
+            let runner = MockToolRunner::new();
+            runner.push_failure("aiecompiler", 1, "synthetic failure");
+
+            run_native(
+                &aie_only_args(AIE_PART, "3.33"),
+                &ctx_with_work_dir(work),
+                &runner,
+            )
+            .expect_err("compiler failure");
+
+            let persisted = work_io::load(work).expect("load state");
+            assert_eq!(persisted.flow.skip_aie, skip_aie);
+            assert!(persisted.flow.synthed, "unchanged PL results stay valid");
+        }
     }
 
     /// `ToolRunner` stub that pre-stages a well-formed

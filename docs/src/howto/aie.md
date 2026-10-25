@@ -208,6 +208,40 @@ tapa --work-dir work.out compile -f vadd.cpp -t VecAdd \
 - The `-s` script links the three into an `.xsa` and packages that into the
   `.xclbin`.
 
+### Iterating on the AI Engine only
+
+After `tapa analyze`, rebuild just the hardware graph with the usual device and
+clock arguments:
+
+```bash
+tapa --work-dir work.out synth --aie-only \
+  --platform xilinx_vck190_base_202520_1
+```
+
+`--aie-only` is the counterpart of `--skip-aie`, and the two flags cannot be
+combined. It requires an AI Engine partition and does not stage or run HLS,
+generate RTL, run post-synthesis utilization, or print a PL timing summary. A
+successful build replaces `work.out/aie/hw/libadf.a` and makes a later pack
+expect its sidecar; a failed build does not turn a full build into an
+intentional PL-only package.
+
+Existing PL results and floorplan state remain reusable only if the resolved
+part number, platform, and requested clock period are identical to those of
+the previous PL synthesis. Repeating AIE-only with those unchanged inputs
+preserves `flow.synthed=true` and the floorplan. Changing any input clears both
+the synthesized flag and floorplan, so run a full `tapa synth` before packing.
+A work directory invalidated by `tapa analyze` is never promoted to synthesized
+by AIE-only. In every case the typed PL metrics already in `tapa.json` are
+preserved rather than replaced with zero or missing measurements.
+
+If valid synthesized PL state and current `report.json` / `report.yaml` files
+exist, AIE-only refreshes them from those preserved metrics and the new hardware
+mapping. The rewrite removes `aie.aiesim`: run `tapa aiesim --cycle-accurate`
+again to measure the new graph. Without valid synthesized PL state, AIE-only
+does not invent a PL report or refresh stale reports; it also does not create
+root reports when none exist. The compiler output and console remain available
+until a later full PL synth writes the root report.
+
 A stream into the AI Engine asserts TLAST on every beat. The AI Engine
 interface would otherwise hold a lone 32-bit word until a second one arrives.
 

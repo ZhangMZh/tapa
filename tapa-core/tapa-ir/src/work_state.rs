@@ -135,7 +135,8 @@ pub struct FlowSettings {
     /// keep their full-build meaning.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub skip_aie: bool,
-    /// Set once `synth` has completed for this work dir.
+    /// Set once `synth` has completed the PL half for this work dir.
+    /// AIE-only synthesis preserves this only while the PL inputs remain valid.
     #[serde(default)]
     pub synthed: bool,
 }
