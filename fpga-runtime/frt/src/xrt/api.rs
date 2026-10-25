@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use crate::error::{FrtError, Result};
 
-/// An opaque XRT handle (device, kernel, run or buffer).
+/// An opaque XRT handle (device, kernel, run, buffer or graph).
 pub type Handle = *mut c_void;
 
 /// `xclBOSyncDirection`.
@@ -48,6 +48,16 @@ pub struct Api {
     pub run_start: unsafe extern "C" fn(Handle) -> c_int,
     pub run_state: unsafe extern "C" fn(Handle) -> c_int,
     pub run_wait: unsafe extern "C" fn(Handle) -> c_int,
+    pub graph_open: unsafe extern "C" fn(Handle, *const u8, *const c_char) -> Handle,
+    pub graph_close: unsafe extern "C" fn(Handle),
+    pub graph_reset: unsafe extern "C" fn(Handle) -> c_int,
+    /// Iterations: `-1` runs forever.
+    pub graph_run: unsafe extern "C" fn(Handle, c_int) -> c_int,
+    /// Waits `cycles` AI Engine cycles since the run started, then stops
+    /// the graph; `0` waits for it to finish.
+    pub graph_wait: unsafe extern "C" fn(Handle, u64) -> c_int,
+    pub graph_update_rtp:
+        unsafe extern "C" fn(Handle, *const c_char, *const c_char, usize) -> c_int,
 }
 
 // SAFETY: plain function pointers into a library loaded for the process's
@@ -112,7 +122,7 @@ fn open_library() -> std::result::Result<*mut c_void, String> {
 fn load() -> std::result::Result<Api, String> {
     let lib = open_library()?;
     // Each field's type is the C signature of the XRT symbol of that name
-    // (xrt_device.h, xrt_kernel.h, xrt_bo.h).
+    // (xrt_device.h, xrt_kernel.h, xrt_bo.h, xrt_graph.h).
     macro_rules! sym {
         ($name:literal) => {
             // SAFETY: the field this initializes is typed as `$name`'s C
@@ -141,6 +151,12 @@ fn load() -> std::result::Result<Api, String> {
         run_start: sym!("xrtRunStart"),
         run_state: sym!("xrtRunState"),
         run_wait: sym!("xrtRunWait"),
+        graph_open: sym!("xrtGraphOpen"),
+        graph_close: sym!("xrtGraphClose"),
+        graph_reset: sym!("xrtGraphReset"),
+        graph_run: sym!("xrtGraphRun"),
+        graph_wait: sym!("xrtGraphWait"),
+        graph_update_rtp: sym!("xrtGraphUpdateRTP"),
     })
 }
 

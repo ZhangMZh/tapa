@@ -1,7 +1,8 @@
 //! xclbin-binary concerns.
 //!
-//! Finding the metadata XML inside the container, and reading the platform
-//! VBNV out of its header. The XML itself is parsed by
+//! Finding the metadata XML inside the container, reading the platform
+//! VBNV out of its header, and the AI Engine graph its `AIE_METADATA`
+//! section describes. The XML itself is parsed by
 //! [`frt_cosim::metadata::kernel_xml`], shared with the cosim runtime.
 
 use crate::error::{FrtError, Result};
@@ -85,6 +86,108 @@ pub fn extract_platform_vbnv(xclbin: &[u8]) -> Option<String> {
     Some(s)
 }
 
+/// The payload of the first section of `kind` in an xclbin's table of
+/// contents: `m_numSections` sits at byte 448 of the `axlf` header and the
+/// 40-byte `axlf_section_header`s follow it at byte 456.
+fn xclbin_section(xclbin: &[u8], kind: u32) -> Option<&[u8]> {
+    const COUNT_OFFSET: usize = 448;
+    const SECTIONS_OFFSET: usize = 456;
+    const SECTION_HEADER: usize = 40;
+    let read_u32 = |at: usize| Some(u32::from_le_bytes(xclbin.get(at..at + 4)?.try_into().ok()?));
+    let read_u64 = |at: usize| Some(u64::from_le_bytes(xclbin.get(at..at + 8)?.try_into().ok()?));
+    let count = usize::try_from(read_u32(COUNT_OFFSET)?).ok()?;
+    (0..count).find_map(|i| {
+        let header = SECTIONS_OFFSET + i * SECTION_HEADER;
+        if read_u32(header)? != kind {
+            return None;
+        }
+        let offset = usize::try_from(read_u64(header + 24)?).ok()?;
+        let size = usize::try_from(read_u64(header + 32)?).ok()?;
+        xclbin.get(offset..offset.checked_add(size)?)
+    })
+}
+
+/// `AIE_METADATA`: the AI Engine control configuration `aiecompiler` wrote.
+const AIE_METADATA: u32 = 25;
+
+/// The AI Engine graph `tapa synth` generated, as the xclbin records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AieGraph {
+    /// `tapa_aie`, or `tapa_aie_forever` when some kernel never returns.
+    pub name: String,
+    pub run_forever: bool,
+    pub rtps: Vec<AieRtp>,
+}
+
+/// A runtime parameter carrying one scalar argument of the PL kernel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AieRtp {
+    /// The hierarchical name XRT updates it by, `<graph>.rtp_<arg>_...`.
+    pub alias: String,
+    /// The PL kernel argument whose value it carries.
+    pub arg: u32,
+    pub bytes: usize,
+}
+
+/// The TAPA graph in the xclbin's `AIE_METADATA`, if it has one.
+pub fn parse_aie_graph(xclbin: &[u8]) -> Result<Option<AieGraph>> {
+    let Some(section) = xclbin_section(xclbin, AIE_METADATA) else {
+        return Ok(None);
+    };
+    let text = section.split(|b| *b == 0).next().unwrap_or_default();
+    let json: serde_json::Value = serde_json::from_slice(text)
+        .map_err(|e| FrtError::MetadataParse(format!("AIE_METADATA is not JSON: {e}")))?;
+    let meta = &json["aie_metadata"];
+    let Some(name) = meta["graphs"]
+        .as_object()
+        .into_iter()
+        .flat_map(serde_json::Map::values)
+        .filter_map(|graph| graph["name"].as_str())
+        .find(|name| *name == "tapa_aie" || *name == "tapa_aie_forever")
+    else {
+        return Ok(None);
+    };
+    let prefix = format!("{name}.rtp_");
+    let mut rtps = Vec::new();
+    for rtp in meta["RTPs"]
+        .as_object()
+        .into_iter()
+        .flat_map(serde_json::Map::values)
+    {
+        let Some(alias) = rtp["alias_name"].as_str() else {
+            continue;
+        };
+        let Some(rest) = alias.strip_prefix(&prefix) else {
+            continue;
+        };
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        let arg = digits.parse::<u32>().ok();
+        // xclbinutil stores every value as a string; aiecompiler's own file
+        // has numbers.
+        let size = &rtp["number_of_bytes"];
+        let bytes = size
+            .as_str()
+            .and_then(|text| text.parse::<u64>().ok())
+            .or_else(|| size.as_u64())
+            .and_then(|n| usize::try_from(n).ok());
+        let (Some(arg), Some(bytes)) = (arg, bytes) else {
+            return Err(FrtError::MetadataParse(format!(
+                "AI Engine runtime parameter `{alias}` names no kernel argument or size"
+            )));
+        };
+        rtps.push(AieRtp {
+            alias: alias.to_owned(),
+            arg,
+            bytes,
+        });
+    }
+    Ok(Some(AieGraph {
+        name: name.to_owned(),
+        run_forever: name == "tapa_aie_forever",
+        rtps,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,6 +201,53 @@ mod tests {
             buf.push(0);
         }
         buf
+    }
+
+    /// An xclbin whose table of contents holds one section.
+    fn xclbin_with_section(kind: u32, payload: &[u8]) -> Vec<u8> {
+        let mut buf = b"xclbin2\0".to_vec();
+        buf.resize(496, 0);
+        buf[448..452].copy_from_slice(&1u32.to_le_bytes());
+        buf[456..460].copy_from_slice(&kind.to_le_bytes());
+        buf[480..488].copy_from_slice(&496u64.to_le_bytes());
+        buf[488..496].copy_from_slice(&(payload.len() as u64).to_le_bytes());
+        buf.extend_from_slice(payload);
+        buf
+    }
+
+    /// The runtime finds each runtime parameter's value by the argument
+    /// index `tapa synth` puts in its alias, and how to run the graph by
+    /// the graph's name (`tapa_xilinx::tools::aie::graph::rtp_name`). The
+    /// values are strings, as xclbinutil writes them.
+    #[test]
+    fn the_aie_graph_and_its_runtime_parameters_come_from_aie_metadata() {
+        let json = br#"{"aie_metadata": {
+            "graphs": {"graph0": {"id": "0", "name": "tapa_aie_forever"}},
+            "RTPs": {
+                "rtp0": {"alias_name": "tapa_aie_forever.rtp_3_Scale_0_factor",
+                         "port_name": "tapa_aie_forever.k_Scale_0.in[1]",
+                         "number_of_bytes": "4"},
+                "rtp1": {"alias_name": "other.rtp_0_x", "number_of_bytes": "8"}
+            }}}"#;
+        let mut payload = json.to_vec();
+        payload.push(0);
+        let graph = parse_aie_graph(&xclbin_with_section(AIE_METADATA, &payload))
+            .expect("parse")
+            .expect("a graph");
+        assert_eq!(
+            graph,
+            AieGraph {
+                name: "tapa_aie_forever".into(),
+                run_forever: true,
+                rtps: vec![AieRtp {
+                    alias: "tapa_aie_forever.rtp_3_Scale_0_factor".into(),
+                    arg: 3,
+                    bytes: 4,
+                }],
+            }
+        );
+        let pl_only = xclbin_with_section(2, b"<?xml?>");
+        assert_eq!(parse_aie_graph(&pl_only).expect("parse"), None);
     }
 
     #[test]

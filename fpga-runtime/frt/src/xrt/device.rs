@@ -34,6 +34,15 @@ enum ExecutionState {
     Finished,
 }
 
+/// The AI Engine graph an xclbin carries, open for control.
+struct Graph {
+    handle: Handle,
+    meta: AieGraph,
+    /// Whether it ran since the xclbin was loaded: a run-forever graph is
+    /// reset before it runs again, so its kernels restart from their entry.
+    has_run: bool,
+}
+
 /// XRT's user-pointer buffers must start on a 4 KiB boundary.
 const USER_PTR_ALIGNMENT: usize = 4096;
 
@@ -43,6 +52,7 @@ pub struct XrtDevice {
     device: Handle,
     kernel: Handle,
     run: Handle,
+    graph: Option<Graph>,
     scalars: HashMap<u32, Vec<u8>>,
     buffers: HashMap<u32, BufferBinding>,
     execution_state: ExecutionState,
@@ -114,7 +124,6 @@ impl XrtDevice {
                     .map_err(|e| FrtError::Xrt(format!("invalid device BDF `{value}`: {e}")))
             })
             .transpose()?;
->>>>>>> db96d170 (fixup! feat(frt): run kernels through XRT's C API, retire OpenCL)
         let path = CString::new(xclbin_path.to_string_lossy().into_owned())
             .map_err(|e| FrtError::Xrt(format!("xclbin path: {e}")))?;
         // XRT has no C device-name enumeration API. Without an explicit BDF,
@@ -176,13 +185,96 @@ impl XrtDevice {
         // SAFETY: live kernel handle.
         let run = unsafe { (api.run_open)(this.kernel) };
         this.run = non_null(run, "create a kernel run")?;
+        if let Some(meta) = parse_aie_graph(&bytes)? {
+            let name = CString::new(meta.name.clone())
+                .map_err(|e| FrtError::Xrt(format!("graph name: {e}")))?;
+            // SAFETY: live device, the UUID it reported, a valid C string.
+            let handle = unsafe { (api.graph_open)(this.device, uuid.as_ptr(), name.as_ptr()) };
+            let handle = non_null(handle, &format!("open the AI Engine graph `{}`", meta.name))?;
+            this.graph = Some(Graph {
+                handle,
+                meta,
+                has_run: false,
+            });
+        }
         Ok(this)
+    }
+
+    /// Starts the AI Engine graph, if any, with each runtime parameter set
+    /// to the low bytes of the scalar argument it carries (`values`, by
+    /// argument index): one iteration, or forever when some kernel never
+    /// returns.
+    fn start_graph(&mut self, values: &HashMap<u32, Vec<u8>>) -> Result<()> {
+        let Some(graph) = &mut self.graph else {
+            return Ok(());
+        };
+        if graph.meta.run_forever && graph.has_run {
+            // SAFETY: live graph handle.
+            let rc = unsafe { (self.api.graph_reset)(graph.handle) };
+            check(rc, "reset the AI Engine graph")?;
+        }
+        for rtp in &graph.meta.rtps {
+            let mut value = values.get(&rtp.arg).cloned().ok_or_else(|| {
+                FrtError::Xrt(format!(
+                    "runtime parameter `{}` carries argument {}, which is not a scalar",
+                    rtp.alias, rtp.arg
+                ))
+            })?;
+            value.resize(rtp.bytes, 0);
+            let alias = CString::new(rtp.alias.clone())
+                .map_err(|e| FrtError::Xrt(format!("runtime parameter name: {e}")))?;
+            // SAFETY: live graph handle; `value` holds `value.len()` bytes.
+            let rc = unsafe {
+                (self.api.graph_update_rtp)(
+                    graph.handle,
+                    alias.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                )
+            };
+            check(rc, &format!("update runtime parameter `{}`", rtp.alias))?;
+        }
+        let iterations = if graph.meta.run_forever { -1 } else { 1 };
+        // SAFETY: live graph handle.
+        let rc = unsafe { (self.api.graph_run)(graph.handle, iterations) };
+        check(rc, "run the AI Engine graph")?;
+        graph.has_run = true;
+        Ok(())
+    }
+
+    /// Once the PL kernel is done: waits for a terminating graph to finish,
+    /// or stops a run-forever one. The latter has run for more than one
+    /// cycle, so waiting one cycle stops it at once.
+    fn stop_graph(&self) -> Result<()> {
+        let Some(graph) = &self.graph else {
+            return Ok(());
+        };
+        let cycles = u64::from(graph.meta.run_forever);
+        // SAFETY: live graph handle.
+        let rc = unsafe { (self.api.graph_wait)(graph.handle, cycles) };
+        check(rc, "wait for the AI Engine graph")
+    }
+
+    /// Stops and resets a graph after a PL failure. A bounded wait is not
+    /// appropriate here: the graph may be blocked on PL input that will never
+    /// arrive, and a retry needs its kernels reset in either case.
+    fn abort_graph(&self) -> Result<()> {
+        let Some(graph) = &self.graph else {
+            return Ok(());
+        };
+        // SAFETY: live graph handle.
+        let rc = unsafe { (self.api.graph_reset)(graph.handle) };
+        check(rc, "reset the AI Engine graph after a kernel failure")
     }
 }
 
 impl Drop for XrtDevice {
     fn drop(&mut self) {
         // Each handle is live or null and closed once, children first.
+        if let Some(graph) = &self.graph {
+            // SAFETY: live graph handle.
+            unsafe { (self.api.graph_close)(graph.handle) };
+        }
         if !self.run.is_null() {
             // SAFETY: live run handle.
             unsafe { (self.api.run_close)(self.run) };
@@ -490,6 +582,7 @@ impl Device for XrtDevice {
     fn exec(&mut self) -> Result<()> {
         let mut args = self.meta.args.clone();
         args.sort_by_key(|a| a.id);
+        let mut values = HashMap::new();
         for arg in &args {
             match arg.kind {
                 ArgKind::Scalar { width } => {
@@ -513,6 +606,7 @@ impl Device for XrtDevice {
                         },
                     };
                     check(rc, &format!("set scalar argument {}", arg.id))?;
+                    values.insert(arg.id, raw);
                 }
                 ArgKind::Mmap { .. } => {
                     // Already bound by `set_buffer_arg`; only its presence
@@ -528,9 +622,17 @@ impl Device for XrtDevice {
                 ArgKind::Stream { .. } => {}
             }
         }
+        // The graph runs first: it consumes the PL kernel's streams.
+        if let Err(error) = self.start_graph(&values) {
+            self.abort_graph()?;
+            return Err(error);
+        }
         // SAFETY: live run handle with every argument set.
         let rc = unsafe { (self.api.run_start)(self.run) };
-        check(rc, "start the kernel")?;
+        if let Err(error) = check(rc, "start the kernel") {
+            self.abort_graph()?;
+            return Err(error);
+        }
         self.execution_state = ExecutionState::Running(Instant::now());
         Ok(())
     }
@@ -542,17 +644,19 @@ impl Device for XrtDevice {
             self.compute_ns = elapsed_ns(start);
             self.execution_state = ExecutionState::Finished;
             if state != RUN_COMPLETED {
+                self.abort_graph()?;
                 return Err(FrtError::Xrt(format!(
                     "the kernel run ended in state {state}, not completed"
                 )));
             }
+            self.stop_graph()?;
         }
         Ok(())
     }
 
     fn kill(&mut self) -> Result<()> {
         self.execution_state = ExecutionState::Finished;
-        Ok(())
+        self.abort_graph()
     }
 
     fn is_finished(&mut self) -> Result<bool> {
@@ -573,6 +677,7 @@ impl Device for XrtDevice {
         if is_run_error(state) {
             self.compute_ns = elapsed_ns(start);
             self.execution_state = ExecutionState::Finished;
+            self.abort_graph()?;
             return Err(FrtError::Xrt(format!(
                 "the kernel run failed in state {state}"
             )));

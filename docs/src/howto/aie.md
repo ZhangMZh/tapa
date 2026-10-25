@@ -146,3 +146,16 @@ tapa --work-dir work.out compile -f vadd.cpp -t VecAdd \
 
 A stream into the AI Engine asserts TLAST on every beat. The AI Engine
 interface would otherwise hold a lone 32-bit word until a second one arrives.
+
+## Running the xclbin
+
+`tapa::invoke` on the `.xclbin` runs both halves through XRT, with the
+unchanged host program. Before it starts the PL kernel, the runtime writes
+each scalar argument an AI Engine task reads into that task's runtime
+parameter and runs the graph for one iteration. Once the PL kernel is done,
+it waits for the graph to finish. A graph with a detached task runs until the
+PL kernel is done and is then stopped; the next `tapa::invoke` resets it, so
+its tasks start again from the top. The reported kernel time is still the PL
+kernel's, from start to done.
+
+This control path has not yet run on an AI Engine device.
