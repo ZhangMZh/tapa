@@ -69,11 +69,6 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
         _ if graph_dir.exists() => fs_err::remove_dir_all(&graph_dir)?,
         _ => {}
     }
-        }
-        // A graph left from an earlier run must not be packed with this one.
-        _ if graph_dir.exists() => fs_err::remove_dir_all(&graph_dir)?,
-        _ => {}
-    }
     // HLS and codegen see the PL half only; the state keeps the whole graph.
     let pl_graph = crate::aie::pl_graph(&state.graph)?;
     let sources = stage_hls_sources(&ctx.work_dir, &pl_graph)?;
