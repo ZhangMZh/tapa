@@ -23,8 +23,17 @@ void Add(tapa::istream<vec4f>& a, tapa::istream<vec4f>& b,
 }
 ```
 
-Inside an AI Engine upper task, a descendant explicitly marked for another
-target is an error. The top task cannot be an AI Engine task: the PL
+The same choice can be made on the command line without editing the source,
+so one source builds both a PL-only and a PL+AI Engine design. The mapping wins
+over the attribute:
+
+```bash
+tapa analyze ... --target xilinx-vitis --target Add:aie
+```
+
+`TASK:TARGET` takes `aie`, `hls` or `ignore`; an unknown task name is an
+error. Inside an AI Engine upper task, a descendant explicitly marked for
+another target is an error. The top task cannot be an AI Engine task: the PL
 kernel owns the control interface.
 
 ## What an AI Engine task may use

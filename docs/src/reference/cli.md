@@ -61,7 +61,7 @@ documented for those three stages.
 | `--platform PLATFORM` / `-p PLATFORM` | Vitis platform name. Alternative to `--part-num`. |
 | `--clock-period NS` | Target clock period in nanoseconds. |
 | `--cflags FLAG` / `-c FLAG` | Compiler flag for the kernel (e.g., `-Iinclude`). Repeat the flag for multiple. |
-| `--target {xilinx-vitis,xilinx-hls}` | Output target (default: `xilinx-vitis`). |
+| `--target {xilinx-vitis,xilinx-hls}` | Output target (default: `xilinx-vitis`). Also takes `TASK:TARGET` mappings, see `analyze`. |
 | `-j N` / `--jobs N` | Number of parallel HLS jobs. |
 | `--custom-rtl PATH` | Custom RTL file or directory to include in the output archive. Repeatable. |
 | `--connectivity FILE` | Vitis link config with memory `sp=` bank assignments. |
@@ -99,6 +99,7 @@ This stage always runs locally and does not require vendor tools. See
 |------|-------------|
 | `--cflags FLAG` / `-c FLAG` | Compiler flag passed through to the kernel frontend, such as an include path. Repeat the flag for multiple. |
 | `--target {xilinx-vitis,xilinx-hls}` | Output target (default: `xilinx-vitis`). Controls the synthesis flow. |
+| `--target TASK:TARGET` | Build task `TASK` as `aie`, `hls` or `ignore`, overriding its `[[tapa::target]]`. Repeatable; an unknown task is an error. See [AI Engine Tasks](../howto/aie.md). |
 | `--flatten-hierarchy` | Emit flattened RTL while preserving task behavior. The stored task graph remains hierarchical. |
 | `--keep-hierarchy` | Preserve the task hierarchy. This is the default. |
 

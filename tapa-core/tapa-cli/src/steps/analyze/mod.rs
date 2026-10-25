@@ -53,6 +53,57 @@ impl AnalyzeTarget {
     }
 }
 
+/// A per-task target mapping's target (`TASK:TARGET`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskTarget {
+    Aie,
+    Hls,
+    Ignore,
+}
+
+impl TaskTarget {
+    /// The spelling `tapacc -task-target` takes.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Aie => "aie",
+            Self::Hls => "hls",
+            Self::Ignore => "ignore",
+        }
+    }
+}
+
+/// One `--target` value: the flow, or a mapping that overrides one task's
+/// `[[tapa::target]]` so one source builds PL-only and PL+AI Engine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TargetArg {
+    Flow(AnalyzeTarget),
+    Task { task: String, target: TaskTarget },
+}
+
+fn parse_target_arg(value: &str) -> std::result::Result<TargetArg, String> {
+    let Some((task, target)) = value.rsplit_once(':') else {
+        return AnalyzeTarget::from_str(value, false).map(TargetArg::Flow);
+    };
+    let target = match target {
+        "aie" => TaskTarget::Aie,
+        "hls" => TaskTarget::Hls,
+        "ignore" => TaskTarget::Ignore,
+        other => {
+            return Err(format!(
+                "`{value}` maps task `{task}` to `{other}`; a task target is one of \
+                 aie, hls, ignore"
+            ))
+        }
+    };
+    if task.is_empty() {
+        return Err(format!("`{value}` names no task before the `:`"));
+    }
+    Ok(TargetArg::Task {
+        task: task.to_string(),
+        target,
+    })
+}
+
 /// Bridge the clap arg enum to the schema enum stored in `tapa.json`.
 /// Keeps `tapa-ir` free of a clap dependency.
 impl From<AnalyzeTarget> for tapa_ir::Target {
@@ -90,12 +141,14 @@ pub struct AnalyzeArgs {
     #[arg(long = "keep-hierarchy", conflicts_with = "flatten_hierarchy")]
     pub keep_hierarchy: bool,
 
-    /// Target flow. Restricted to targets the pipeline can drive
-    /// end-to-end so typos and unsupported targets fail
-    /// at parse time instead of producing an unusable `tapa.json` that
-    /// only blows up later in `synth` or `pack`.
-    #[arg(long = "target", value_enum, default_value_t = AnalyzeTarget::XilinxVitis)]
-    pub target: AnalyzeTarget,
+    /// Target flow (`xilinx-vitis`, the default, or `xilinx-hls`), or a
+    /// per-task mapping `TASK:TARGET` with TARGET one of `aie`, `hls`,
+    /// `ignore`, which wins over the task's `[[tapa::target]]`. Repeatable;
+    /// at most one flow. Restricted to what the pipeline can drive
+    /// end-to-end so typos fail at parse time instead of producing an
+    /// unusable `tapa.json` that only blows up later in `synth` or `pack`.
+    #[arg(long = "target", value_name = "TARGET", value_parser = parse_target_arg)]
+    pub targets: Vec<TargetArg>,
 
     /// Explicit path to the `tapacc` binary. Overrides the walk-up
     /// `find_resource` search anchored at the `tapa` binary. Used by
@@ -104,6 +157,37 @@ pub struct AnalyzeArgs {
     /// and pass them down explicitly.
     #[arg(long = "tapacc", value_name = "FILE")]
     pub tapacc: Option<PathBuf>,
+}
+
+impl AnalyzeArgs {
+    /// The flow target: the one non-mapping `--target`, `xilinx-vitis` by
+    /// default.
+    pub fn flow(&self) -> Result<AnalyzeTarget> {
+        let mut flows = self.targets.iter().filter_map(|target| match target {
+            TargetArg::Flow(flow) => Some(*flow),
+            TargetArg::Task { .. } => None,
+        });
+        let flow = flows.next().unwrap_or(AnalyzeTarget::XilinxVitis);
+        if flows.next().is_some() {
+            return Err(CliError::InvalidArg(
+                "`--target` names more than one flow; give one of xilinx-vitis or \
+                 xilinx-hls"
+                    .to_string(),
+            ));
+        }
+        Ok(flow)
+    }
+
+    /// The per-task mappings, as `tapacc -task-target` values.
+    fn task_targets(&self) -> Vec<String> {
+        self.targets
+            .iter()
+            .filter_map(|target| match target {
+                TargetArg::Flow(_) => None,
+                TargetArg::Task { task, target } => Some(format!("{task}:{}", target.as_str())),
+            })
+            .collect()
+    }
 }
 
 /// Run tapacc on each input and write the work dir.
@@ -132,13 +216,14 @@ pub fn run(args: &AnalyzeArgs, ctx: &CliContext) -> Result<()> {
 
     let work_dir = ctx.work_dir.as_path();
     fs::create_dir_all(work_dir)?;
-    let target_str = args.target.as_str();
+    let flow = args.flow()?;
     let stdout = run_tapacc(
         &tapacc,
         &args.input_files,
         &args.top,
         &all_cflags,
-        target_str,
+        flow.as_str(),
+        &args.task_targets(),
         work_dir,
     )?;
 
@@ -159,7 +244,7 @@ pub fn run(args: &AnalyzeArgs, ctx: &CliContext) -> Result<()> {
         );
         obj.insert(
             "target".to_string(),
-            json!(tapa_ir::Target::from(args.target).as_str()),
+            json!(tapa_ir::Target::from(flow).as_str()),
         );
     }
 
@@ -169,7 +254,7 @@ pub fn run(args: &AnalyzeArgs, ctx: &CliContext) -> Result<()> {
         ))
     })?;
 
-    if is_top_leaf(&graph, &args.top) && args.target == AnalyzeTarget::XilinxVitis {
+    if is_top_leaf(&graph, &args.top) && flow == AnalyzeTarget::XilinxVitis {
         return Err(CliError::InvalidArg(
             "the top task is a leaf task; target `xilinx-vitis` is not supported \
              (Vitis requires an upper top for kernel.xml generation). \
@@ -195,6 +280,33 @@ mod tests {
 
     use crate::context::CliContext;
     use crate::globals::GlobalArgs;
+
+    #[test]
+    fn target_takes_one_flow_and_task_mappings() {
+        let parse = |targets: &[&str]| {
+            let mut argv = vec!["analyze", "-f", "a.cpp", "-t", "T"];
+            for target in targets {
+                argv.extend(["--target", target]);
+            }
+            AnalyzeArgs::try_parse_from(argv)
+        };
+        let args = parse(&["xilinx-hls", "Pe:aie", "Load:ignore"]).expect("parse");
+        assert_eq!(args.flow().expect("one flow"), AnalyzeTarget::XilinxHls);
+        assert_eq!(args.task_targets(), ["Pe:aie", "Load:ignore"]);
+        assert_eq!(
+            parse(&["Pe:aie"])
+                .expect("parse")
+                .flow()
+                .expect("default flow"),
+            AnalyzeTarget::XilinxVitis,
+        );
+        parse(&["Pe:gpu"]).expect_err("unknown task target");
+        parse(&[":aie"]).expect_err("mapping without a task");
+        parse(&["xilinx-hls", "xilinx-vitis"])
+            .expect("parse")
+            .flow()
+            .expect_err("two flows");
+    }
 
     #[cfg(unix)]
     #[test]

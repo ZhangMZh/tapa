@@ -25,6 +25,7 @@ pub(super) fn run_tapacc(
     top: &str,
     cflags: &[String],
     target: &str,
+    task_targets: &[String],
     work_dir: &Path,
 ) -> Result<String> {
     let shim = work_dir.join(TAPACC_HLS_SHIM_FILE);
@@ -40,6 +41,9 @@ pub(super) fn run_tapacc(
         cmd.arg(f);
     }
     cmd.args(["-top", top, "--target", target]);
+    for mapping in task_targets {
+        cmd.arg(format!("-task-target={mapping}"));
+    }
     cmd.arg("-emit-dir").arg(&emit_dir);
     cmd.arg("--");
     for f in cflags {
