@@ -4,6 +4,7 @@
 
 pub mod graph;
 pub mod plio;
+pub mod report;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use typed_builder::TypedBuilder;

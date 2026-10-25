@@ -64,6 +64,23 @@ pub enum XilinxError {
     #[error("AI Engine graph: {0}")]
     AieGraph(String),
 
+    #[error("failed to read AI Engine report {path}: {source}")]
+    AieReportIo {
+        path: Utf8PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("malformed AI Engine JSON report {path}: {source}")]
+    AieReportJson {
+        path: Utf8PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+
+    #[error("malformed AI Engine report {path}: {detail}")]
+    AieReportParse { path: Utf8PathBuf, detail: String },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
