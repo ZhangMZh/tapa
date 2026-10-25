@@ -39,6 +39,9 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
             "AI Engine tasks are linked by `v++`; analyze with `--target xilinx-vitis`".to_string(),
         ));
     }
+    if let Some(partition) = &partition {
+        crate::aie::warn_narrow_boundaries(partition);
+    }
 
     let device = resolve_device_info(args)?;
     state.flow.part_num = Some(device.part_num.clone());

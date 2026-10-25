@@ -159,7 +159,9 @@ tapa --work-dir work.out compile -f vadd.cpp -t VecAdd \
   with `aiecompiler --target=hw`, which needs the AI Engine compiler licence,
   and synthesizes only the PL tasks. Each PL-to-AI Engine stream becomes an
   AXIS port of the PL kernel named after the stream, and its PLIO runs at the
-  PL kernel clock.
+  PL kernel clock. It warns about each such stream whose elements are
+  narrower than 128 bits: the PL moves one element per cycle, and only a
+  128-bit PLIO keeps up with an AI Engine stream port.
 - `tapa pack` writes the PL kernel as `vadd.xo` and, next to it, the graph as
   `vadd.libadf.a` and the PLIO connectivity as `vadd.aie.cfg`, one
   `stream_connect` per boundary stream between the kernel's compute unit

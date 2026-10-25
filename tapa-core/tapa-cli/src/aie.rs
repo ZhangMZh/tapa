@@ -214,6 +214,24 @@ pub fn pl_graph(graph: &Graph) -> Result<Graph> {
     }
 }
 
+/// Warns about each PL↔AI Engine stream whose elements are narrower than
+/// one 128-bit PLIO beat. The PL moves one element per cycle, and only a
+/// 128-bit PLIO keeps up with the AI Engine stream port at the other end.
+pub fn warn_narrow_boundaries(partition: &AiePartition) {
+    for stream in &partition.streams {
+        let bits = stream.words * 32;
+        if matches!(stream.kind, tapa_ir::AieStreamKind::Plio { .. }) && bits < 128 {
+            log::warn!(
+                "AI Engine boundary stream `{}` moves {bits} bits per PL cycle, {}% of a \
+                 128-bit PLIO; carry tapa::vec_t<T, 4> elements of 32-bit T across the \
+                 boundary for the full rate",
+                stream.fifo,
+                bits * 100 / 128
+            );
+        }
+    }
+}
+
 /// The `v++ --link` connectivity of the PLIOs: each PL kernel AXIS port is
 /// wired to the PLIO of the same name. The compute unit is named after the
 /// top task, as the bitstream script's `--connectivity.nk` names it.
