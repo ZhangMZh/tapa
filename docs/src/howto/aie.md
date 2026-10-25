@@ -66,6 +66,9 @@ Two habits decide AI Engine performance:
 | `[[tapa::aie_plio(W)]]` | `istream`/`ostream` parameter of an AI Engine task | PLIO width `W` of 32, 64 or 128 bits for a boundary stream. |
 | `[[tapa::aie_location(col, row)]]` | AI Engine leaf task | Pins the task to a tile. Add a third argument to pick one instance of a task invoked several times. |
 
+A task built for PL ignores these attributes, so a source annotated for the AI
+Engine still builds for PL when `--target` leaves the task there.
+
 ## Simulating the AI Engine tasks
 
 Software simulation runs AI Engine tasks as ordinary tasks. To check the AI

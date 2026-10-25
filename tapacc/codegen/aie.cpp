@@ -16,8 +16,17 @@ void AieBackend::RewriteTaskFunc(const TaskModel& task, bool /*is_top*/,
   // The signature stub was captured before this runs, so the frame type
   // lands in the task's own variant only; every other variant keeps the
   // portable `tapa::istream<T>&` spelling.
-  for (const clang::ParmVarDecl* param : task.def->parameters()) {
-    const auto* frame = param->getAttr<clang::TapaAieFrameAttr>();
+  for (unsigned index = 0; index < task.def->getNumParams(); ++index) {
+    const clang::ParmVarDecl* param = task.def->getParamDecl(index);
+    const clang::TapaAieFrameAttr* frame = nullptr;
+    for (const clang::FunctionDecl* decl : task.def->redecls()) {
+      if (index < decl->getNumParams()) {
+        if (const auto* attr =
+                decl->getParamDecl(index)->getAttr<clang::TapaAieFrameAttr>()) {
+          frame = attr;
+        }
+      }
+    }
     const clang::TypeSourceInfo* info = param->getTypeSourceInfo();
     if (frame == nullptr || info == nullptr) continue;
     const auto ref = info->getTypeLoc().getAs<clang::ReferenceTypeLoc>();

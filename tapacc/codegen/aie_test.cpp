@@ -63,8 +63,9 @@ TEST(AieTest, LeafKnobsReachTheGraphAndItsOwnVariant) {
         [[tapa::target("aie")]] [[tapa::aie_location(10, 0)]]
         void Add([[tapa::aie_frame(64)]] tapa::istream<float>& a,
                  [[tapa::aie_plio(128)]] tapa::ostream<float>& c, int n) {
+          float bias[8] = {};
           [[tapa::pipeline]] for (int i = 0; i < n; ++i)
-            c.write(a.read() + 1);
+            c.write(a.read() + bias[i % 8]);
         }
       )cpp"));
   ASSERT_TRUE(run.ok) << (run.diags.empty() ? "" : run.diags.front());
@@ -74,6 +75,8 @@ TEST(AieTest, LeafKnobsReachTheGraphAndItsOwnVariant) {
   EXPECT_EQ(add["ports"][1]["aie_plio"], 128);
   EXPECT_EQ(add["aie_location"],
             nlohmann::json::parse(R"([{"col": 10, "row": 0}])"));
+  // The kernel's stack holds `bias` and the loop counter.
+  EXPECT_EQ(add["aie_stack_bytes"], 8 * 4 + 4);
 
   // The full definition takes the frame type and the chess keyword; the
   // stub every other variant sees keeps the portable signature.
@@ -83,6 +86,7 @@ TEST(AieTest, LeafKnobsReachTheGraphAndItsOwnVariant) {
   ASSERT_NE(guard, std::string::npos);
   const std::string full = tu.substr(guard, stub - guard);
   const std::string other = tu.substr(stub, tu.find("#endif", stub) - stub);
+  EXPECT_NE(full.find("TAPA_AIE_INLINE void Add("), std::string::npos) << full;
   EXPECT_NE(full.find("tapa::aie::frame_t<tapa::istream<float>, 64>& a"),
             std::string::npos)
       << full;
@@ -98,14 +102,18 @@ TEST(AieTest, LeafKnobsReachTheGraphAndItsOwnVariant) {
 TEST(AieTest, MappingWinsOverTheAttributeAndNamesARealTask) {
   const std::string add = R"cpp(
     [[tapa::target("aie")]]
-    void Add(tapa::istream<float>& a, tapa::ostream<float>& c, int n) {
+    void Add([[tapa::aie_frame(64)]] tapa::istream<float>& a,
+             tapa::ostream<float>& c, int n) {
       for (int i = 0; i < n; ++i) c.write(a.read());
     }
   )cpp";
+  // Mapped to PL, the same source builds there and its knobs do nothing.
   const TreePipelineRun pl =
       Analyze("map_hls", Design(add), {{"Add", SynthTarget::kXilinxHls}});
-  ASSERT_TRUE(pl.ok);
-  EXPECT_EQ(nlohmann::json::parse(pl.json)["tasks"]["Add"]["synth"], "hls");
+  ASSERT_TRUE(pl.ok) << (pl.diags.empty() ? "" : pl.diags.front());
+  const nlohmann::json pl_add = nlohmann::json::parse(pl.json)["tasks"]["Add"];
+  EXPECT_EQ(pl_add["synth"], "hls");
+  EXPECT_FALSE(pl_add["ports"][0].contains("aie_frame"));
 
   const TreePipelineRun aie = Analyze(
       "map_aie", Design(R"cpp(
@@ -189,9 +197,10 @@ TEST(AieTest, IneligibleConstructsAreRejectedAtTheirSite) {
            for (int i = 0; i < n; ++i) c.write(a.read());
          })cpp",
        "carries 16-bit elements"},
-      {"knob_on_pl", R"cpp(
+      {"bad_plio", R"cpp(
+         [[tapa::target("aie")]]
          void Add(tapa::istream<float>& a,
-                  [[tapa::aie_plio(64)]] tapa::ostream<float>& c, int n) {
+                  [[tapa::aie_plio(48)]] tapa::ostream<float>& c, int n) {
            for (int i = 0; i < n; ++i) c.write(a.read());
          })cpp",
        "[[tapa::aie_plio(W)]] needs W of 32, 64 or 128"},

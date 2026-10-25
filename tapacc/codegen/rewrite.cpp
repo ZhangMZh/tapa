@@ -138,6 +138,10 @@ void LowerFuncAttrs(const clang::FunctionDecl* func, const Backend& backend,
                     EditSink& edits) {
   if (!func->isThisDeclarationADefinition()) {
     for (const clang::Attr* attr : func->attrs()) {
+      if (attr->getKind() == clang::attr::TapaAieLocation) {
+        RemoveLoweredAttr(edits, attr->getRange());
+        continue;
+      }
       if (attr->getKind() != clang::attr::TapaPipeline) continue;
       ReportCustomDiag(func->getASTContext(), clang::DiagnosticsEngine::Error,
                        attr->getRange().getBegin(),
@@ -289,7 +293,12 @@ void LowerParamAttrs(const clang::FunctionDecl* func, const Backend& backend,
   // Only the DEFINITION carries lowerable parameter attributes. A forward
   // declaration's source range would be removed while its rewriting target
   // (the body) does not exist — the rewriter asserts on the inverted range.
-  if (!func->isThisDeclarationADefinition()) return;
+  if (!func->isThisDeclarationADefinition()) {
+    // There is no body to lower into, but declaration text must not leak to
+    // the vendor. The definition owns the pragma's semantics.
+    RemoveParamAttrs(func, edits);
+    return;
+  }
   LowerParamAttrPragmas(func, backend, edits);
   RemoveParamAttrs(func, edits);
 }
@@ -639,6 +648,7 @@ void RewriteTreeFiles(const Program& program, SynthTarget default_target,
       backend.RewriteSignature(model, name == program.top, edits);
       backend.RewriteTaskFunc(model, name == program.top, edits);
       LowerFuncAttrs(model.def, backend, edits);
+      LowerParamAttrs(model.def, backend, edits);
       continue;
     }
     guard_definition(model, model.def, name == program.top, backend,
@@ -655,6 +665,7 @@ void RewriteTreeFiles(const Program& program, SynthTarget default_target,
       if (!func->isThisDeclarationADefinition()) {
         RemoveInline(func, edits);
         LowerFuncAttrs(func, shared, edits);
+        LowerParamAttrs(func, shared, edits);
       }
       continue;
     }

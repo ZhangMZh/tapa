@@ -11,10 +11,10 @@
 
 namespace tapa::cc {
 
-// Reads `[[tapa::aie_frame(N)]]` / `[[tapa::aie_plio(W)]]` onto the task's
-// stream ports and `[[tapa::aie_location(...)]]` onto the task, reporting
-// an error for a knob on a task that is not on the AI Engine, on the wrong
-// kind of port, or with an out-of-range value.
+// Reads `[[tapa::aie_frame(N)]]` / `[[tapa::aie_plio(W)]]` onto an AI Engine
+// task's stream ports and `[[tapa::aie_location(...)]]` onto the task,
+// reporting an error for a knob on the wrong kind of task or port, or with
+// an out-of-range value. A task built for PL ignores them.
 void ReadAieAttrs(const clang::ASTContext& ctx, TaskModel& task);
 
 // The AI Engine eligibility rules for one AI Engine task: no memory ports,
