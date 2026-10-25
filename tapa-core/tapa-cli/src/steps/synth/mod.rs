@@ -54,6 +54,10 @@ fn resolve_worker_count(jobs: Option<u32>, work_count: usize) -> usize {
 
 #[derive(Debug, Clone, Parser)]
 #[command(name = "synth", about = "Synthesize the TAPA program into RTL code.")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each bool is an independent command-line switch, not a state"
+)]
 pub struct SynthArgs {
     /// Target FPGA part number. Required unless `--platform` is given.
     #[arg(long = "part-num", value_name = "PART")]
@@ -100,6 +104,12 @@ pub struct SynthArgs {
     /// numbers, instead of relying on the coarser HLS estimates.
     #[arg(long = "enable-synth-util", default_value_t = false)]
     pub enable_synth_util: bool,
+
+    /// Build only the PL half of a design with AI Engine tasks, without
+    /// compiling the AI Engine graph: enough for hybrid cosimulation, which
+    /// runs the AI Engine tasks in software.
+    #[arg(long = "skip-aie", default_value_t = false)]
+    pub skip_aie: bool,
 
     /// Stamp `report.json` / `report.yaml` with this schema version
     /// instead of the built-in one. For report-consumer testing.

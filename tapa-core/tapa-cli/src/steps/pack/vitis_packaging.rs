@@ -55,7 +55,7 @@ pub(super) fn pack_vitis(args: &PackArgs, ctx: &CliContext, state: &WorkState) -
     ctx.with_tool_runner(|runner| {
         package_prepared_vitis_rtl(runner, state, &hdl_dir, &output_path, Some(&ctx.work_dir))
     })?;
-    let aie = write_aie_sidecars(&ctx.work_dir, design, &output_path)?;
+    let aie = write_aie_sidecars(&ctx.work_dir, design, flow.skip_aie, &output_path)?;
 
     // Emit the bitstream helper after packaging so it points at the
     // completed `.xo`.
@@ -423,18 +423,39 @@ fn resolve_link_inputs(
 
 /// Copy the AI Engine graph `tapa synth` compiled next to the `.xo` as
 /// `<name>.libadf.a`, with its link connectivity as `<name>.aie.cfg`.
+fn remove_aie_sidecars(xo: &Path) -> Result<()> {
+    let (libadf, cfg) = crate::aie::sidecars(xo);
+    if libadf.exists() {
+        fs_err::remove_file(libadf)?;
+    }
+    if cfg.exists() {
+        fs_err::remove_file(cfg)?;
+    }
+    Ok(())
+}
+
 fn write_aie_sidecars(
     work_dir: &Path,
     design: &Design,
+    skip_aie: bool,
     xo: &Path,
 ) -> Result<Option<(PathBuf, PathBuf)>> {
     let Some(partition) = tapa_ir::AiePartition::derive(design)? else {
+        remove_aie_sidecars(xo)?;
         return Ok(None);
     };
     let libadf = crate::aie::dir(work_dir, "hw").join("libadf.a");
     if !libadf.is_file() {
+        remove_aie_sidecars(xo)?;
+        if skip_aie {
+            log::warn!(
+                "no AI Engine graph to package (synthesized with `--skip-aie`): the .xo serves \
+                 hybrid cosimulation only"
+            );
+            return Ok(None);
+        }
         return Err(CliError::MissingState {
-            name: "the compiled AI Engine graph (rerun `tapa synth`)".to_string(),
+            name: "AI Engine graph (run `tapa synth` without `--skip-aie`)".to_string(),
             path: libadf.into(),
         });
     }
@@ -570,6 +591,81 @@ mod tests {
         runner.push_ok("vivado", ToolOutput::default());
         runner.attach_download(crate::util::utf8(xo_path), mock_xo_bytes(root, seed));
         runner
+    }
+
+    fn aie_state(skip_aie: bool) -> WorkState {
+        let mut state = crate::testutil::state_from_json(
+            r#"{
+                "schema_version": 3,
+                "cflags": [], "top": "Top", "target": "xilinx-vitis",
+                "tasks": {
+                    "Top": {"readable_name": "Top", "srcs": ["Top.cpp"], "include_dirs": [], "defines": [], "level": "upper",
+                        "synth": "hls", "ports": [{"cat": "scalar", "name": "n", "type": "int", "width": 32}],
+                        "tasks": {"Add": [{"args": {"n": {"arg": "n", "cat": "scalar"}}}]}, "fifos": {}},
+                    "Add": {"readable_name": "Add", "srcs": ["Add.cpp"], "include_dirs": [], "defines": [], "level": "lower",
+                        "synth": "aie", "ports": [{"cat": "scalar", "name": "n", "type": "int", "width": 32}],
+                        "tasks": {}, "fifos": {}}
+                }
+            }"#,
+        );
+        state.flow.skip_aie = skip_aie;
+        state
+    }
+
+    fn write_stale_sidecars(xo: &Path) {
+        let (libadf, cfg) = crate::aie::sidecars(xo);
+        fs_err::write(libadf, "stale graph").expect("write stale graph");
+        fs_err::write(cfg, "stale connectivity").expect("write stale connectivity");
+    }
+
+    #[test]
+    fn aie_sidecars_require_a_current_graph_and_remove_stale_outputs() {
+        for skip_aie in [false, true] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let xo = dir.path().join("k.xo");
+            write_stale_sidecars(&xo);
+            let state = aie_state(skip_aie);
+            let result = write_aie_sidecars(dir.path(), &state.graph, skip_aie, &xo);
+            if skip_aie {
+                assert!(result.expect("intentional skip").is_none());
+            } else {
+                assert!(matches!(result, Err(CliError::MissingState { .. })));
+            }
+            let (libadf, cfg) = crate::aie::sidecars(&xo);
+            assert!(!libadf.exists() && !cfg.exists(), "stale sidecars remain");
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let xo = dir.path().join("k.xo");
+        write_stale_sidecars(&xo);
+        let state = link_state(false, false);
+        assert!(write_aie_sidecars(dir.path(), &state.graph, false, &xo)
+            .expect("PL-only package")
+            .is_none());
+        let (libadf, cfg) = crate::aie::sidecars(&xo);
+        assert!(!libadf.exists() && !cfg.exists(), "stale sidecars remain");
+    }
+
+    #[test]
+    fn aie_sidecars_copy_the_current_graph() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let graph_dir = dir.path().join("aie").join("hw");
+        fs_err::create_dir_all(&graph_dir).expect("create graph directory");
+        fs_err::write(graph_dir.join("libadf.a"), "current graph").expect("write graph");
+        let xo = dir.path().join("k.xo");
+        let state = aie_state(false);
+        let (libadf, cfg) = write_aie_sidecars(dir.path(), &state.graph, false, &xo)
+            .expect("package graph")
+            .expect("sidecars");
+        assert_eq!(
+            fs_err::read_to_string(libadf).expect("read graph"),
+            "current graph"
+        );
+        assert_eq!(
+            fs_err::read_to_string(cfg).expect("read connectivity"),
+            "[connectivity]
+"
+        );
     }
 
     /// The base projection reads the shared protocol suffix vocabulary;

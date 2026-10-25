@@ -57,20 +57,15 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
     state.floorplan = None;
     work_io::store(&ctx.work_dir, &state)?;
 
-    if let Some(partition) = &partition {
-        build_aie(
-            args,
-            ctx,
-            runner,
-            &state,
-            partition,
-            &device.part_num,
-            clock_period,
-        )?;
     let graph_dir = crate::aie::dir(&ctx.work_dir, "hw");
     match &partition {
         Some(partition) if !args.skip_aie => {
             build_aie(args, ctx, runner, &state, partition, clock_period)?;
+        }
+        // A graph left from an earlier run must not be packed with this one.
+        _ if graph_dir.exists() => fs_err::remove_dir_all(&graph_dir)?,
+        _ => {}
+    }
         }
         // A graph left from an earlier run must not be packed with this one.
         _ if graph_dir.exists() => fs_err::remove_dir_all(&graph_dir)?,

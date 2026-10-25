@@ -144,6 +144,7 @@ the design's RTL. This stage can run on a remote host via `--remote-host`.
 | Flag | Description |
 |------|-------------|
 | `--clock-period NS` | Target clock period in nanoseconds. Derived from `--platform` if not set explicitly. |
+| `--skip-aie` | Build only the PL half of a design with AI Engine tasks, without compiling the AI Engine graph; the `.xo` then serves hybrid cosimulation. |
 | `-j N` / `--jobs N` | Number of parallel HLS and post-synthesis jobs (default: the host's available parallelism). |
 | `--enable-synth-util` | Run out-of-context Vivado synthesis per task for accurate area numbers instead of the coarser HLS estimates. Costs one extra Vivado run per task. |
 | `--keep-hls-work-dir` | Keep each task's Vitis HLS project under `hls/<task>/project` instead of discarding it. Useful for post-mortem debugging of an HLS failure. |

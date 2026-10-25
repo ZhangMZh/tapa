@@ -129,6 +129,12 @@ pub struct FlowSettings {
     /// the other a result of it. Both are kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clock_period: Option<ClockPeriod>,
+    /// Build only the PL half for hybrid cosimulation, without compiling the
+    /// AI Engine graph. Persisted so `pack` can distinguish an intentional
+    /// skip from a missing full-build graph. Additive, so old state files
+    /// keep their full-build meaning.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skip_aie: bool,
     /// Set once `synth` has completed for this work dir.
     #[serde(default)]
     pub synthed: bool,

@@ -2665,6 +2665,7 @@ pub tapa_ir::work_state::FlowSettings::clock_period: core::option::Option<tapa_i
 pub tapa_ir::work_state::FlowSettings::flatten_hierarchy: bool
 pub tapa_ir::work_state::FlowSettings::part_num: core::option::Option<alloc::string::String>
 pub tapa_ir::work_state::FlowSettings::platform: core::option::Option<alloc::string::String>
+pub tapa_ir::work_state::FlowSettings::skip_aie: bool
 pub tapa_ir::work_state::FlowSettings::synthed: bool
 impl core::clone::Clone for tapa_ir::work_state::FlowSettings
 pub fn tapa_ir::work_state::FlowSettings::clone(&self) -> tapa_ir::work_state::FlowSettings
@@ -4587,6 +4588,7 @@ pub tapa_ir::FlowSettings::clock_period: core::option::Option<tapa_ir::clock::Cl
 pub tapa_ir::FlowSettings::flatten_hierarchy: bool
 pub tapa_ir::FlowSettings::part_num: core::option::Option<alloc::string::String>
 pub tapa_ir::FlowSettings::platform: core::option::Option<alloc::string::String>
+pub tapa_ir::FlowSettings::skip_aie: bool
 pub tapa_ir::FlowSettings::synthed: bool
 impl core::clone::Clone for tapa_ir::work_state::FlowSettings
 pub fn tapa_ir::work_state::FlowSettings::clone(&self) -> tapa_ir::work_state::FlowSettings
