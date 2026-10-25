@@ -12,6 +12,10 @@
 
 #include "tapa/xilinx/hls/tapa.h"  // IWYU pragma: export
 
+#elif defined(TAPA_TARGET_AIE_)
+
+#include "tapa/aie/tapa.h"  // IWYU pragma: export
+
 #elif defined(TAPA_TARGET_STUB_)
 
 #include "tapa/stub/tapa.h"  // IWYU pragma: export

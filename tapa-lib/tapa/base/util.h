@@ -6,8 +6,12 @@
 
 #include <climits>
 #include <cstdint>
-#include <ostream>
 #include <type_traits>
+
+// The AI Engine's C++ library has no iostreams.
+#if !defined(TAPA_TARGET_AIE_)
+#include <ostream>
+#endif
 
 namespace tapa {
 
@@ -63,11 +67,13 @@ struct packet {
   Payload payload;
 };
 
+#if !defined(TAPA_TARGET_AIE_)
 template <typename Addr, typename Payload>
 inline std::ostream& operator<<(std::ostream& os,
                                 const packet<Addr, Payload>& obj) {
   return os << "{addr: " << obj.addr << ", payload: " << obj.payload << "}";
 }
+#endif
 
 }  // namespace tapa
 
