@@ -74,10 +74,14 @@ pub fn resolve_platform_dir(platform: &str) -> Option<Utf8PathBuf> {
     if direct.is_dir() {
         return Some(direct);
     }
+    // Alveo shells install under `platforms/`; Vitis ships its own base
+    // platforms (VCK190, VEK280, ...) under `base_platforms/`.
     for root in platform_roots() {
-        let candidate = root.join("platforms").join(&normalized);
-        if candidate.is_dir() {
-            return Some(candidate);
+        for dir in ["platforms", "base_platforms"] {
+            let candidate = root.join(dir).join(&normalized);
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
         }
     }
     None

@@ -137,7 +137,7 @@ the design's RTL. This stage can run on a remote host via `--remote-host`.
 | Flag | Description |
 |------|-------------|
 | `--part-num PART` | Target FPGA part number. Required if `--platform` is not set. |
-| `--platform PLATFORM` / `-p PLATFORM` | Vitis platform name. Required if `--part-num` is not set. |
+| `--platform PLATFORM` / `-p PLATFORM` | Vitis platform name or directory. Required if `--part-num` is not set. A name is looked up under `platforms/` of `/opt/xilinx` and `$XILINX_VITIS`, and under `$XILINX_VITIS/base_platforms/` for the base platforms Vitis ships (for example `xilinx_vck190_base_202520_1`). |
 
 ### Optional flags
 
