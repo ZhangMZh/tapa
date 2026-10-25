@@ -136,17 +136,18 @@ aie:
   aiesim:
     streams:
       c_q:
-        beats: 128
+        beats: 256
         first_beat_ns: 230.4
-        last_beat_ns: 1043.2
+        last_beat_ns: 1862.4
         mean_beat_spacing_ns: 6.4
 ```
 
 A stream with a single beat reports no `mean_beat_spacing_ns`, since it has
 no interval to average. `tapa aiesim` also works on a work directory that
 has only been analyzed, which has no report yet; then no report is created
-and the timing stays on the console. A run with any output mismatch leaves
-both files untouched.
+and the timing stays on the console. Reports from before a later `analyze`
+or a failed synth are stale and are not updated. A run with any output
+mismatch leaves both files untouched.
 
 On an AI Engine 1 device, a kernel reads about 32 bits from its input streams
 per AI Engine cycle in total, however many stream ports it reads. That is one
