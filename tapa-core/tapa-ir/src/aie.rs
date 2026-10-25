@@ -195,6 +195,9 @@ impl AiePartition {
     /// gone, and every PLIO becomes a top-level stream port of the top task,
     /// named after its FIFO, carrying `aie_plio`. Codegen gives such a port
     /// its AXIS interface; `v++` wires it to the PLIO of the same name.
+    /// The projected top must keep a scalar or memory argument: only those
+    /// carry the `s_axi_control` interface, and a stream-only top packages
+    /// as `ap_ctrl_none`, which XRT can neither start nor wait on.
     pub fn pl_projection(&self, graph: &TaskGraph) -> Result<TaskGraph, AieError> {
         let mut pl = graph.clone();
         pl.tasks.retain(|_, task| task.synth != SynthTarget::Aie);
@@ -263,6 +266,21 @@ impl AiePartition {
                 stream_depth: None,
                 mmap_addr_width: None,
             });
+        }
+        // The same rule `kernel.xml` applies: `has_s_axi_control` exists only
+        // beside a scalar or memory argument, never a stream.
+        if !top
+            .ports
+            .iter()
+            .any(|port| port.cat.is_scalar() || port.cat.is_mmap_like())
+        {
+            return Err(AieError(format!(
+                "the top task `{}` keeps only stream ports beside the AI Engine graph; a \
+                 hybrid top needs at least one scalar or memory-mapped argument so Vitis \
+                 emits `ap_ctrl_hs` and XRT can start and wait on the PL kernel, not the \
+                 `ap_ctrl_none` of a free-running one",
+                graph.top
+            )));
         }
         Ok(pl)
     }

@@ -132,7 +132,7 @@ fn boundary_streams_become_plios_and_scalars_runtime_parameters() {
 
 fn upper_task_graph() -> TaskGraph {
     graph(json!({
-        "Top": {"level": "upper", "synth": "hls", "ports": [],
+        "Top": {"level": "upper", "synth": "hls", "ports": [scalar("n")],
             "tasks": {
                 "Load": [{"args": {"out": arg("a_q", "ostream")}}],
                 "Pipe": [{"step": -1, "args": {"a": arg("a_q", "istream"),
@@ -312,6 +312,45 @@ fn the_pl_projection_turns_plios_into_top_axis_ports() {
             ("c_q", ArgCategory::Istream, 32, Some(32)),
         ],
         "the top writes what the AI Engine reads, and reads what it writes"
+    );
+}
+
+/// A hybrid top left with only stream ports packages as `ap_ctrl_none`, a
+/// free-running kernel XRT can neither start nor wait on; the projection
+/// rejects it, while the same shape with no AI Engine task stays a legal
+/// PL-only stream top (`derive` finds no partition to project).
+#[test]
+fn a_hybrid_stream_only_top_is_rejected_for_lacking_kernel_control() {
+    let stream_only = |add_synth: &str| {
+        let add = leaf(
+            &json!([
+                stream("istream", "a", 32),
+                stream("ostream", "c", 32),
+                scalar("n"),
+            ]),
+            add_synth,
+        );
+        let mut g = vadd(&add, 32);
+        let top = g.tasks.get_mut("Top").expect("top");
+        top.ports.clear();
+        top.tasks.get_mut("Add").expect("add")[0].args.insert(
+            "n".into(),
+            serde_json::from_value(json!({"arg": {"width": 32, "value": 64}, "cat": "scalar"}))
+                .expect("constant"),
+        );
+        g
+    };
+
+    let g = stream_only("aie");
+    let partition = AiePartition::derive(&g).expect("derive").expect("aie");
+    let err = partition.pl_projection(&g).expect_err("stream-only top");
+    assert!(err.0.contains("the top task `Top`"), "{err}");
+    assert!(err.0.contains("ap_ctrl_hs"), "{err}");
+
+    assert_eq!(
+        AiePartition::derive(&stream_only("hls")).expect("derive"),
+        None,
+        "a PL-only stream top is unaffected"
     );
 }
 

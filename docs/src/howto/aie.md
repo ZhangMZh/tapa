@@ -33,7 +33,11 @@ tapa analyze ... --target xilinx-vitis --target Add:aie
 `TASK:TARGET` takes `aie`, `hls` or `ignore`; an unknown task name is an
 error. Inside an AI Engine upper task, a descendant explicitly marked for
 another target is an error. The top task cannot be an AI Engine task: the PL
-kernel owns the control interface.
+kernel owns the control interface. A hybrid top must also keep at least one
+scalar or memory (`mmap`) argument: a top with only stream ports packages as
+`ap_ctrl_none`, a free-running kernel XRT can neither start nor wait on, so
+`tapa synth` rejects it. (A PL-only design may still be a stream top; it just
+cannot be run through XRT.)
 
 ## What an AI Engine task may use
 
