@@ -3,6 +3,7 @@
 //! paths and definitions, and the device `aiecompiler` targets.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -17,6 +18,9 @@ use crate::tapacc::discover::find_resource;
 /// The device an AI Engine graph compiles for: a platform's `.xpfm`, or a
 /// part number when no platform is known.
 pub fn device(platform: Option<&str>, part: Option<&str>) -> Result<AieDevice> {
+    if let Some(part) = part {
+        return Ok(AieDevice::Part(part.to_string()));
+    }
     if let Some(platform) = platform {
         let dir = crate::steps::synth::resolve_platform_dir(platform).ok_or_else(|| {
             CliError::InvalidArg(format!("cannot find the platform `{platform}`"))
@@ -30,14 +34,11 @@ pub fn device(platform: Option<&str>, part: Option<&str>) -> Result<AieDevice> {
             })?;
         return Ok(AieDevice::Platform(xpfm));
     }
-    part.map(|part| AieDevice::Part(part.to_string()))
-        .ok_or_else(|| {
-            CliError::InvalidArg(
-                "the AI Engine compiler needs a device; pass `--platform` or `--part-num`, \
-                 or run `tapa synth` first"
-                    .to_string(),
-            )
-        })
+    Err(CliError::InvalidArg(
+        "the AI Engine compiler needs a device; pass `--platform` or `--part-num`, \
+         or run `tapa synth` first"
+            .to_string(),
+    ))
 }
 
 /// Where each AI Engine task is defined: the first translation unit of its
@@ -183,4 +184,47 @@ pub fn pl_freq_mhz(state: &tapa_ir::WorkState) -> Option<f64> {
 /// `<work_dir>/aie/<name>`.
 pub fn dir(work_dir: &Path, name: &str) -> Utf8PathBuf {
     crate::util::utf8(work_dir.join("aie").join(name))
+}
+
+/// The design `tapa synth` builds as RTL: the PL projection when some task
+/// is on the AI Engine, else the graph itself.
+pub fn pl_graph(graph: &Graph) -> Result<Graph> {
+    match AiePartition::derive(graph)? {
+        Some(partition) => Ok(partition.pl_projection(graph)?),
+        None => Ok(graph.clone()),
+    }
+}
+
+/// The `v++ --link` connectivity of the PLIOs: each PL kernel AXIS port is
+/// wired to the PLIO of the same name. The compute unit is named after the
+/// top task, as the bitstream script's `--connectivity.nk` names it.
+pub fn link_config(top: &str, partition: &AiePartition) -> String {
+    let mut out = String::from("[connectivity]\n");
+    for stream in &partition.streams {
+        if let tapa_ir::AieStreamKind::Plio { input, .. } = stream.kind {
+            let pl = format!("{top}.{}", stream.name);
+            let aie = format!("ai_engine_0.{}", stream.name);
+            let (src, dst) = if input { (pl, aie) } else { (aie, pl) };
+            let _ = writeln!(out, "stream_connect={src}:{dst}");
+        }
+    }
+    out
+}
+
+/// The AI Engine sidecars of a packaged `.xo`: `<name>.libadf.a` and
+/// `<name>.aie.cfg` next to `<name>.xo`.
+pub fn sidecars(xo: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    (xo.with_extension("libadf.a"), xo.with_extension("aie.cfg"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_explicit_part_overrides_the_platform_for_aie() {
+        let device = device(Some("/platform/does/not/exist"), Some("xcvc1902-test"))
+            .expect("explicit part wins without reading the platform");
+        assert!(matches!(device, AieDevice::Part(part) if part == "xcvc1902-test"));
+    }
 }

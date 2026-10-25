@@ -147,6 +147,23 @@ def _stage_pack_inputs(source, destination):
             path = path,
             dest = sh_quote(destination),
         ))
+    aie = sh_quote(source + "/aie")
+    lines.append("if [ -d {aie} ]; then cp -aL {aie} {dest}; fi".format(
+        aie = aie,
+        dest = sh_quote(destination),
+    ))
+    return "\n".join(lines)
+
+def _stage_aie_sidecars(output_file, destination):
+    """Expose any sidecars pack wrote beside the XO as a declared directory."""
+    stem = output_file.basename[:-3]
+    lines = ["mkdir -p {}".format(sh_quote(destination.path))]
+    for extension in ["libadf.a", "aie.cfg"]:
+        source = output_file.dirname + "/" + stem + "." + extension
+        lines.append("if [ -f {src} ]; then cp -aL {src} {dest}/; fi".format(
+            src = sh_quote(source),
+            dest = sh_quote(destination.path),
+        ))
     return "\n".join(lines)
 
 def _tapa_xo_impl(ctx):
@@ -169,6 +186,9 @@ def _tapa_xo_impl(ctx):
         output_file = ctx.actions.declare_file(ctx.attr.name + ".zip")
     if ctx.attr.target not in ["xilinx-vitis", "xilinx-hls"]:
         fail("Unsupported target: {}".format(ctx.attr.target))
+    aie_output_dir = None
+    if ctx.attr.target == "xilinx-vitis":
+        aie_output_dir = ctx.actions.declare_directory(ctx.attr.name + ".aie-sidecars")
 
     remote_args = []
     remote_host = _remote_host_flag()
@@ -266,21 +286,29 @@ def _tapa_xo_impl(ctx):
         pack_inputs.append(ctx.file.connectivity)
     if ctx.file.ssh_key:
         pack_inputs.append(ctx.file.ssh_key)
+    pack_outputs = [output_file, work_dir]
+    sidecar_outputs = []
+    if aie_output_dir:
+        pack_outputs.append(aie_output_dir)
+        sidecar_outputs.append(aie_output_dir)
     ctx.actions.run_shell(
-        outputs = [output_file, work_dir],
+        outputs = pack_outputs,
         inputs = pack_inputs,
         tools = [tapa_cli, ctx.executable.vitis_hls_env],
         command = _staged_tapa_command(
             pack_input_dir.path,
             work_dir.path,
             [ctx.executable.vitis_hls_env.path] + pack_cmd,
-        ),
+        ) + ("\n" + _stage_aie_sidecars(output_file, aie_output_dir) if aie_output_dir else ""),
         mnemonic = "TapaPack",
         use_default_shell_env = True,
         execution_requirements = _vendor_exec_requirements(ctx.attr.jobs, remote_host),
     )
 
-    return [DefaultInfo(files = depset([output_file]))]
+    return [
+        DefaultInfo(files = depset([output_file])),
+        OutputGroupInfo(aie_sidecars = depset(sidecar_outputs)),
+    ]
 
 def _tapa_reuse_work_dir_xo_impl(ctx):
     tapa_cli = ctx.executable.tapa_cli

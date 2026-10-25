@@ -1,10 +1,17 @@
+set -e
+
 TARGET=hw
 # TARGET=hw_emu
 # DEBUG=-g
 
 TOP={{ top }}
 XO={{ xo }}
-
+{% if let Some((libadf, aie_cfg)) = aie %}
+# The AI Engine graph and the PLIO connectivity of the kernel's AXIS ports.
+# A Versal link produces an .xsa that `v++ --package` turns into the xclbin.
+LIBADF={{ libadf }}
+AIE_CFG={{ aie_cfg }}
+{% endif %}
 {% if let Some(target_frequency) = target_frequency %}TARGET_FREQUENCY={{ target_frequency }}
 {% else %}
 >&2 echo "Using the default clock target of the platform."
@@ -22,7 +29,7 @@ PLACEMENT_STRATEGY="EarlyBlockPlacement"
 
 v++ ${DEBUG} \
   --link \
-  --output "${OUTPUT_DIR}/${TOP}_${PLATFORM}.xclbin" \
+  --output "${OUTPUT_DIR}/${TOP}_${PLATFORM}.{% if aie.is_some() %}xsa{% else %}xclbin{% endif %}" \
   --kernel "${TOP}" \
   --platform "${PLATFORM}" \
   --target "${TARGET}" \
@@ -32,7 +39,9 @@ v++ ${DEBUG} \
   --connectivity.nk "${TOP}:1:${TOP}" \
   --save-temps \
   "${XO}" \
-  --vivado.synth.jobs "${MAX_SYNTH_JOBS}" \
+{% if aie.is_some() %}  "${LIBADF}" \
+  --config "${AIE_CFG}" \
+{% endif %}  --vivado.synth.jobs "${MAX_SYNTH_JOBS}" \
   --vivado.prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.IS_ENABLED=1 \
   --vivado.prop=run.impl_1.STEPS.OPT_DESIGN.ARGS.DIRECTIVE="${STRATEGY}" \
   --vivado.prop=run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE="${PLACEMENT_STRATEGY}" \
@@ -41,4 +50,15 @@ v++ ${DEBUG} \
 {% if let Some(floorplan_xdc) = floorplan_xdc %}  --vivado.prop=run.impl_1.STEPS.OPT_DESIGN.TCL.PRE={{ floorplan_xdc }} \
 {% endif %}{% if let Some(connectivity_ini) = connectivity_ini %}  --config {{ connectivity_ini }} \
 {% endif %}{% if target_frequency.is_some() %}  --kernel_frequency "${TARGET_FREQUENCY}" \
+{% endif %}
+{% if aie.is_some() %}
+v++ ${DEBUG} \
+  --package \
+  --target "${TARGET}" \
+  --platform "${PLATFORM}" \
+  --save-temps \
+  --temp_dir "${OUTPUT_DIR}/${TOP}_${PLATFORM}.package" \
+  --output "${OUTPUT_DIR}/${TOP}_${PLATFORM}.xclbin" \
+  "${OUTPUT_DIR}/${TOP}_${PLATFORM}.xsa" \
+  "${LIBADF}"
 {% endif %}

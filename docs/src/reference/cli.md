@@ -264,7 +264,9 @@ The floorplanned `pack` consumes `floorplan.xdc` and the connectivity config aut
 
 Package RTL from the work directory into a single output artifact: an XO for
 the default `xilinx-vitis` target or a ZIP for `xilinx-hls`. Reads RTL
-produced by `tapa synth`.
+produced by `tapa synth`. A design with AI Engine tasks also gets
+`<name>.libadf.a` and `<name>.aie.cfg` next to the XO; see
+[AI Engine Tasks](../howto/aie.md).
 
 ### Optional flags
 

@@ -805,8 +805,7 @@ void ProgramBuilder::FillOwnedTasks(int tu, Program& view,
     ReadAieAttrs(ctx, model);
     if (model.target == SynthTarget::kAie) {
       CheckAieTask(ctx, model);
-    } else if (model.level == TaskLevel::kLower &&
-               model.target != SynthTarget::kIgnore) {
+    } else if (model.target != SynthTarget::kIgnore) {
       if (model.level == TaskLevel::kLower) {
         model.aie_stack_bytes = LocalBytes(ctx, model.def);
       }

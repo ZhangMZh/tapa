@@ -14,7 +14,7 @@
 //!   `.xo` is on disk, so the script points at a real artifact.
 
 use camino::Utf8PathBuf;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tapa_ir::{ClockPeriod, Design, WorkState};
 use tapa_xilinx::{
     normalize_hls_report_text, pack_xo as xilinx_pack_xo, DeviceInfo, KernelXmlArgs,
@@ -25,7 +25,7 @@ use crate::context::CliContext;
 use crate::error::{CliError, Result};
 use crate::state::work::FlowSettings;
 
-use super::bitstream_script::write_vitis_script;
+use super::bitstream_script::{write_vitis_script, LinkExtras};
 use super::custom_rtl::{apply_custom_rtl, load_templates_info, warn_unimplemented_templates};
 use super::kernel_xml_ports::{build_kernel_xml_ports, m_axi_param_block};
 use super::{enforce_xo_suffix, PackArgs};
@@ -55,11 +55,19 @@ pub(super) fn pack_vitis(args: &PackArgs, ctx: &CliContext, state: &WorkState) -
     ctx.with_tool_runner(|runner| {
         package_prepared_vitis_rtl(runner, state, &hdl_dir, &output_path, Some(&ctx.work_dir))
     })?;
+    let aie = write_aie_sidecars(&ctx.work_dir, design, &output_path)?;
 
     // Emit the bitstream helper after packaging so it points at the
     // completed `.xo`.
     if let Some(script_dest) = args.bitstream_script.as_deref() {
-        emit_bitstream_script(flow, script_dest, &design.top, &output_path, &link_inputs)?;
+        emit_bitstream_script(
+            flow,
+            script_dest,
+            &design.top,
+            &output_path,
+            &link_inputs,
+            aie.as_ref(),
+        )?;
     }
 
     Ok(())
@@ -78,7 +86,8 @@ pub fn package_prepared_vitis_rtl(
     xo_path: &Path,
     report_work_dir: Option<&Path>,
 ) -> Result<Utf8PathBuf> {
-    let design = &state.graph;
+    // The `.xo` is the PL half: AI Engine streams are its AXIS ports.
+    let design = &crate::aie::pl_graph(&state.graph)?;
     let flow = &state.flow;
     let top_task = resolve_top_task(design)?;
     let state_root = report_work_dir
@@ -412,12 +421,41 @@ fn resolve_link_inputs(
     })
 }
 
+/// Copy the AI Engine graph `tapa synth` compiled next to the `.xo` as
+/// `<name>.libadf.a`, with its link connectivity as `<name>.aie.cfg`.
+fn write_aie_sidecars(
+    work_dir: &Path,
+    design: &Design,
+    xo: &Path,
+) -> Result<Option<(PathBuf, PathBuf)>> {
+    let Some(partition) = tapa_ir::AiePartition::derive(design)? else {
+        return Ok(None);
+    };
+    let libadf = crate::aie::dir(work_dir, "hw").join("libadf.a");
+    if !libadf.is_file() {
+        return Err(CliError::MissingState {
+            name: "the compiled AI Engine graph (rerun `tapa synth`)".to_string(),
+            path: libadf.into(),
+        });
+    }
+    let (libadf_out, cfg_out) = crate::aie::sidecars(xo);
+    fs_err::copy(&libadf, &libadf_out)?;
+    fs_err::write(&cfg_out, crate::aie::link_config(&design.top, &partition))?;
+    log::info!(
+        "AI Engine graph: {} and {}",
+        libadf_out.display(),
+        cfg_out.display()
+    );
+    Ok(Some((libadf_out, cfg_out)))
+}
+
 fn emit_bitstream_script(
     flow: &FlowSettings,
     script_dest: &Path,
     top: &str,
     output_path: &Path,
     link_inputs: &LinkInputs,
+    aie: Option<&(PathBuf, PathBuf)>,
 ) -> Result<()> {
     write_vitis_script(
         script_dest,
@@ -425,8 +463,11 @@ fn emit_bitstream_script(
         output_path,
         flow.platform.as_deref(),
         flow.clock_period,
-        link_inputs.floorplan_xdc.as_deref(),
-        link_inputs.connectivity.as_deref(),
+        LinkExtras {
+            floorplan_xdc: link_inputs.floorplan_xdc.as_deref(),
+            connectivity_ini: link_inputs.connectivity.as_deref(),
+            aie,
+        },
     )?;
     log::info!("generate the v++ script at {}", script_dest.display());
     Ok(())

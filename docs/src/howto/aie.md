@@ -6,9 +6,6 @@ AI Engine tile, and every stream between it and a PL task becomes a PLIO
 connection. Software simulation is unchanged: an AI Engine task runs as an
 ordinary task.
 
-`tapa analyze` accepts AI Engine tasks and `tapa aiesim` simulates them.
-`tapa synth` does not build them yet and stops with a message naming the task.
-
 The working example is `tests/functional/aie-vadd/`.
 
 ## Marking a task
@@ -105,3 +102,29 @@ per AI Engine cycle in total, however many stream ports it reads. That is one
 6.4 ns per output beat. Measure each kernel this way rather than planning on
 the port count. A frame port (`[[tapa::aie_frame(N)]]`) is filled by DMA and
 does not consume that budget.
+
+## Building and linking
+
+`tapa compile` (or `analyze`, `synth`, `pack`) builds both halves. The flow
+must be `xilinx-vitis`, because `v++` links the AI Engine graph with the PL
+kernel:
+
+```bash
+tapa --work-dir work.out compile -f vadd.cpp -t VecAdd \
+  --platform xilinx_vck190_base_202520_1 -o vadd.xo -s link.sh
+```
+
+- `tapa synth` compiles the AI Engine tasks into `work.out/aie/hw/libadf.a`
+  with `aiecompiler --target=hw`, which needs the AI Engine compiler licence,
+  and synthesizes only the PL tasks. Each PL-to-AI Engine stream becomes an
+  AXIS port of the PL kernel named after the stream, and its PLIO runs at the
+  PL kernel clock.
+- `tapa pack` writes the PL kernel as `vadd.xo` and, next to it, the graph as
+  `vadd.libadf.a` and the PLIO connectivity as `vadd.aie.cfg`, one
+  `stream_connect` per boundary stream between the kernel's compute unit
+  (named after the top task) and `ai_engine_0`.
+- The `-s` script links the three into an `.xsa` and packages that into the
+  `.xclbin`.
+
+A stream into the AI Engine asserts TLAST on every beat. The AI Engine
+interface would otherwise hold a lone 32-bit word until a second one arrives.

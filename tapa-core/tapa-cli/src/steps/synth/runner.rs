@@ -5,7 +5,7 @@
 //! owns the unsupported-flag gating, the HLS cflag construction, and
 //! the recursive Verilog-file walker that feeds the codegen step.
 
-use tapa_ir::{ClockPeriod, Task};
+use tapa_ir::{ClockPeriod, Task, WorkState};
 use tapa_xilinx::{CsynthReport, ToolRunner};
 
 use crate::context::CliContext;
@@ -33,16 +33,11 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
     // there is nothing left for this step to re-check: synthesis is Xilinx
     // HLS for every supported flow.
     let mut state = work_io::load(&ctx.work_dir)?;
-    if let Some(name) = state
-        .graph
-        .tasks
-        .iter()
-        .find_map(|(name, task)| (task.synth == tapa_ir::SynthTarget::Aie).then_some(name))
-    {
-        return Err(CliError::InvalidArg(format!(
-            "task `{name}` is an AI Engine task, which this `tapa synth` \
-             cannot build yet"
-        )));
+    let partition = tapa_ir::AiePartition::derive(&state.graph)?;
+    if partition.is_some() && state.graph.target != tapa_ir::Target::XilinxVitis {
+        return Err(CliError::InvalidArg(
+            "AI Engine tasks are linked by `v++`; analyze with `--target xilinx-vitis`".to_string(),
+        ));
     }
 
     let device = resolve_device_info(args)?;
@@ -58,10 +53,32 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
     // runs, so an interrupted rerun cannot be packed or floorplanned as if it
     // had completed successfully.
     state.flow.synthed = false;
+    state.flow.skip_aie = args.skip_aie;
     state.floorplan = None;
     work_io::store(&ctx.work_dir, &state)?;
 
-    let sources = stage_hls_sources(&ctx.work_dir, &state.graph)?;
+    if let Some(partition) = &partition {
+        build_aie(
+            args,
+            ctx,
+            runner,
+            &state,
+            partition,
+            &device.part_num,
+            clock_period,
+        )?;
+    let graph_dir = crate::aie::dir(&ctx.work_dir, "hw");
+    match &partition {
+        Some(partition) if !args.skip_aie => {
+            build_aie(args, ctx, runner, &state, partition, clock_period)?;
+        }
+        // A graph left from an earlier run must not be packed with this one.
+        _ if graph_dir.exists() => fs_err::remove_dir_all(&graph_dir)?,
+        _ => {}
+    }
+    // HLS and codegen see the PL half only; the state keeps the whole graph.
+    let pl_graph = crate::aie::pl_graph(&state.graph)?;
+    let sources = stage_hls_sources(&ctx.work_dir, &pl_graph)?;
 
     let opts = HlsRunOptions {
         part_num: device.part_num.clone(),
@@ -73,7 +90,7 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
         jobs: args.jobs,
         keep_work_dir: args.keep_hls_work_dir,
     };
-    let hls_results = run_hls_for_leaves(runner, &ctx.work_dir, &state.graph, &sources, &opts)?;
+    let hls_results = run_hls_for_leaves(runner, &ctx.work_dir, &pl_graph, &sources, &opts)?;
 
     let mut hdl_inputs: TaskHdlInputs = TaskHdlInputs::new();
     for (task_name, layout, out) in &hls_results {
@@ -87,15 +104,16 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
             apply_hls_metrics(task_name, task, &out.csynth)?;
         }
     }
+    let mut pl_graph = crate::aie::pl_graph(&state.graph)?;
     let projection = state
         .flow
         .flatten_hierarchy
-        .then(|| tapa_ir::transforms::flatten_with_origins(&state.graph))
+        .then(|| tapa_ir::transforms::flatten_with_origins(&pl_graph))
         .transpose()
         .map_err(|error| CliError::Codegen(format!("cannot flatten the task graph: {error}")))?;
     generate_rtl_tree(
         &ctx.work_dir,
-        &state.graph,
+        &pl_graph,
         &hdl_inputs,
         None,
         projection.as_ref(),
@@ -107,13 +125,18 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
     if args.enable_synth_util {
         emit_post_synth_util(
             &ctx.work_dir,
-            &mut state.graph,
+            &mut pl_graph,
             &device.part_num,
             args.jobs,
             runner,
             &sources,
             projection.as_ref().map(|projection| &projection.flat),
         )?;
+        for (name, task) in &pl_graph.tasks {
+            if let Some(original) = state.graph.tasks.get_mut(name) {
+                original.total_area.clone_from(&task.total_area);
+            }
+        }
     }
 
     // Emit `report.{json,yaml}` at the work-dir root once area data is
@@ -121,16 +144,48 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
     // `.zip`) bundle the YAML at archive root.
     write_top_report(
         &ctx.work_dir,
-        &state.graph,
+        &pl_graph,
         &args.override_report_schema_version,
     )?;
 
-    write_templates_info(&ctx.work_dir, &state.graph)?;
+    write_templates_info(&ctx.work_dir, &pl_graph)?;
     state.flow.synthed = true;
     work_io::store(&ctx.work_dir, &state)?;
 
-    report_timing_summary(clock_period, &state.graph);
+    report_timing_summary(clock_period, &pl_graph);
 
+    Ok(())
+}
+
+/// Compile the AI Engine partition for hardware into
+/// `<work_dir>/aie/hw/libadf.a`, with its PLIOs at the PL clock.
+fn build_aie(
+    args: &SynthArgs,
+    ctx: &CliContext,
+    runner: &dyn ToolRunner,
+    state: &WorkState,
+    partition: &tapa_ir::AiePartition,
+    clock_period: ClockPeriod,
+) -> Result<()> {
+    use crate::aie::{device, dir, prepare, GraphBuild};
+    let job = prepare(
+        &ctx.work_dir,
+        &state.graph,
+        partition,
+        GraphBuild {
+            dir: dir(&ctx.work_dir, "hw"),
+            target: tapa_xilinx::tools::aie::AieTarget::Hw,
+            device: device(args.platform.as_deref(), args.part_num.as_deref())?,
+            pl_freq_mhz: Some(1000.0 / clock_period.nanoseconds()),
+            sim: None,
+        },
+    )?;
+    log::info!(
+        "compiling {} AI Engine kernel(s) into {}",
+        partition.kernels.len(),
+        job.graph_dir.join("libadf.a")
+    );
+    tapa_xilinx::tools::aie::compile(runner, &job)?;
     Ok(())
 }
 

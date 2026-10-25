@@ -162,7 +162,15 @@ fn run_with(
         AieTarget::X86sim
     };
     let platform = args.platform.as_deref().or(state.flow.platform.as_deref());
-    let part = args.part_num.as_deref().or(state.flow.part_num.as_deref());
+    // An explicit part is an override for both HLS and AIE. An explicit
+    // platform instead supersedes the part persisted by an earlier run.
+    let part = if args.part_num.is_some() {
+        args.part_num.as_deref()
+    } else if args.platform.is_some() {
+        None
+    } else {
+        state.flow.part_num.as_deref()
+    };
     let graph_dir = dir(&ctx.work_dir, "sim");
     let job = prepare(
         &ctx.work_dir,

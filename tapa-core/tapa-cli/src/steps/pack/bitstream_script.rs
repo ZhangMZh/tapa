@@ -14,6 +14,17 @@ use tapa_ir::ClockPeriod;
 use crate::error::{CliError, Result};
 use crate::util::shell_quote;
 
+/// The optional inputs a link takes besides the `.xo`.
+#[derive(Debug, Default, Clone, Copy)]
+pub(super) struct LinkExtras<'a> {
+    /// Pblock constraints, sourced as an `OPT_DESIGN.TCL.PRE` hook.
+    pub floorplan_xdc: Option<&'a Path>,
+    /// Memory connectivity, added as a `--config`.
+    pub connectivity_ini: Option<&'a Path>,
+    /// The AI Engine graph (`libadf.a`) and its PLIO connectivity.
+    pub aie: Option<&'a (PathBuf, PathBuf)>,
+}
+
 /// Render the `#!/bin/bash` v++ script with an absolute `.xo` path.
 ///
 /// When `floorplan_xdc` is set, the pblock constraints are sourced as an
@@ -25,8 +36,7 @@ pub(super) fn render_vitis_script(
     output_file: &Path,
     platform: Option<&str>,
     clock_period: Option<ClockPeriod>,
-    floorplan_xdc: Option<&Path>,
-    connectivity_ini: Option<&Path>,
+    extras: LinkExtras<'_>,
 ) -> Result<String> {
     #[derive(askama::Template)]
     #[template(path = "vitis_script.sh.j2", escape = "none")]
@@ -37,7 +47,18 @@ pub(super) fn render_vitis_script(
         platform: Option<&'a str>,
         floorplan_xdc: Option<&'a str>,
         connectivity_ini: Option<&'a str>,
+        /// The AI Engine graph and its link connectivity.
+        aie: Option<(String, String)>,
     }
+    let LinkExtras {
+        floorplan_xdc,
+        connectivity_ini,
+        aie,
+    } = extras;
+    let aie = aie.map(|(libadf, cfg)| {
+        let quoted = |p: &Path| shell_quote(&absolutize_lexical(p).display().to_string());
+        (quoted(libadf), quoted(cfg))
+    });
     let top = shell_quote(top);
     let xo = shell_quote(&absolutize_lexical(output_file).display().to_string());
     let platform = platform.filter(|value| !value.is_empty()).map(shell_quote);
@@ -66,6 +87,7 @@ pub(super) fn render_vitis_script(
             platform: platform.as_deref(),
             floorplan_xdc: floorplan_xdc.as_deref(),
             connectivity_ini: connectivity_ini.as_deref(),
+            aie,
         })
         .expect("render succeeds")
     );
@@ -80,22 +102,14 @@ pub(super) fn write_vitis_script(
     output_file: &Path,
     platform: Option<&str>,
     clock_period: Option<ClockPeriod>,
-    floorplan_xdc: Option<&Path>,
-    connectivity_ini: Option<&Path>,
+    extras: LinkExtras<'_>,
 ) -> Result<()> {
     if let Some(parent) = dest.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent)?;
         }
     }
-    let body = render_vitis_script(
-        top,
-        output_file,
-        platform,
-        clock_period,
-        floorplan_xdc,
-        connectivity_ini,
-    )?;
+    let body = render_vitis_script(top, output_file, platform, clock_period, extras)?;
     fs::write(dest, body)?;
     set_executable(dest)?;
     Ok(())
@@ -142,8 +156,11 @@ mod tests {
             output_file,
             platform,
             clock_period,
-            floorplan_xdc,
-            connectivity_ini,
+            LinkExtras {
+                floorplan_xdc,
+                connectivity_ini,
+                aie: None,
+            },
         )
         .expect("valid script inputs")
     }
@@ -273,8 +290,7 @@ mod tests {
             Path::new("/tmp/a.xo"),
             Some("plat"),
             Some(ClockPeriod::from_picoseconds(3330)),
-            None,
-            None,
+            LinkExtras::default(),
         )
         .expect("write script");
 
@@ -292,6 +308,110 @@ mod tests {
                 "bitstream script must be executable; got mode {mode:o}",
             );
         }
+    }
+
+    /// With an AI Engine graph the link takes `libadf.a` and the PLIO
+    /// connectivity and writes an `.xsa`, which a second `v++` packages.
+    #[test]
+    fn aie_script_links_the_graph_then_packages_the_xsa() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("run.sh");
+        let aie = (dir.path().join("k.libadf.a"), dir.path().join("k.aie.cfg"));
+        write_vitis_script(
+            &script,
+            "Top",
+            &dir.path().join("k.xo"),
+            Some("vck"),
+            None,
+            LinkExtras {
+                aie: Some(&aie),
+                ..LinkExtras::default()
+            },
+        )
+        .expect("write script");
+        let output = std::process::Command::new("bash")
+            .args([
+                "-c",
+                r#"v++() { printf '%s\0' "$@"; printf '\n'; }
+source "$1""#,
+                "capture-vitis-script",
+            ])
+            .arg(&script)
+            .current_dir(dir.path())
+            .output()
+            .expect("execute rendered Bash script");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let captured = String::from_utf8(output.stdout).expect("UTF-8 arguments");
+        let runs: Vec<Vec<&str>> = captured
+            .lines()
+            .map(|line| line.split_terminator('\0').collect())
+            .collect();
+        let [link, package] = runs.as_slice() else {
+            panic!("two v++ runs expected: {runs:?}")
+        };
+        let libadf = aie.0.to_str().expect("UTF-8");
+        assert!(
+            link.contains(&"--link") && link.contains(&libadf),
+            "{link:?}"
+        );
+        assert!(
+            link.windows(2)
+                .any(|pair| pair == ["--config", aie.1.to_str().expect("UTF-8")]),
+            "{link:?}"
+        );
+        assert!(
+            link.iter().any(|arg| arg.ends_with("Top_vck.xsa")),
+            "{link:?}"
+        );
+        assert!(
+            package.contains(&"--package") && package.contains(&libadf),
+            "{package:?}"
+        );
+        assert!(
+            package.iter().any(|arg| arg.ends_with("Top_vck.xclbin")),
+            "{package:?}"
+        );
+    }
+
+    #[test]
+    fn aie_script_stops_when_link_fails() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("run.sh");
+        let aie = (dir.path().join("k.libadf.a"), dir.path().join("k.aie.cfg"));
+        write_vitis_script(
+            &script,
+            "Top",
+            &dir.path().join("k.xo"),
+            Some("vck"),
+            None,
+            LinkExtras {
+                aie: Some(&aie),
+                ..LinkExtras::default()
+            },
+        )
+        .expect("write script");
+        let output = std::process::Command::new("bash")
+            .args([
+                "-c",
+                r#"v++() { printf '%s\0' "$@"; printf '\n'; if [ "$1" = --link ]; then return 1; fi; }
+source "$1""#,
+                "failing-vitis-script",
+            ])
+            .arg(&script)
+            .current_dir(dir.path())
+            .output()
+            .expect("execute rendered Bash script");
+        assert!(
+            !output.status.success(),
+            "a failed link must fail the script"
+        );
+        let captured = String::from_utf8(output.stdout).expect("UTF-8 arguments");
+        assert!(captured.contains("--link"), "{captured}");
+        assert!(!captured.contains("--package"), "{captured}");
     }
 
     #[test]
@@ -314,8 +434,11 @@ mod tests {
                 &xo,
                 platform.to_str(),
                 Some(ClockPeriod::from_picoseconds(3330)),
-                Some(&xdc),
-                Some(&ini),
+                LinkExtras {
+                    floorplan_xdc: Some(&xdc),
+                    connectivity_ini: Some(&ini),
+                    aie: None,
+                },
             )
             .expect("write script");
             let output = std::process::Command::new("bash")
@@ -376,9 +499,14 @@ source "$1""#,
     fn a_period_with_no_usable_frequency_is_rejected() {
         for picoseconds in [0, u64::MAX] {
             let clock = ClockPeriod::from_picoseconds(picoseconds);
-            let error =
-                render_vitis_script("Top", Path::new("/tmp/a.xo"), None, Some(clock), None, None)
-                    .expect_err("invalid clock period");
+            let error = render_vitis_script(
+                "Top",
+                Path::new("/tmp/a.xo"),
+                None,
+                Some(clock),
+                LinkExtras::default(),
+            )
+            .expect_err("invalid clock period");
             assert!(error.to_string().contains("bitstream script"), "{error}");
         }
     }

@@ -44,7 +44,8 @@ pub struct GraphOptions {
     pub sources: BTreeMap<String, KernelSource>,
     /// The PL clock driving every PLIO, in MHz.
     pub plio_mhz: Option<f64>,
-    /// Emit a simulator `main`.
+    /// The simulator `main` that writes the runtime parameters and runs the
+    /// graph; without it, `main` only initializes and ends the graph.
     pub sim: Option<SimMain>,
 }
 
@@ -343,8 +344,19 @@ fn graph(partition: &AiePartition, options: &GraphOptions) -> Result<String> {
         members = text.members,
         body = text.body,
     );
-    if let Some(sim) = &options.sim {
-        out.push_str(&sim_main(partition, sim)?);
+    // `aiecompiler --target=hw` builds a simulation model of the PS side
+    // too, which needs an entry point even when only `libadf.a` is wanted.
+    match &options.sim {
+        Some(sim) => out.push_str(&sim_main(partition, sim)?),
+        None => {
+            let _ = write!(
+                out,
+                "\n#if defined(__AIESIM__) || defined(__X86SIM__)\n\
+                 // `tapa aiesim` builds the graph with its own entry point.\n\
+                 int main() {{\n  {GRAPH_INSTANCE}.init();\n  {GRAPH_INSTANCE}.end();\n  \
+                 return 0;\n}}\n#endif\n"
+            );
+        }
     }
     Ok(out)
 }
@@ -533,7 +545,10 @@ mod tests {
         ] {
             assert!(graph.contains(line), "missing `{line}` in:\n{graph}");
         }
-        assert!(!graph.contains("main()"), "no simulator entry point");
+        assert!(
+            graph.contains("int main() {\n  tapa_aie.init();\n  tapa_aie.end();"),
+            "a bare entry point for the hardware build's PS model"
+        );
         assert!(
             !graph.contains("fifo_depth(n_a_q)"),
             "a PLIO takes no depth"
