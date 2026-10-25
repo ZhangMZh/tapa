@@ -47,16 +47,20 @@ fn attr_value(e: &quick_xml::events::BytesStart<'_>, name: &str) -> Result<Optio
 /// Parse the `.hpfm` XML document body (namespace-aware).
 ///
 /// Scans for `platformInfo` / `xd:platformInfo` and extracts
-/// `deviceInfo@name` and the first `clock@period` where `clock@id == "0"`.
-/// This is resilient to different nesting depths (e.g. root `platform`
-/// vs root `component`).
+/// `deviceInfo@name` and the period of the platform's default clock: the
+/// `clock` whose `id` is `systemClocks@defaultClock`, falling back to id
+/// `"0"`. On Alveo shells the default is id 0; a Versal base platform
+/// declares another (VCK190: id 2, 312.5 MHz, while id 0 runs at 625 MHz),
+/// and `v++` wires the kernel to the default. This is resilient to
+/// different nesting depths (e.g. root `platform` vs root `component`).
 pub fn parse_hpfm_xml(xml: &[u8]) -> Result<DeviceInfo> {
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(true);
 
     let mut buf = Vec::new();
     let mut part_num: Option<String> = None;
-    let mut clock_period: Option<String> = None;
+    let mut default_clock: Option<String> = None;
+    let mut periods: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     let mut in_platform_info = false;
 
     loop {
@@ -77,8 +81,15 @@ pub fn parse_hpfm_xml(xml: &[u8]) -> Result<DeviceInfo> {
                         "deviceInfo" => {
                             part_num = attr_value(e, "name")?;
                         }
-                        "clock" if attr_value(e, "id")?.as_deref() == Some("0") => {
-                            clock_period = attr_value(e, "period")?;
+                        "systemClocks" => {
+                            default_clock = attr_value(e, "defaultClock")?;
+                        }
+                        "clock" => {
+                            if let (Some(id), Some(period)) =
+                                (attr_value(e, "id")?, attr_value(e, "period")?)
+                            {
+                                periods.entry(id).or_insert(period);
+                            }
                         }
                         _ => {}
                     }
@@ -95,6 +106,9 @@ pub fn parse_hpfm_xml(xml: &[u8]) -> Result<DeviceInfo> {
         buf.clear();
     }
 
+    let clock_period = default_clock
+        .and_then(|id| periods.get(&id).cloned())
+        .or_else(|| periods.get("0").cloned());
     match (part_num, clock_period) {
         (Some(part_num), Some(clock_period)) => Ok(DeviceInfo {
             part_num,
@@ -215,6 +229,22 @@ mod tests {
         let info = parse_hpfm_xml(HPFM_XD.as_bytes()).unwrap();
         assert_eq!(info.part_num, "xcu250-figd2104-2L-e");
         assert_eq!(info.clock_period, "3.333");
+    }
+
+    #[test]
+    fn versal_platform_takes_its_declared_default_clock() {
+        // The VCK190 base platform: id 0 runs at 625 MHz, but v++ wires
+        // kernels to the declared default, id 2.
+        let xml = r#"<xd:platformInfo xmlns:xd="http://www.xilinx.com/xd">
+          <xd:deviceInfo xd:name="xcvc1902-vsva2197-2MP-e-S"/>
+          <xd:systemClocks xd:defaultClock="2">
+            <xd:clock xd:name="CPU" xd:period="1000.000000"/>
+            <xd:clock xd:id="0" xd:period="1.600000"/>
+            <xd:clock xd:id="2" xd:period="3.200000"/>
+          </xd:systemClocks>
+        </xd:platformInfo>"#;
+        let info = parse_hpfm_xml(xml.as_bytes()).unwrap();
+        assert_eq!(info.clock_period, "3.200000");
     }
 
     #[test]
