@@ -26,7 +26,7 @@ pub const FRT_STREAM_DEBUG: &str = "FRT_STREAM_DEBUG";
 // ── Shared memory ───────────────────────────────────────────────────────
 pub const FRT_SHM_MIN_DEPTH: &str = "FRT_SHM_MIN_DEPTH";
 
-// ── XRT / OpenCL device selection ───────────────────────────────────────
+// ── XRT device selection ────────────────────────────────────────────────
 pub const FRT_XOCL_BDF: &str = "FRT_XOCL_BDF";
 
 // ── Internal (set by runners, read by DPI libraries) ────────────────────

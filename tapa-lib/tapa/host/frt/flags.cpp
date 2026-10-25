@@ -27,7 +27,7 @@ DEFINE_bool(cosim_resume_from_post_sim, false,
             "skip re-running the simulator and execute only post-sim checks");
 DEFINE_string(xocl_bdf, "",
               "if not empty, use the specified PCIe Bus:Device:Function for "
-              "XRT/OpenCL device selection");
+              "XRT device selection");
 
 namespace tapa {
 namespace internal {

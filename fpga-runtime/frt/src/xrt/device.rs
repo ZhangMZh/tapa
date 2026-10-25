@@ -1,106 +1,92 @@
-use super::metadata::{extract_embedded_xml, extract_platform_vbnv, parse_embedded_xml};
+use super::api::{
+    api, Api, Handle, RUN_ABORT, RUN_COMPLETED, RUN_ERROR, RUN_NORESPONSE, RUN_SKCRASHED,
+    RUN_SKERROR, RUN_SUBMITTED, RUN_TIMEOUT, SYNC_FROM_DEVICE, SYNC_TO_DEVICE,
+};
+use super::metadata::{
+    extract_embedded_xml, extract_platform_vbnv, parse_aie_graph, parse_embedded_xml, AieGraph,
+};
 use crate::device::{BufferAccess, Device};
 use crate::error::{FrtError, Result};
 use frt_cosim::metadata::kernel_xml::{KernelXml, XclbinTarget};
 use frt_cosim::metadata::normalized_scalar_bytes;
 use frt_cosim::metadata::ArgKind;
 use frt_cosim::runner::environ::xilinx_environ;
-use opencl3::command_queue::{
-    CommandQueue, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, CL_QUEUE_PROFILING_ENABLE,
-};
-use opencl3::context::Context;
-use opencl3::device::{Device as OclDevice, CL_DEVICE_TYPE_ACCELERATOR, CL_DEVICE_TYPE_ALL};
-use opencl3::event::Event;
-use opencl3::kernel::{set_kernel_arg, Kernel};
-use opencl3::memory::{Buffer, ClMem, CL_MEM_READ_WRITE, CL_MEM_USE_HOST_PTR};
-use opencl3::platform::get_platforms;
-use opencl3::program::Program;
-use opencl3::types::{cl_device_id, cl_event, CL_BLOCKING};
 use std::collections::HashMap;
-use std::ffi::c_void;
-use std::ffi::CStr;
+use std::ffi::{c_int, c_void, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 
+/// A host buffer and the XRT buffer object the kernel sees. A page-aligned
+/// host buffer backs its buffer object directly; any other is staged
+/// through a device-side copy.
 struct BufferBinding {
     ptr: *mut u8,
     bytes: usize,
     access: BufferAccess,
-    buffer: Buffer<u8>,
+    bo: Handle,
+    staged: bool,
 }
 
 enum ExecutionState {
     Idle,
-    Running(Event),
-    // Retain the event for readback dependencies and profiling after completion.
-    Finished(Option<Event>),
+    Running(Instant),
+    Finished,
 }
 
-impl ExecutionState {
-    fn event(&self) -> Option<&Event> {
-        match self {
-            Self::Running(event) | Self::Finished(Some(event)) => Some(event),
-            Self::Idle | Self::Finished(None) => None,
-        }
-    }
-
-    fn launch(&mut self, enqueue: impl FnOnce() -> Result<Event>) -> Result<()> {
-        let event = enqueue()?;
-        *self = Self::Running(event);
-        Ok(())
-    }
-
-    fn finish(&mut self) {
-        let event = match std::mem::replace(self, Self::Finished(None)) {
-            Self::Running(event) | Self::Finished(Some(event)) => Some(event),
-            Self::Idle | Self::Finished(None) => None,
-        };
-        *self = Self::Finished(event);
-    }
-
-    fn poll(&mut self) -> Result<bool> {
-        match self {
-            Self::Idle => Ok(false),
-            Self::Finished(_) => Ok(true),
-            Self::Running(event) => {
-                let status = ocl_result(
-                    event.command_execution_status(),
-                    "query OpenCL event execution status",
-                )?;
-                let done = status.0 <= 0;
-                if done {
-                    self.finish();
-                }
-                Ok(done)
-            }
-        }
-    }
-
-    fn elapsed_ns(&self) -> u64 {
-        self.event()
-            .map_or(0, |event| elapsed_ns(std::slice::from_ref(event)))
-    }
-}
+/// XRT's user-pointer buffers must start on a 4 KiB boundary.
+const USER_PTR_ALIGNMENT: usize = 4096;
 
 pub struct XrtDevice {
-    _meta: KernelXml,
-    context: Context,
-    queue: CommandQueue,
-    kernel: Kernel,
+    meta: KernelXml,
+    api: &'static Api,
+    device: Handle,
+    kernel: Handle,
+    run: Handle,
     scalars: HashMap<u32, Vec<u8>>,
     buffers: HashMap<u32, BufferBinding>,
-    load_events: Vec<Event>,
     execution_state: ExecutionState,
-    store_events: Vec<Event>,
     load_ns: u64,
     compute_ns: u64,
     store_ns: u64,
 }
 
-// SAFETY: XrtDevice is only accessed from a single thread at a time.
-// The OpenCL types (Context, CommandQueue, Kernel) are internally
-// reference-counted by the driver; Buffer<u8> wraps a cl_mem handle.
+// SAFETY: XrtDevice is only accessed from a single thread at a time; the
+// XRT handles it owns are reference-counted objects inside XRT.
 unsafe impl Send for XrtDevice {}
+
+/// Fails with what XRT was asked to do when a call returns non-zero.
+fn check(rc: c_int, action: &str) -> Result<()> {
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(FrtError::Xrt(format!(
+            "cannot {action} (XRT returned {rc})"
+        )))
+    }
+}
+
+fn non_null(handle: Handle, action: &str) -> Result<Handle> {
+    if handle.is_null() {
+        Err(FrtError::Xrt(format!("cannot {action}")))
+    } else {
+        Ok(handle)
+    }
+}
+
+fn elapsed_ns(since: Instant) -> u64 {
+    u64::try_from(since.elapsed().as_nanos()).unwrap_or(u64::MAX)
+}
+
+/// Whether an `ert_cmd_state` is a terminal failure rather than a pending
+/// state or successful completion. ERT assigns SUBMITTED a value above the
+/// terminal errors, so range comparisons are not a valid state classifier.
+fn is_run_error(state: c_int) -> bool {
+    matches!(
+        state,
+        RUN_ERROR | RUN_ABORT | RUN_TIMEOUT | RUN_NORESPONSE | RUN_SKERROR | RUN_SKCRASHED
+    )
+}
 
 impl XrtDevice {
     pub fn open(xclbin_path: &Path) -> Result<Self> {
@@ -118,53 +104,136 @@ impl XrtDevice {
             }
         }
         bootstrap_emulation_env_once(&meta)?;
+        let api = api()?;
 
-        let device_id = select_device(&meta)?;
-        let ocl_device = OclDevice::new(device_id);
-        let context = ocl_result(Context::from_device(&ocl_device), "create OpenCL context")?;
-        let queue = ocl_result(
-            #[allow(
-                deprecated,
-                reason = "opencl3 CommandQueue::create_default is the stable API for this crate version"
-            )]
-            CommandQueue::create_default(
-                &context,
-                CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_PROFILING_ENABLE,
-            ),
-            "create OpenCL command queue",
-        )?;
-
-        // SAFETY: create_from_binary requires a valid OpenCL context and a
-        // device id obtained from the same platform.  Both are guaranteed by
-        // the preceding select_device / Context::from_device calls.
-        let mut program = unsafe {
-            ocl_result(
-                Program::create_from_binary(&context, &[device_id], &[&bytes]),
-                "create OpenCL program from xclbin",
-            )?
+        let requested_bdf = env_non_empty(frt_shm::env::FRT_XOCL_BDF);
+        let bdf = requested_bdf
+            .as_deref()
+            .map(|value| {
+                CString::new(value)
+                    .map_err(|e| FrtError::Xrt(format!("invalid device BDF `{value}`: {e}")))
+            })
+            .transpose()?;
+>>>>>>> db96d170 (fixup! feat(frt): run kernels through XRT's C API, retire OpenCL)
+        let path = CString::new(xclbin_path.to_string_lossy().into_owned())
+            .map_err(|e| FrtError::Xrt(format!("xclbin path: {e}")))?;
+        // XRT has no C device-name enumeration API. Without an explicit BDF,
+        // use xclbin acceptance as the platform check instead of assuming
+        // device 0. A failed load closes the candidate before the next index.
+        let mut index = 0;
+        let mut last_error;
+        let mut this = loop {
+            let device = if let Some(bdf) = &bdf {
+                // SAFETY: a valid C string.
+                unsafe { (api.device_open_by_bdf)(bdf.as_ptr()) }
+            } else {
+                // SAFETY: plain index argument.
+                unsafe { (api.device_open)(index) }
+            };
+            let device = non_null(device, "open a device")?;
+            let candidate = Self {
+                meta: meta.clone(),
+                api,
+                device,
+                kernel: std::ptr::null_mut(),
+                run: std::ptr::null_mut(),
+                graph: None,
+                scalars: HashMap::new(),
+                buffers: HashMap::new(),
+                execution_state: ExecutionState::Idle,
+                load_ns: 0,
+                compute_ns: 0,
+                store_ns: 0,
+            };
+            // SAFETY: live device handle and a valid C string.
+            let rc = unsafe { (api.device_load_xclbin_file)(candidate.device, path.as_ptr()) };
+            if rc == 0 {
+                break candidate;
+            }
+            last_error = rc;
+            if bdf.is_some() {
+                return Err(FrtError::Xrt(format!(
+                    "cannot load the xclbin on the requested device (XRT returned {rc})"
+                )));
+            }
+            drop(candidate);
+            index += 1;
+            if index >= 64 {
+                return Err(FrtError::Xrt(format!(
+                    "cannot load the xclbin on any available device (last XRT returned {last_error})"
+                )));
+            }
         };
-        ocl_result(program.build(&[device_id], ""), "build OpenCL program")?;
-
-        let kernel = ocl_result(
-            Kernel::create(&program, &meta.top_name),
-            "create OpenCL kernel",
-        )?;
-
-        Ok(Self {
-            _meta: meta,
-            context,
-            queue,
-            kernel,
-            scalars: HashMap::new(),
-            buffers: HashMap::new(),
-            load_events: Vec::new(),
-            execution_state: ExecutionState::Idle,
-            store_events: Vec::new(),
-            load_ns: 0,
-            compute_ns: 0,
-            store_ns: 0,
-        })
+        let mut uuid = [0u8; 16];
+        // SAFETY: XRT writes the 16-byte xclbin UUID.
+        let rc = unsafe { (api.device_get_xclbin_uuid)(this.device, uuid.as_mut_ptr()) };
+        check(rc, "read the xclbin UUID")?;
+        let name = CString::new(this.meta.top_name.clone())
+            .map_err(|e| FrtError::Xrt(format!("kernel name: {e}")))?;
+        // SAFETY: live device, the UUID it reported, a valid C string.
+        let kernel = unsafe { (api.kernel_open)(this.device, uuid.as_ptr(), name.as_ptr()) };
+        this.kernel = non_null(kernel, &format!("open kernel `{}`", this.meta.top_name))?;
+        // SAFETY: live kernel handle.
+        let run = unsafe { (api.run_open)(this.kernel) };
+        this.run = non_null(run, "create a kernel run")?;
+        Ok(this)
     }
+}
+
+impl Drop for XrtDevice {
+    fn drop(&mut self) {
+        // Each handle is live or null and closed once, children first.
+        if !self.run.is_null() {
+            // SAFETY: live run handle.
+            unsafe { (self.api.run_close)(self.run) };
+        }
+        for binding in self.buffers.values() {
+            // SAFETY: live buffer handle, no longer used by the closed run.
+            unsafe { (self.api.bo_free)(binding.bo) };
+        }
+        if !self.kernel.is_null() {
+            // SAFETY: live kernel handle with no open run.
+            unsafe { (self.api.kernel_close)(self.kernel) };
+        }
+        // SAFETY: live device handle with no open children.
+        unsafe { (self.api.device_close)(self.device) };
+    }
+}
+
+/// A scalar as XRT's variadic `xrtRunSetArg` reads it: by the argument's
+/// type in the xclbin (`int` and `uint` as a 32-bit word, `float` and
+/// `double` as a `double`), else by its size (4 bytes as a 32-bit word,
+/// anything up to 8 bytes as a `size_t`). `int` and `unsigned int` share
+/// one variadic slot, so a 32-bit word passes either.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum VaScalar {
+    U32(u32),
+    U64(u64),
+    Double(f64),
+}
+
+fn va_scalar(id: u32, host_type: &str, bytes: &[u8]) -> Result<VaScalar> {
+    let le = |n: usize| {
+        let mut word = [0u8; 8];
+        word[..n.min(bytes.len())].copy_from_slice(&bytes[..n.min(bytes.len())]);
+        u64::from_le_bytes(word)
+    };
+    let low32 = || u32::try_from(le(4) & 0xffff_ffff).expect("masked to 32 bits");
+    Ok(match host_type {
+        "int" | "uint" => VaScalar::U32(low32()),
+        "float" => VaScalar::Double(f64::from(f32::from_bits(low32()))),
+        "double" => VaScalar::Double(f64::from_bits(le(8))),
+        _ => match bytes.len() {
+            4 => VaScalar::U32(low32()),
+            n if n <= 8 => VaScalar::U64(le(8)),
+            n => {
+                return Err(FrtError::Xrt(format!(
+                    "scalar argument {id} is {n} bytes wide; XRT passes scalars of at \
+                     most 8 bytes"
+                )))
+            }
+        },
+    })
 }
 
 /// One-shot process-env bootstrap for XRT emulation.
@@ -173,7 +242,7 @@ impl XrtDevice {
 /// (`XCL_EMULATION_MODE`, `EMCONFIG_PATH`, …) — there is no API
 /// alternative, so the `setenv` calls themselves cannot go away. What
 /// can be bounded is *when* they happen: everything is written exactly
-/// once per process, before the first `OpenCL` context exists, and never
+/// once per process, before the first XRT device is opened, and never
 /// again — so once XRT's own worker threads (or the caller's) are
 /// running, no thread mutates the environment under them. Concurrent
 /// first-time opens on several threads serialize on the `OnceLock`;
@@ -317,133 +386,110 @@ impl Device for XrtDevice {
                 "zero-length buffer arg {index} is unsupported in XRT runtime"
             )));
         }
-        if ptr.is_null() && bytes != 0 {
+        if ptr.is_null() {
             return Err(FrtError::MetadataParse(format!(
                 "null host pointer for non-empty buffer arg {index}"
             )));
         }
-        // SAFETY: ptr is non-null (checked above) and points to a host buffer
-        // of at least `bytes` bytes.  CL_MEM_USE_HOST_PTR tells OpenCL to use
-        // that allocation directly.
-        let buffer = unsafe {
-            ocl_result(
-                Buffer::<u8>::create(
-                    &self.context,
-                    CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR,
-                    bytes,
-                    ptr.cast::<c_void>(),
-                ),
-                "create OpenCL buffer",
-            )?
+        let arg = c_int::try_from(index)
+            .map_err(|e| FrtError::Xrt(format!("argument index {index}: {e}")))?;
+        // SAFETY: live kernel handle.
+        let group = unsafe { (self.api.kernel_arg_group_id)(self.kernel, arg) };
+        let group = u32::try_from(group)
+            .map_err(|e| FrtError::Xrt(format!("argument {index} has no memory bank: {e}")))?;
+        let staged = !(ptr as usize).is_multiple_of(USER_PTR_ALIGNMENT);
+        let bo = if staged {
+            // SAFETY: live device handle.
+            unsafe { (self.api.bo_alloc)(self.device, bytes, 0, group) }
+        } else {
+            // SAFETY: live device; `ptr` holds `bytes` bytes that outlive the
+            // run.
+            unsafe {
+                (self.api.bo_alloc_user_ptr)(self.device, ptr.cast::<c_void>(), bytes, 0, group)
+            }
         };
-        // Bind the buffer to its kernel argument now rather than in `exec`.
-        // XRT derives a buffer's memory bank from the `sp=` connectivity of
-        // the argument it is bound to, and `write_to_device` transfers before
-        // `exec` runs. With every port on one bank XRT can infer the bank
-        // anyway; with ports spread over several banks an unbound buffer
-        // fails the transfer with "Cannot allocate buffer at unknown memory
-        // index".
-        bind_buffer_arg(&self.kernel, index, &buffer)?;
-        self.buffers.insert(
+        let bo = non_null(bo, &format!("allocate the buffer of argument {index}"))?;
+        // Bind now rather than in `exec`: XRT derives the buffer's bank from
+        // the argument it is bound to, and `write_to_device` runs first.
+        // SAFETY: live run and buffer handles; a buffer argument reads a
+        // buffer handle.
+        let rc = unsafe { (self.api.run_set_arg)(self.run, arg, bo) };
+        if let Err(error) = check(rc, &format!("bind argument {index}")) {
+            // SAFETY: `bo` was allocated above and ownership was never
+            // transferred to `self.buffers`.
+            unsafe { (self.api.bo_free)(bo) };
+            return Err(error);
+        }
+        if let Some(old) = self.buffers.insert(
             index,
             BufferBinding {
                 ptr,
                 bytes,
                 access,
-                buffer,
+                bo,
+                staged,
             },
-        );
+        ) {
+            // SAFETY: the replaced buffer handle is no longer bound.
+            unsafe { (self.api.bo_free)(old.bo) };
+        }
         Ok(())
     }
 
     fn set_stream_arg(&mut self, index: u32, _shm_path: &str) -> Result<()> {
-        if self
-            ._meta
-            .args
-            .iter()
-            .any(|a| a.id == index && matches!(a.kind, ArgKind::Stream { .. }))
-        {
-            return Err(FrtError::MetadataParse(
-                "XRT/OpenCL stream arguments are not supported in this runtime path".into(),
-            ));
-        }
         Err(FrtError::MetadataParse(format!(
-            "no stream arg at index {index}"
+            "argument {index}: stream arguments cannot be bound from the host in the \
+             XRT runtime"
         )))
     }
 
     fn write_to_device(&mut self) -> Result<()> {
-        self.load_events.clear();
-        for binding in self.buffers.values_mut() {
+        let start = Instant::now();
+        for (index, binding) in &self.buffers {
             if !binding.access.loads_from_host() {
                 continue;
             }
-            // SAFETY: binding.ptr is non-null (set_buffer_arg checks this) and
-            // binding.bytes is the size of the host allocation.
-            let host_slice = unsafe { std::slice::from_raw_parts(binding.ptr, binding.bytes) };
-            // SAFETY: self.queue and binding.buffer are valid OpenCL handles,
-            // and host_slice points to the host allocation.
-            let event = unsafe {
-                ocl_result(
-                    self.queue.enqueue_write_buffer(
-                        &mut binding.buffer,
-                        CL_BLOCKING,
-                        0,
-                        host_slice,
-                        &[],
-                    ),
-                    "enqueue OpenCL write buffer",
-                )?
-            };
-            self.load_events.push(event);
+            if binding.staged {
+                // SAFETY: `ptr` holds `bytes` bytes; live buffer handle.
+                let rc = unsafe {
+                    (self.api.bo_write)(binding.bo, binding.ptr.cast(), binding.bytes, 0)
+                };
+                check(rc, &format!("stage argument {index}"))?;
+            }
+            // SAFETY: live buffer handle of `bytes` bytes.
+            let rc = unsafe { (self.api.bo_sync)(binding.bo, SYNC_TO_DEVICE, binding.bytes, 0) };
+            check(rc, &format!("write argument {index} to the device"))?;
         }
-        self.load_ns = elapsed_ns(&self.load_events);
+        self.load_ns = elapsed_ns(start);
         Ok(())
     }
 
     fn read_from_device(&mut self) -> Result<()> {
-        self.store_events.clear();
-        let waits: Vec<cl_event> = self
-            .execution_state
-            .event()
-            .map(Event::get)
-            .into_iter()
-            .collect();
-        for binding in self.buffers.values() {
+        if matches!(self.execution_state, ExecutionState::Running(_)) {
+            self.finish()?;
+        }
+        let start = Instant::now();
+        for (index, binding) in &self.buffers {
             if !binding.access.stores_to_host() {
                 continue;
             }
-            // SAFETY: binding.ptr is non-null (set_buffer_arg checks this) and
-            // binding.bytes is the size of the host allocation.
-            let host_slice = unsafe { std::slice::from_raw_parts_mut(binding.ptr, binding.bytes) };
-            // SAFETY: self.queue and binding.buffer are valid OpenCL handles,
-            // and host_slice points to the host allocation for readback.
-            let event = unsafe {
-                ocl_result(
-                    self.queue.enqueue_read_buffer(
-                        &binding.buffer,
-                        CL_BLOCKING,
-                        0,
-                        host_slice,
-                        &waits,
-                    ),
-                    "enqueue OpenCL read buffer",
-                )?
-            };
-            self.store_events.push(event);
+            // SAFETY: live buffer handle of `bytes` bytes.
+            let rc = unsafe { (self.api.bo_sync)(binding.bo, SYNC_FROM_DEVICE, binding.bytes, 0) };
+            check(rc, &format!("read argument {index} from the device"))?;
+            if binding.staged {
+                // SAFETY: `ptr` holds `bytes` writable bytes.
+                let rc =
+                    unsafe { (self.api.bo_read)(binding.bo, binding.ptr.cast(), binding.bytes, 0) };
+                check(rc, &format!("unstage argument {index}"))?;
+            }
         }
-        self.store_ns = elapsed_ns(&self.store_events);
+        self.store_ns = elapsed_ns(start);
         Ok(())
     }
 
     fn exec(&mut self) -> Result<()> {
-        let mut args = self._meta.args.clone();
+        let mut args = self.meta.args.clone();
         args.sort_by_key(|a| a.id);
-
-        // Set all kernel arguments using clSetKernelArg with explicit indices.
-        // ExecuteKernel::set_arg uses a sequential internal counter (0, 1, 2, …)
-        // which is wrong when scalar and mmap args are interleaved at non-zero
-        // indices.  Use set_kernel_arg directly for both kinds instead.
         for arg in &args {
             match arg.kind {
                 ArgKind::Scalar { width } => {
@@ -451,21 +497,22 @@ impl Device for XrtDevice {
                         width,
                         self.scalars.get(&arg.id).map(std::vec::Vec::as_slice),
                     );
-                    // SAFETY: self.kernel is a valid OpenCL kernel,
-                    // arg.id is the correct argument index, and raw is
-                    // a properly-sized byte buffer for the scalar value.
-                    unsafe {
-                        set_kernel_arg(
-                            self.kernel.get(),
-                            arg.id,
-                            raw.len(),
-                            raw.as_ptr().cast::<c_void>(),
-                        )
-                        .map_err(|code| FrtError::OpenCl {
-                            code,
-                            msg: format!("cannot set scalar kernel argument {}", arg.id),
-                        })?;
+                    let host_type = self.meta.host_types.get(&arg.id).map_or("", String::as_str);
+                    let index = c_int::try_from(arg.id)
+                        .map_err(|e| FrtError::Xrt(format!("argument index {}: {e}", arg.id)))?;
+                    // Each value has the type XRT reads for this argument
+                    // (see `va_scalar`).
+                    let rc = match va_scalar(arg.id, host_type, &raw)? {
+                        // SAFETY: live run handle; XRT reads a 32-bit word.
+                        VaScalar::U32(v) => unsafe { (self.api.run_set_arg)(self.run, index, v) },
+                        // SAFETY: live run handle; XRT reads a `size_t`.
+                        VaScalar::U64(v) => unsafe { (self.api.run_set_arg)(self.run, index, v) },
+                        // SAFETY: live run handle; XRT reads a `double`.
+                        VaScalar::Double(v) => unsafe {
+                            (self.api.run_set_arg)(self.run, index, v)
+                        },
                     };
+                    check(rc, &format!("set scalar argument {}", arg.id))?;
                 }
                 ArgKind::Mmap { .. } => {
                     // Already bound by `set_buffer_arg`; only its presence
@@ -477,60 +524,62 @@ impl Device for XrtDevice {
                         )));
                     }
                 }
-                ArgKind::Stream { .. } => {
-                    return Err(FrtError::MetadataParse(
-                        "XRT/OpenCL stream arguments are not supported in this runtime path".into(),
-                    ));
-                }
+                // Wired inside the device (an AI Engine PLIO, say).
+                ArgKind::Stream { .. } => {}
             }
         }
-
-        let waits: Vec<cl_event> = self.load_events.iter().map(Event::get).collect();
-        let global_work_size: usize = 1;
-        self.execution_state.launch(|| {
-            // SAFETY: self.kernel and self.queue are valid OpenCL handles,
-            // global_work_size is a valid 1-element array, and waits contains
-            // only events from prior enqueue operations on the same queue.
-            unsafe {
-                ocl_result(
-                    self.queue.enqueue_nd_range_kernel(
-                        self.kernel.get(),
-                        1,
-                        std::ptr::null(),
-                        (&raw const global_work_size).cast(),
-                        std::ptr::null(),
-                        &waits,
-                    ),
-                    "enqueue OpenCL kernel",
-                )
-            }
-        })?;
-        // compute_ns is read after completion (finish/is_finished): the
-        // profiling counters are not populated until the kernel has run,
-        // so computing it here would always yield 0.
+        // SAFETY: live run handle with every argument set.
+        let rc = unsafe { (self.api.run_start)(self.run) };
+        check(rc, "start the kernel")?;
+        self.execution_state = ExecutionState::Running(Instant::now());
         Ok(())
     }
 
     fn finish(&mut self) -> Result<()> {
-        ocl_result(self.queue.finish(), "finish OpenCL queue")?;
-        self.execution_state.finish();
-        self.compute_ns = self.execution_state.elapsed_ns();
+        if let ExecutionState::Running(start) = self.execution_state {
+            // SAFETY: live run handle.
+            let state = unsafe { (self.api.run_wait)(self.run) };
+            self.compute_ns = elapsed_ns(start);
+            self.execution_state = ExecutionState::Finished;
+            if state != RUN_COMPLETED {
+                return Err(FrtError::Xrt(format!(
+                    "the kernel run ended in state {state}, not completed"
+                )));
+            }
+        }
         Ok(())
     }
 
     fn kill(&mut self) -> Result<()> {
-        // OpenCL kernels do not support forced cancellation in this runtime.
-        self.execution_state.finish();
+        self.execution_state = ExecutionState::Finished;
         Ok(())
     }
 
     fn is_finished(&mut self) -> Result<bool> {
-        let was_running = matches!(self.execution_state, ExecutionState::Running(_));
-        let done = self.execution_state.poll()?;
-        if was_running && done {
-            self.compute_ns = self.execution_state.elapsed_ns();
+        let ExecutionState::Running(start) = self.execution_state else {
+            return Ok(matches!(self.execution_state, ExecutionState::Finished));
+        };
+        // SAFETY: live run handle.
+        let state = unsafe { (self.api.run_state)(self.run) };
+        if state == RUN_COMPLETED {
+            self.compute_ns = elapsed_ns(start);
+            self.execution_state = ExecutionState::Finished;
+            self.stop_graph()?;
+            return Ok(true);
         }
-        Ok(done)
+        if state == RUN_SUBMITTED {
+            return Ok(false);
+        }
+        if is_run_error(state) {
+            self.compute_ns = elapsed_ns(start);
+            self.execution_state = ExecutionState::Finished;
+            return Err(FrtError::Xrt(format!(
+                "the kernel run failed in state {state}"
+            )));
+        }
+        // SUBMITTED (7) and any other nonterminal state is still pending;
+        // the numeric ERT values do not form a pending/completed/error order.
+        Ok(false)
     }
 
     fn load_ns(&self) -> u64 {
@@ -544,89 +593,6 @@ impl Device for XrtDevice {
     fn store_ns(&self) -> u64 {
         self.store_ns
     }
-}
-
-fn select_device(meta: &KernelXml) -> Result<cl_device_id> {
-    // `cl3` loads the ICD loader lazily, so nothing before this point needs
-    // OpenCL at all. Check it explicitly here: without it, the first API call
-    // fails with a bare dlopen message that says nothing about what to install.
-    ensure_opencl_runtime()?;
-    let requested_bdf = env_non_empty(frt_shm::env::FRT_XOCL_BDF);
-    let platforms = ocl_result(get_platforms(), "enumerate OpenCL platforms")?;
-    for p in &platforms {
-        let vendor = ocl_result(p.vendor(), "query OpenCL platform vendor")?;
-        if !vendor.to_ascii_lowercase().contains("xilinx") {
-            continue;
-        }
-        let devices = ocl_result(
-            p.get_devices(CL_DEVICE_TYPE_ACCELERATOR),
-            "enumerate Xilinx OpenCL accelerator devices",
-        )?;
-        if let Some(id) = pick_device(&devices, meta, requested_bdf.as_deref())? {
-            return Ok(id);
-        }
-    }
-    for p in &platforms {
-        let devices = ocl_result(
-            p.get_devices(CL_DEVICE_TYPE_ALL),
-            "enumerate OpenCL devices",
-        )?;
-        if let Some(id) = pick_device(&devices, meta, requested_bdf.as_deref())? {
-            return Ok(id);
-        }
-    }
-    if let Some(bdf) = requested_bdf {
-        return Err(FrtError::MetadataParse(format!(
-            "no OpenCL device matching requested XOCL BDF '{bdf}'"
-        )));
-    }
-    Err(FrtError::MetadataParse(
-        "no OpenCL device available for XRT runtime".into(),
-    ))
-}
-
-fn pick_device(
-    devices: &[cl_device_id],
-    meta: &KernelXml,
-    requested_bdf: Option<&str>,
-) -> Result<Option<cl_device_id>> {
-    for id in devices {
-        let dev = OclDevice::new(*id);
-        if let Some(bdf) = requested_bdf {
-            let got = device_bdf(*id);
-            if got.as_deref() != Some(bdf) {
-                continue;
-            }
-        }
-        if !meta.platform.is_empty() {
-            let name = ocl_result(dev.name(), "query OpenCL device name")?;
-            if !platform_name_matches(&name, &meta.platform) {
-                continue;
-            }
-        }
-        return Ok(Some(*id));
-    }
-    Ok(None)
-}
-
-fn platform_name_matches(device_name: &str, target_platform: &str) -> bool {
-    if device_name == target_platform {
-        return true;
-    }
-    // Fuzzy match: compare vendor_board_iface_type prefix, then check that
-    // the device's shell token exactly matches the target's shell token.
-    let target: Vec<&str> = target_platform.split('_').collect();
-    let device: Vec<&str> = device_name.split('_').collect();
-    if target.len() < 5 || device.len() < 6 {
-        return false;
-    }
-    for i in 0..4 {
-        if target[i] != device[i] {
-            return false;
-        }
-    }
-    // Require exact shell revision match to avoid selecting the wrong board.
-    target[4] == device[5]
 }
 
 use frt_shm::env_non_empty;
@@ -684,162 +650,11 @@ fn current_username() -> Option<String> {
     None
 }
 
-fn device_bdf(id: cl_device_id) -> Option<String> {
-    // Xilinx OpenCL extension (`CL_DEVICE_PCIE_BDF`) returning the device PCIe BDF.
-    const CL_DEVICE_PCIE_BDF: u32 = 0x4038;
-    let bytes = OclDevice::new(id).get_data(CL_DEVICE_PCIE_BDF).ok()?;
-    let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
-    let text = String::from_utf8(bytes[..end].to_vec()).ok()?;
-    let bdf = text.trim().to_owned();
-    if bdf.is_empty() {
-        None
-    } else {
-        Some(bdf)
-    }
-}
-
-/// Make sure an `OpenCL` ICD loader can be loaded before the first `OpenCL`
-/// call.
-///
-/// `cl3` loads `libOpenCL.so` — the symlink that ships in the *development*
-/// package. The loader itself is packaged as `libOpenCL.so.1`, and that is
-/// what XRT depends on, so an XRT-only machine has the runtime but not the
-/// name `cl3` asks for. Probe both and point `cl3` at whichever exists via
-/// its own `OPENCL_DYLIB_PATH` override.
-#[cfg(target_os = "linux")]
-fn ensure_opencl_runtime() -> Result<()> {
-    use std::sync::Once;
-    static ONCE: Once = Once::new();
-    static NAMES: [&str; 2] = ["libOpenCL.so", "libOpenCL.so.1"];
-
-    if std::env::var_os("OPENCL_DYLIB_PATH").is_some() {
-        return Ok(());
-    }
-    let mut found = None;
-    for name in NAMES {
-        if can_dlopen(name) {
-            found = Some(name);
-            break;
-        }
-    }
-    let Some(name) = found else {
-        return Err(FrtError::NoOpenClRuntime(format!(
-            "none of {} could be loaded",
-            NAMES.join(", ")
-        )));
-    };
-    // Only needed for the fallback SONAME, but setting it unconditionally
-    // keeps the loaded library identical to the one probed here.
-    ONCE.call_once(|| std::env::set_var("OPENCL_DYLIB_PATH", name));
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn ensure_opencl_runtime() -> Result<()> {
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn can_dlopen(name: &str) -> bool {
-    let Ok(c_name) = std::ffi::CString::new(name) else {
-        return false;
-    };
-    // SAFETY: `c_name` is a valid NUL-terminated string; RTLD_LAZY|RTLD_LOCAL
-    // resolves no symbols eagerly and keeps them out of the global namespace.
-    let handle = unsafe { libc::dlopen(c_name.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL) };
-    if handle.is_null() {
-        return false;
-    }
-    // SAFETY: `handle` came from `dlopen` and is not used afterwards. The
-    // library stays resident because `cl3` loads it again moments later.
-    unsafe { libc::dlclose(handle) };
-    true
-}
-
-fn ocl_result<T>(res: opencl3::Result<T>, ctx: &str) -> Result<T> {
-    res.map_err(|e| FrtError::OpenCl {
-        code: e.0,
-        msg: format!("{ctx}: {e}"),
-    })
-}
-
-/// Point kernel argument `index` at `buffer`.
-///
-/// `clSetKernelArg` takes a pointer to the `cl_mem` value itself, not the
-/// memory it names.
-fn bind_buffer_arg(kernel: &Kernel, index: u32, buffer: &Buffer<u8>) -> Result<()> {
-    let cl_mem_handle = buffer.get();
-    // SAFETY: `kernel` is a valid OpenCL kernel, `index` is the argument
-    // index taken from the kernel's own metadata, and `cl_mem_handle` is a
-    // valid cl_mem obtained from a buffer created on the same context.
-    unsafe {
-        set_kernel_arg(
-            kernel.get(),
-            index,
-            std::mem::size_of_val(&cl_mem_handle),
-            (&raw const cl_mem_handle).cast::<c_void>(),
-        )
-        .map_err(|code| FrtError::OpenCl {
-            code,
-            msg: format!("cannot set mmap kernel argument {index}"),
-        })
-    }
-}
-
-fn elapsed_ns(events: &[Event]) -> u64 {
-    if events.is_empty() {
-        return 0;
-    }
-    let mut start = u64::MAX;
-    let mut end = 0u64;
-    for e in events {
-        if let (Ok(s), Ok(t)) = (e.profiling_command_start(), e.profiling_command_end()) {
-            start = start.min(s);
-            end = end.max(t);
-        }
-    }
-    if start == u64::MAX || end < start {
-        0
-    } else {
-        end - start
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{emulation_mode_env_value, ExecutionState};
-    use crate::error::FrtError;
+    use super::{emulation_mode_env_value, is_run_error, va_scalar, VaScalar};
+    use crate::xrt::api::{RUN_COMPLETED, RUN_SUBMITTED};
     use frt_cosim::metadata::kernel_xml::XclbinTarget;
-
-    #[test]
-    fn a_device_that_never_launched_is_not_finished() {
-        assert!(!ExecutionState::Idle.poll().expect("poll unlaunched state"));
-    }
-
-    #[test]
-    fn a_finished_device_stays_finished_without_being_launched_again() {
-        let mut state = ExecutionState::Idle;
-        state.finish();
-        assert!(state.poll().expect("poll finished state"));
-    }
-
-    #[test]
-    fn a_failed_launch_preserves_the_previous_completion_state() {
-        for (mut state, was_finished) in [
-            (ExecutionState::Idle, false),
-            (ExecutionState::Finished(None), true),
-        ] {
-            let err = state
-                .launch(|| Err(FrtError::MetadataParse("enqueue failed".to_owned())))
-                .expect_err("a failed enqueue must not launch compute");
-            assert!(err.to_string().contains("enqueue failed"));
-            assert_eq!(
-                state.poll().expect("poll after failed launch"),
-                was_finished
-            );
-            assert!(state.event().is_none());
-        }
-    }
 
     #[test]
     fn only_emulation_xclbins_ask_for_an_emulation_mode() {
@@ -852,5 +667,49 @@ mod tests {
             Some("sw_emu")
         );
         assert_eq!(emulation_mode_env_value(XclbinTarget::Flat), None);
+    }
+
+    /// `xrtRunSetArg` is variadic and reads each scalar by the type the
+    /// xclbin gives it; a value passed as anything else is garbage.
+    #[test]
+    fn submitted_is_pending_not_an_error() {
+        assert!(!is_run_error(RUN_SUBMITTED));
+        assert!(!is_run_error(RUN_COMPLETED));
+        for state in [5, 6, 8, 9, 10, 11] {
+            assert!(is_run_error(state), "state {state} must be an error");
+        }
+    }
+
+    #[test]
+    fn scalars_take_the_variadic_type_xrt_reads() {
+        let float = 1.5f32.to_le_bytes();
+        assert_eq!(
+            va_scalar(0, "float", &float).unwrap(),
+            VaScalar::Double(1.5)
+        );
+        assert_eq!(
+            va_scalar(0, "int", &(-3i32).to_le_bytes()).unwrap(),
+            VaScalar::U32((-3i32).cast_unsigned())
+        );
+        assert_eq!(
+            va_scalar(0, "uint", &[7, 0, 0, 0]).unwrap(),
+            VaScalar::U32(7)
+        );
+        assert_eq!(
+            va_scalar(0, "uint64_t", &5u64.to_le_bytes()).unwrap(),
+            VaScalar::U64(5)
+        );
+        assert_eq!(
+            va_scalar(0, "unsigned int", &[9, 0, 0, 0]).unwrap(),
+            VaScalar::U32(9)
+        );
+        assert_eq!(
+            va_scalar(0, "uint16_t", &[1, 2]).unwrap(),
+            VaScalar::U64(0x201)
+        );
+        assert!(va_scalar(4, "ap_uint<128>", &[0; 16])
+            .unwrap_err()
+            .to_string()
+            .contains("argument 4 is 16 bytes"));
     }
 }

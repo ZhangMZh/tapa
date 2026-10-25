@@ -21,7 +21,7 @@ is not a supported way to reconfigure execution.
 | `FRT_COSIM_YIELD` | `1` (enabled) | Yield CPU briefly on empty reads or full writes so other cosim processes can progress. Disable with `0` to busy-wait instead. |
 | `FRT_COSIM_TIMEOUT_SECONDS` | `0` (disabled) | Maximum wall-clock time for a fast-cosim simulator process. On expiry, TAPA terminates the simulator process group and reports a timeout. Set a positive integer to enable it. |
 | `FRT_XSIM_LEGACY` | `0` | Set to `1` to use the legacy xelab command-line format for older Vivado versions. |
-| `FRT_XOCL_BDF` | (unset) | PCIe Bus:Device:Function for XRT/OpenCL device selection. Equivalent to the `-xocl_bdf` gflag. |
+| `FRT_XOCL_BDF` | (unset) | PCIe Bus:Device:Function for XRT device selection. Equivalent to the `-xocl_bdf` gflag. Without it, devices are tried in index order until one accepts the xclbin; set it on multi-device hosts. |
 | `TAPA_HOME` | (unset) | TAPA installation prefix used to locate runtime libraries. `install.sh` sets it automatically. Override it after relocating an installation or moving a host binary to a machine where the original path is unavailable. |
 
 ### Example: single-worker simulation
@@ -61,7 +61,7 @@ compiler. Gflags accepts both `-cosim_work_dir` and `--cosim_work_dir`.
 | `-cosim_setup_only` | Run simulation setup only, then stop before executing the simulation. Useful for inspecting generated simulation files before committing to a full run. |
 | `-cosim_resume_from_post_sim` | Skip re-running the simulation and jump directly to post-simulation checks. Use after a completed simulation to re-run checks without re-simulating. |
 | `-cosim_work_dir_parallel` | Create a unique subdirectory per instance when running multiple concurrent simulations, preventing work directory collisions. |
-| `-xocl_bdf <BDF>` | Select the XRT/OpenCL device by PCIe Bus:Device:Function. Equivalent to `FRT_XOCL_BDF`; used for hardware emulation or on-board execution, not fast cosim. |
+| `-xocl_bdf <BDF>` | Select the XRT device by PCIe Bus:Device:Function. Equivalent to `FRT_XOCL_BDF`; used for hardware emulation or on-board execution, not fast cosim. |
 
 ### Example: save waveforms from a named work directory
 

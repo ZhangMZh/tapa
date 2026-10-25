@@ -30,6 +30,9 @@ pub struct KernelXml {
     pub platform: String,
     pub target: XclbinTarget,
     pub args: Vec<ArgSpec>,
+    /// Each argument's C type as the XML states it (`int`, `float`,
+    /// `uint64_t`, ...), by argument id: XRT reads a scalar by it.
+    pub host_types: HashMap<u32, String>,
 }
 
 /// Port attributes an `<arg>` defers to: mmap and stream widths live on
@@ -194,6 +197,10 @@ pub fn parse(xml: &str) -> Result<KernelXml> {
         .filter(|port| !port.name.is_empty())
         .map(|port| (port.name.clone(), port))
         .collect();
+    let host_types = raw_args
+        .iter()
+        .map(|arg| (arg.id, arg.c_type.clone()))
+        .collect();
     // Resolve only after reading all ports: XML child order does not change the ABI.
     let args = raw_args
         .into_iter()
@@ -204,6 +211,7 @@ pub fn parse(xml: &str) -> Result<KernelXml> {
         platform,
         target,
         args,
+        host_types,
     })
 }
 
@@ -304,10 +312,10 @@ fn resolve_arg(arg: RawArg, ports: &HashMap<String, PortInfo>) -> Result<ArgSpec
     })
 }
 
-/// Scalar register width must match the kernel's declaration or the `OpenCL`
-/// driver rejects the argument, so there is no silent default: every
-/// historical wrong-width bug surfaced as an opaque `clSetKernelArg`
-/// failure at run time. `hostSize` is the generator's logical C width in
+/// Scalar register width must match the kernel's declaration or XRT
+/// rejects the argument, so there is no silent default: every historical
+/// wrong-width bug surfaced as an opaque argument-setting failure at run
+/// time. `hostSize` is the generator's logical C width in
 /// bytes; `size` is the `s_axi` register footprint, 4-byte-padded for
 /// sub-32-bit scalars (a `uint16_t` arg ships `hostSize="0x2"` with
 /// `size="0x4"`); `type` can be a bare typedef name. Rank accordingly.

@@ -144,7 +144,6 @@ frt-dpi = { path = "frt-dpi" }
 frt-shm = { path = "frt-shm" }
 libc = "0.2"
 memmap2 = "0.9"
-opencl3 = "0.12"
 quick-xml = { version = "0.42", features = ["serialize"] }
 regex-lite = "0.1"
 serde = { version = "1", features = ["derive"] }

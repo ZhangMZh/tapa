@@ -122,11 +122,10 @@ pub fn get_tapa_ldflags() -> Vec<String> {
     // linking they must be listed explicitly, after `-lfrt` (see
     // `rustc --print native-static-libs` for the `frt` crate).
     //
-    // `-lOpenCL` is deliberately absent: `cl3` (under `opencl3`) defaults to
-    // its `dynamic` feature and dlopens the ICD loader when a design is first
-    // run on hardware, so no OpenCL symbol is referenced at link time.
-    // Requiring the library here would break `tapa g++` for pure software
-    // simulation, which the docs promise needs nothing but a C++ compiler.
+    // No XRT library is listed: frt dlopens `libxrt_coreutil` when a design
+    // is first run on hardware, so no XRT symbol is referenced at link time.
+    // Requiring it here would break `tapa g++` for pure software simulation,
+    // which the docs promise needs nothing but a C++ compiler.
     let mut names = vec![
         "tapa", "frt", "context", "thread", "glog", "gflags", "stdc++fs",
     ];
@@ -267,10 +266,9 @@ mod tests {
             // Dropped with the zip crate's default features; no longer linked.
             "-llzma",
             "-lbz2",
-            // `cl3` dlopens the ICD loader on first hardware use, so nothing
-            // references an OpenCL symbol at link time. Keeping this flag
-            // would make software simulation need an ICD loader installed.
-            "-lOpenCL",
+            // frt dlopens XRT on first hardware use; linking it would make
+            // software simulation need an XRT install.
+            "-lxrt_coreutil",
         ] {
             assert!(
                 !flags.contains(&removed.to_string()),

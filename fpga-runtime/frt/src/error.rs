@@ -14,11 +14,11 @@ pub enum FrtError {
     )]
     DpiLibraryNotFound { name: String },
     #[error(
-        "no OpenCL runtime found: {0}. Install XRT (which pulls in an \
-             OpenCL ICD loader) to run a design on hardware or in hardware \
-             emulation; software simulation and fast cosim do not need it"
+        "no XRT runtime found: {0}. Install XRT (and source its setup.sh) to \
+             run a design on hardware or in hardware emulation; software \
+             simulation and fast cosim do not need it"
     )]
-    NoOpenClRuntime(String),
+    NoXrtRuntime(String),
     #[error("resume-from-post-sim stream binding error: {0}")]
     ResumeStreamBinding(String),
     #[error("invalid cosim runtime option: {0}")]
@@ -28,8 +28,8 @@ pub enum FrtError {
          increase -cosim_timeout_seconds or set it to 0 to disable the timeout"
     )]
     CosimTimeout { timeout_secs: u64 },
-    #[error("OpenCL error {code}: {msg}")]
-    OpenCl { code: i32, msg: String },
+    #[error("XRT error: {0}")]
+    Xrt(String),
     #[error("simulator exited with status {0}")]
     SimFailed(std::process::ExitStatus),
     #[error("shm error: {0}")]
