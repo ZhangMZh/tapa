@@ -18,15 +18,30 @@
 //!   total: { ...resource dict... }
 //!   breakdown:             # only when top is upper
 //!     <child_task_name>: { count: <n>, area: { ... } }
+//! aie:                     # only after a hardware AI Engine build
+//!   tiles_used: <n>
+//!   plio_map:
+//!     <logical_plio_name>:
+//!       direction: input   # PL→AIE; output means AIE→PL
+//!       column: <interface column>
+//!       width_bits: <32|64|128>
+//!       channels: <64-bit channels consumed>
+//!   per_kernel:
+//!     <full_adf_kernel_function_name>:
+//!       tile: { column: <n>, row: <n> }
+//!       program_bytes: <n>
+//!       data_bytes: <n>    # omitted when unknown
 //! ```
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
 use indexmap::IndexMap;
 use serde::Serialize;
 use serde_json::Value;
-use tapa_ir::{ClockPeriod, Design, TaskLevel};
+use tapa_ir::{AiePartition, AieStreamKind, ClockPeriod, Design, TaskLevel};
+use tapa_xilinx::tools::aie::report::{AieReport, PlioDirection};
 
 use crate::error::{CliError, Result};
 use crate::steps::version::VERSION as TAPA_VERSION;
@@ -40,6 +55,24 @@ struct Report {
     name: String,
     performance: Performance,
     area: AreaSection,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aie: Option<AieSection>,
+}
+
+/// The hardware AI Engine mapping, enriched with the partition's PLIO widths.
+#[derive(Debug, Clone, Serialize)]
+struct AieSection {
+    tiles_used: usize,
+    plio_map: BTreeMap<String, AiePlioSection>,
+    per_kernel: BTreeMap<String, tapa_xilinx::tools::aie::report::AieKernelReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AiePlioSection {
+    direction: PlioDirection,
+    column: u32,
+    width_bits: u32,
+    channels: u64,
 }
 
 /// Where a published number came from. Serializes as the wire strings the
@@ -102,13 +135,23 @@ struct ChildReport<'a> {
 /// Write `<work_dir>/report.{json,yaml}` for the design's top task.
 /// `override_schema` (mirrors `--override-report-schema-version`) wins
 /// over the baked `VERSION` constant when non-empty.
-pub fn write_top_report(work_dir: &Path, design: &Design, override_schema: &str) -> Result<()> {
+pub fn write_top_report(
+    work_dir: &Path,
+    design: &Design,
+    override_schema: &str,
+    aie: Option<(&AieReport, &AiePartition)>,
+) -> Result<()> {
     let schema = if override_schema.is_empty() {
         TAPA_VERSION
     } else {
         override_schema
     };
-    let report = build_task_report(design, &design.top, schema)?;
+    let mut report = build_task_report(design, &design.top, schema)?;
+    if let Some((aie_report, partition)) = aie {
+        let section = build_aie_section(aie_report, partition)?;
+        check_aie1_channel_limits(&section)?;
+        report.aie = Some(section);
+    }
 
     let json_path = work_dir.join("report.json");
     let json_str = serde_json::to_string_pretty(&report)
@@ -208,7 +251,134 @@ fn build_task_report(design: &Design, task_name: &str, schema: &str) -> Result<R
             total: total_area,
             breakdown: area_breakdown,
         },
+        aie: None,
     })
+}
+
+/// Join the compiler's logical PLIO placements to the typed partition's
+/// widths and directions. Neither side is allowed to have unmatched PLIOs.
+fn build_aie_section(report: &AieReport, partition: &AiePartition) -> Result<AieSection> {
+    let mut partition_plios = BTreeMap::new();
+    for stream in &partition.streams {
+        let AieStreamKind::Plio { input, width } = stream.kind else {
+            continue;
+        };
+        if partition_plios
+            .insert(stream.name.as_str(), (input, width))
+            .is_some()
+        {
+            return Err(CliError::Report(format!(
+                "duplicate logical PLIO `{}` in the AI Engine partition",
+                stream.name
+            )));
+        }
+    }
+    for name in partition_plios.keys() {
+        if !report.plio_map.contains_key(*name) {
+            return Err(CliError::Report(format!(
+                "AI Engine mapping report is missing logical PLIO `{name}`"
+            )));
+        }
+    }
+
+    let mut plio_map = BTreeMap::new();
+    for (name, plio) in &report.plio_map {
+        let Some(&(input, width_bits)) = partition_plios.get(name.as_str()) else {
+            return Err(CliError::Report(format!(
+                "AI Engine mapping report has logical PLIO `{name}`, but the partition does not"
+            )));
+        };
+        let direction = if input {
+            PlioDirection::Input
+        } else {
+            PlioDirection::Output
+        };
+        if plio.direction != direction {
+            return Err(CliError::Report(format!(
+                "logical PLIO `{name}` direction mismatch: partition has {}, mapping report has {}",
+                direction_name(direction),
+                direction_name(plio.direction)
+            )));
+        }
+        let channels = match width_bits {
+            32 | 64 => 1,
+            128 => 2,
+            width => {
+                return Err(CliError::Report(format!(
+                "logical PLIO `{name}` has unsupported width {width} bits; expected 32, 64, or 128"
+            )))
+            }
+        };
+        plio_map.insert(
+            name.clone(),
+            AiePlioSection {
+                direction,
+                column: plio.column,
+                width_bits,
+                channels,
+            },
+        );
+    }
+    Ok(AieSection {
+        tiles_used: report.tiles_used,
+        plio_map,
+        per_kernel: report.per_kernel.clone(),
+    })
+}
+
+fn direction_name(direction: PlioDirection) -> &'static str {
+    match direction {
+        PlioDirection::Input => "input (PL→AIE)",
+        PlioDirection::Output => "output (AIE→PL)",
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Aie1ChannelUsage {
+    input: u64,
+    output: u64,
+}
+
+/// Aggregate 64-bit interface channels by column, in deterministic column
+/// order. A 128-bit PLIO occupies two channels.
+fn aie1_channel_usage(section: &AieSection) -> BTreeMap<u32, Aie1ChannelUsage> {
+    let mut columns = BTreeMap::new();
+    for plio in section.plio_map.values() {
+        let usage: &mut Aie1ChannelUsage = columns.entry(plio.column).or_default();
+        match plio.direction {
+            PlioDirection::Input => usage.input += plio.channels,
+            PlioDirection::Output => usage.output += plio.channels,
+        }
+    }
+    columns
+}
+
+/// AIE1 interface tiles provide 8 PL→AIE and 6 AIE→PL 64-bit channels.
+fn check_aie1_channel_limits(section: &AieSection) -> Result<()> {
+    const INPUT_LIMIT: u64 = 8;
+    const OUTPUT_LIMIT: u64 = 6;
+    for (column, usage) in aie1_channel_usage(section) {
+        log::info!(
+            "AI Engine interface column {column}: {}/{} PL→AIE and {}/{} AIE→PL 64-bit channels",
+            usage.input,
+            INPUT_LIMIT,
+            usage.output,
+            OUTPUT_LIMIT
+        );
+        if usage.input > INPUT_LIMIT {
+            return Err(CliError::Report(format!(
+                "AI Engine interface column {column} uses {} PL→AIE (input) 64-bit channels, exceeding the AIE1 limit of {INPUT_LIMIT}",
+                usage.input
+            )));
+        }
+        if usage.output > OUTPUT_LIMIT {
+            return Err(CliError::Report(format!(
+                "AI Engine interface column {column} uses {} AIE→PL (output) 64-bit channels, exceeding the AIE1 limit of {OUTPUT_LIMIT}",
+                usage.output
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Render a typed area into the report's published resource map.
@@ -236,7 +406,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use indexmap::IndexMap;
-    use tapa_ir::{SynthTarget, Task, TaskInstance, TaskLevel};
+    use tapa_ir::{AieStream, SynthTarget, Task, TaskInstance, TaskLevel};
+    use tapa_xilinx::tools::aie::report::{AieKernelReport, AiePlioReport, AieTile};
 
     /// `count` child instances with empty args and step 0, mirroring
     /// the `[{"args": {}, "step": 0}, ...]` JSON the untyped fixtures
@@ -311,6 +482,217 @@ mod tests {
         }
     }
 
+    fn plio_stream(name: &str, input: bool, width: u32) -> AieStream {
+        AieStream {
+            name: name.to_string(),
+            fifo: name.to_string(),
+            words: 1,
+            frame: None,
+            kind: AieStreamKind::Plio { input, width },
+        }
+    }
+
+    /// Three PLIOs share a column with both directions and all channel
+    /// counts: 32-bit input (1), 128-bit input (2), and 64-bit output (1).
+    fn aie_fixture() -> (AieReport, AiePartition) {
+        let report = AieReport {
+            tiles_used: 1,
+            plio_map: BTreeMap::from([
+                (
+                    "a_q".to_string(),
+                    AiePlioReport {
+                        column: 7,
+                        direction: PlioDirection::Input,
+                    },
+                ),
+                (
+                    "b_q".to_string(),
+                    AiePlioReport {
+                        column: 7,
+                        direction: PlioDirection::Input,
+                    },
+                ),
+                (
+                    "c_q".to_string(),
+                    AiePlioReport {
+                        column: 7,
+                        direction: PlioDirection::Output,
+                    },
+                ),
+            ]),
+            per_kernel: BTreeMap::from([(
+                "tapa_aie_Add_0".to_string(),
+                AieKernelReport {
+                    tile: AieTile { column: 23, row: 2 },
+                    program_bytes: 4096,
+                    data_bytes: None,
+                },
+            )]),
+        };
+        let partition = AiePartition {
+            kernels: Vec::new(),
+            streams: vec![
+                plio_stream("a_q", true, 32),
+                plio_stream("b_q", true, 128),
+                plio_stream("c_q", false, 64),
+            ],
+            run_forever: false,
+        };
+        (report, partition)
+    }
+
+    #[test]
+    fn aie_json_has_widths_channels_and_optional_kernel_data_only_at_root() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let design = Design {
+            schema_version: tapa_ir::graph::SCHEMA_VERSION,
+            top: "Top".to_string(),
+            target: tapa_ir::Target::XilinxVitis,
+            tasks: BTreeMap::from([
+                (
+                    "Top".to_string(),
+                    derived_task(
+                        "Top",
+                        Some(ClockPeriod::from_picoseconds(2000)),
+                        tapa_ir::Area::default(),
+                        BTreeMap::from([("Add".to_string(), instances(1))]),
+                    ),
+                ),
+                (
+                    "Add".to_string(),
+                    leaf("Add", Some(ClockPeriod::from_picoseconds(2000)), None),
+                ),
+            ]),
+            cflags: Vec::new(),
+        };
+        let (aie_report, partition) = aie_fixture();
+
+        write_top_report(dir.path(), &design, "", Some((&aie_report, &partition)))
+            .expect("write AIE report");
+        let parsed: Value = serde_json::from_str(
+            &fs::read_to_string(dir.path().join("report.json")).expect("read report"),
+        )
+        .expect("valid report JSON");
+        assert_eq!(
+            parsed["aie"],
+            serde_json::json!({
+                "tiles_used": 1,
+                "plio_map": {
+                    "a_q": {
+                        "direction": "input",
+                        "column": 7,
+                        "width_bits": 32,
+                        "channels": 1
+                    },
+                    "b_q": {
+                        "direction": "input",
+                        "column": 7,
+                        "width_bits": 128,
+                        "channels": 2
+                    },
+                    "c_q": {
+                        "direction": "output",
+                        "column": 7,
+                        "width_bits": 64,
+                        "channels": 1
+                    }
+                },
+                "per_kernel": {
+                    "tapa_aie_Add_0": {
+                        "tile": { "column": 23, "row": 2 },
+                        "program_bytes": 4096
+                    }
+                }
+            })
+        );
+        assert!(parsed["aie"]["per_kernel"]["tapa_aie_Add_0"]
+            .get("data_bytes")
+            .is_none());
+        assert!(parsed["performance"]["critical_path"]["Add"]
+            .get("aie")
+            .is_none());
+        assert!(parsed["area"]["breakdown"]["Add"]["area"]
+            .get("aie")
+            .is_none());
+
+        let yaml: serde_yaml::Value = serde_yaml::from_str(
+            &fs::read_to_string(dir.path().join("report.yaml")).expect("read YAML"),
+        )
+        .expect("valid report YAML");
+        assert_eq!(yaml["aie"]["tiles_used"], 1);
+        assert_eq!(yaml["aie"]["plio_map"]["b_q"]["channels"], 2);
+    }
+
+    #[test]
+    fn plio_width_join_and_mixed_column_accounting_use_64_bit_channels() {
+        let (report, partition) = aie_fixture();
+        let section = build_aie_section(&report, &partition).expect("join PLIOs");
+        assert_eq!(section.plio_map["a_q"].width_bits, 32);
+        assert_eq!(section.plio_map["a_q"].channels, 1);
+        assert_eq!(section.plio_map["b_q"].width_bits, 128);
+        assert_eq!(section.plio_map["b_q"].channels, 2);
+        assert_eq!(section.plio_map["c_q"].width_bits, 64);
+        assert_eq!(section.plio_map["c_q"].channels, 1);
+        assert_eq!(
+            aie1_channel_usage(&section),
+            BTreeMap::from([(
+                7,
+                Aie1ChannelUsage {
+                    input: 3,
+                    output: 1,
+                },
+            )])
+        );
+        check_aie1_channel_limits(&section).expect("usage is within AIE1 limits");
+    }
+
+    #[test]
+    fn aie_join_rejects_missing_duplicate_and_mismatched_plios() {
+        let (mut report, partition) = aie_fixture();
+        report.plio_map.remove("a_q");
+        let error = build_aie_section(&report, &partition).expect_err("missing report PLIO");
+        assert!(error.to_string().contains("missing logical PLIO `a_q`"));
+
+        let (report, mut partition) = aie_fixture();
+        partition.streams.push(partition.streams[0].clone());
+        let error = build_aie_section(&report, &partition).expect_err("duplicate partition PLIO");
+        assert!(error.to_string().contains("duplicate logical PLIO `a_q`"));
+
+        let (mut report, partition) = aie_fixture();
+        report.plio_map.get_mut("a_q").expect("a_q").direction = PlioDirection::Output;
+        let error = build_aie_section(&report, &partition).expect_err("direction mismatch");
+        assert!(error
+            .to_string()
+            .contains("logical PLIO `a_q` direction mismatch"));
+    }
+
+    #[test]
+    fn aie1_channel_overflow_identifies_column_direction_and_usage() {
+        let section = AieSection {
+            tiles_used: 0,
+            plio_map: (0..7)
+                .map(|index| {
+                    (
+                        format!("out_{index}"),
+                        AiePlioSection {
+                            direction: PlioDirection::Output,
+                            column: 24,
+                            width_bits: 64,
+                            channels: 1,
+                        },
+                    )
+                })
+                .collect(),
+            per_kernel: BTreeMap::new(),
+        };
+        let error = check_aie1_channel_limits(&section).expect_err("seven outputs exceed six");
+        let message = error.to_string();
+        assert!(message.contains("interface column 24"), "{message}");
+        assert!(message.contains("AIE→PL (output)"), "{message}");
+        assert!(message.contains("uses 7"), "{message}");
+        assert!(message.contains("limit of 6"), "{message}");
+    }
+
     /// `synth: ignore` tasks are skipped by HLS, so they reach the report
     /// with an empty `clock_period` annotation. That must read as zero (the
     /// value `analyze` used to seed) instead of failing the whole report.
@@ -356,7 +738,8 @@ mod tests {
             cflags: Vec::new(),
         };
 
-        write_top_report(dir.path(), &design, "").expect("report must not fail on empty clock");
+        write_top_report(dir.path(), &design, "", None)
+            .expect("report must not fail on empty clock");
         let parsed: Value = serde_json::from_str(
             &fs::read_to_string(dir.path().join("report.json")).expect("read report"),
         )
@@ -421,7 +804,7 @@ mod tests {
             cflags: Vec::new(),
         };
 
-        write_top_report(dir.path(), &design, "").expect("write report");
+        write_top_report(dir.path(), &design, "", None).expect("write report");
         let parsed: Value = serde_json::from_str(
             &fs::read_to_string(dir.path().join("report.json")).expect("read report"),
         )
@@ -502,7 +885,7 @@ mod tests {
             tasks,
             cflags: Vec::new(),
         };
-        write_top_report(dir.path(), &design, "").expect("write report");
+        write_top_report(dir.path(), &design, "", None).expect("write report");
         let yaml = fs::read_to_string(dir.path().join("report.yaml")).expect("read yaml");
         assert!(yaml.contains("name: VecAdd"));
         assert!(yaml.contains("breakdown:"));
@@ -517,6 +900,11 @@ mod tests {
         assert_eq!(parsed["area"]["source"], "synth"); // total_area populated
         assert_eq!(parsed["performance"]["clock_period"], "3.33");
         assert_eq!(parsed["area"]["breakdown"]["Add"]["count"], 2);
+        assert!(
+            parsed.get("aie").is_none(),
+            "PL-only report has no AIE block"
+        );
+        assert!(!yaml.contains("\naie:"), "PL-only YAML has no AIE block");
     }
 
     #[test]
@@ -534,7 +922,7 @@ mod tests {
             tasks,
             cflags: Vec::new(),
         };
-        write_top_report(dir.path(), &design, "9.9.9-override").expect("write");
+        write_top_report(dir.path(), &design, "9.9.9-override", None).expect("write");
         let parsed: Value = serde_json::from_str(
             &fs::read_to_string(dir.path().join("report.json")).expect("read"),
         )

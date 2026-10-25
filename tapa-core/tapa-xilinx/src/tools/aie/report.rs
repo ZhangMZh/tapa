@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use camino::Utf8Path;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, XilinxError};
 
@@ -25,7 +25,7 @@ pub struct AieReport {
 }
 
 /// An AI Engine core tile coordinate (`CR(column,row)`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct AieTile {
     pub column: u32,
     pub row: u32,
@@ -40,7 +40,8 @@ pub struct AiePlioReport {
 }
 
 /// PLIO direction from the graph's perspective.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PlioDirection {
     /// PL → AIE (`pl2aie` in the compiler report).
     Input,
@@ -49,7 +50,7 @@ pub enum PlioDirection {
 }
 
 /// An AIE kernel instance's placement and memory use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct AieKernelReport {
     pub tile: AieTile,
     /// Used program memory in bytes, from `PM Size Used` for this tile.
@@ -57,6 +58,7 @@ pub struct AieKernelReport {
     /// Per-kernel data memory in bytes. The supported compiler reports do
     /// not define this unambiguously, so this is currently always `None`;
     /// stack, heap, stream buffers, and system memory are not substitutes.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub data_bytes: Option<u64>,
 }
 

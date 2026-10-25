@@ -169,6 +169,15 @@ tapa --work-dir work.out compile -f vadd.cpp -t VecAdd \
   PL kernel clock. It warns about each such stream whose elements are
   narrower than 128 bits: the PL moves one element per cycle, and only a
   128-bit PLIO keeps up with an AI Engine stream port.
+
+  After a successful hardware AI Engine build, `report.json` and `report.yaml`
+  have a root-level `aie` block. It records `tiles_used`, a `plio_map` with each
+  logical PLIO's direction, interface column, width and consumed 64-bit
+  channels, and `per_kernel` tile and program-memory usage (`data_bytes` is
+  omitted when unknown). PL-only builds and `--skip-aie` omit this block. For
+  the supported AIE1 flow, synth also logs each occupied interface column's
+  usage against 8 PL-to-AI Engine and 6 AI Engine-to-PL 64-bit channels; a
+  128-bit PLIO consumes two channels. A mapping over either limit is an error.
 - `tapa pack` writes the PL kernel as `vadd.xo` and, next to it, the graph as
   `vadd.libadf.a` and the PLIO connectivity as `vadd.aie.cfg`, one
   `stream_connect` per boundary stream between the kernel's compute unit

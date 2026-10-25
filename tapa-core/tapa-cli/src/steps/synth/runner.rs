@@ -61,14 +61,22 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
     work_io::store(&ctx.work_dir, &state)?;
 
     let graph_dir = crate::aie::dir(&ctx.work_dir, "hw");
-    match &partition {
-        Some(partition) if !args.skip_aie => {
-            build_aie(args, ctx, runner, &state, partition, clock_period)?;
-        }
+    let aie_report = match &partition {
+        Some(partition) if !args.skip_aie => Some(build_aie(
+            args,
+            ctx,
+            runner,
+            &state,
+            partition,
+            clock_period,
+        )?),
         // A graph left from an earlier run must not be packed with this one.
-        _ if graph_dir.exists() => fs_err::remove_dir_all(&graph_dir)?,
-        _ => {}
-    }
+        _ if graph_dir.exists() => {
+            fs_err::remove_dir_all(&graph_dir)?;
+            None
+        }
+        _ => None,
+    };
     // HLS and codegen see the PL half only; the state keeps the whole graph.
     let pl_graph = crate::aie::pl_graph(&state.graph)?;
     let sources = stage_hls_sources(&ctx.work_dir, &pl_graph)?;
@@ -139,6 +147,7 @@ pub fn run_native(args: &SynthArgs, ctx: &CliContext, runner: &dyn ToolRunner) -
         &ctx.work_dir,
         &pl_graph,
         &args.override_report_schema_version,
+        aie_report.as_ref().zip(partition.as_ref()),
     )?;
 
     write_templates_info(&ctx.work_dir, &pl_graph)?;
@@ -159,7 +168,7 @@ fn build_aie(
     state: &WorkState,
     partition: &tapa_ir::AiePartition,
     clock_period: ClockPeriod,
-) -> Result<()> {
+) -> Result<tapa_xilinx::tools::aie::report::AieReport> {
     use crate::aie::{device, dir, prepare, GraphBuild};
     let job = prepare(
         &ctx.work_dir,
@@ -179,7 +188,9 @@ fn build_aie(
         job.graph_dir.join("libadf.a")
     );
     tapa_xilinx::tools::aie::compile(runner, &job)?;
-    Ok(())
+    Ok(tapa_xilinx::tools::aie::report::read_report(
+        &job.graph_dir,
+    )?)
 }
 
 /// Say whether HLS met the requested clock period, and if not, which task
