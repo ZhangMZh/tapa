@@ -68,7 +68,19 @@ pub(super) fn render_vitis_script(
         connectivity_ini.map(|p| shell_quote(&absolutize_lexical(p).display().to_string()));
     let target_frequency = clock_period
         .map(|clock| {
-            tapa_xilinx::target_frequency_mhz(clock.nanoseconds())
+            let frequency = if aie.is_some() {
+                1_000_000_000_000_u64
+                    .checked_div(clock.picoseconds())
+                    .filter(|&frequency| frequency > 0)
+                    .ok_or_else(|| {
+                        format!("clock period `{clock}` ns produces no usable frequency in Hz")
+                    })
+            } else {
+                tapa_xilinx::target_frequency_mhz(clock.nanoseconds())
+                    .map(u64::from)
+                    .map_err(|error| error.to_string())
+            };
+            frequency
                 .map(|frequency| frequency.to_string())
                 .map_err(|error| {
                     CliError::InvalidArg(format!(
@@ -322,7 +334,7 @@ mod tests {
             "Top",
             &dir.path().join("k.xo"),
             Some("vck"),
-            None,
+            Some(ClockPeriod::from_picoseconds(3200)),
             LinkExtras {
                 aie: Some(&aie),
                 ..LinkExtras::default()
@@ -363,6 +375,13 @@ source "$1""#,
                 .any(|pair| pair == ["--config", aie.1.to_str().expect("UTF-8")]),
             "{link:?}"
         );
+        assert!(!link.contains(&"--kernel"), "{link:?}");
+        assert!(
+            link.windows(2)
+                .any(|pair| pair == ["--clock.default_freqhz", "312500000"]),
+            "{link:?}"
+        );
+        assert!(!link.contains(&"--kernel_frequency"), "{link:?}");
         assert!(
             link.iter().any(|arg| arg.ends_with("Top_vck.xsa")),
             "{link:?}"
@@ -489,6 +508,11 @@ source "$1""#,
                     .any(|pair| pair == ["--kernel_frequency", "300"]),
                 "{args:?}"
             );
+            assert!(
+                args.windows(2).any(|pair| pair == ["--kernel", "Top"]),
+                "{args:?}"
+            );
+            assert!(!args.contains(&"--clock.default_freqhz"), "{args:?}");
         }
     }
 
