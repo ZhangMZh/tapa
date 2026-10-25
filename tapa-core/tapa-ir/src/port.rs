@@ -158,7 +158,9 @@ pub struct Port {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aie_frame: Option<u32>,
     /// `[[tapa::aie_plio(W)]]`: the PLIO width (32, 64 or 128 bits) of an
-    /// AI Engine task's boundary stream port.
+    /// AI Engine task's boundary stream port. On a top port of the PL
+    /// projection (`AiePartition::pl_projection`) it marks the AXIS port
+    /// wired to the PLIO of that width.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aie_plio: Option<u32>,
     /// FIFO depth (elements) a cosimulation should model for this stream

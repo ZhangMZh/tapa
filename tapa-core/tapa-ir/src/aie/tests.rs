@@ -128,9 +128,8 @@ fn boundary_streams_become_plios_and_scalars_runtime_parameters() {
     assert!(!partition.run_forever);
 }
 
-#[test]
-fn an_upper_task_flattens_into_kernels_and_nets() {
-    let g = graph(json!({
+fn upper_task_graph() -> TaskGraph {
+    graph(json!({
         "Top": {"level": "upper", "synth": "hls", "ports": [],
             "tasks": {
                 "Load": [{"args": {"out": arg("a_q", "ostream")}}],
@@ -153,7 +152,28 @@ fn an_upper_task_flattens_into_kernels_and_nets() {
                               "consumed_by": ["Inc", 1]}}},
         "Inc": leaf(&json!([stream("istream", "in", 64), stream("ostream", "out", 64),
                            scalar("k")]), "aie"),
-    }));
+    }))
+}
+
+#[test]
+fn an_upper_task_flattens_into_kernels_and_nets() {
+    let mut g = upper_task_graph();
+    // A PL-only stream in the top scope may reuse the AIE-local name `mid`.
+    let top = g.tasks.get_mut("Top").expect("top");
+    top.tasks.get_mut("Load").expect("load").push(
+        serde_json::from_value(json!({"args": {"out": arg("mid", "ostream")}}))
+            .expect("load instance"),
+    );
+    top.tasks.get_mut("Store").expect("store").push(
+        serde_json::from_value(json!({"args": {"in": arg("mid", "istream")}}))
+            .expect("store instance"),
+    );
+    top.fifos.insert(
+        "mid".into(),
+        serde_json::from_value(json!({"depth": 2, "produced_by": ["Load", 1],
+                                      "consumed_by": ["Store", 1]}))
+        .expect("PL fifo"),
+    );
     let partition = AiePartition::derive(&g).expect("derive").expect("aie");
     assert!(partition.run_forever, "the detached invoke runs forever");
     assert_eq!(
@@ -193,6 +213,10 @@ fn an_upper_task_flattens_into_kernels_and_nets() {
         partition.streams[streams[0]].name, "c_q",
         "the upper's port binding"
     );
+    let pl = partition.pl_projection(&g).expect("project");
+    let mid = &pl.tasks["Top"].fifos["mid"];
+    assert_eq!(mid.produced_by, Some(crate::EndpointRef("Load".into(), 1)));
+    assert_eq!(mid.consumed_by, Some(crate::EndpointRef("Store".into(), 1)));
 }
 
 #[test]
@@ -248,4 +272,43 @@ fn unsupported_shapes_are_rejected_with_the_reason() {
     nested.tasks.insert("Top".into(), new_top);
     let err = AiePartition::derive(&nested).expect_err("AIE below a PL upper");
     assert!(err.0.contains("must be invoked by the top task"), "{err}");
+}
+
+#[test]
+fn the_pl_projection_turns_plios_into_top_axis_ports() {
+    let add = leaf(
+        &json!([
+            stream("istream", "a", 32),
+            stream("ostream", "c", 32),
+            scalar("n")
+        ]),
+        "aie",
+    );
+    let g = vadd(&add, 32);
+    let partition = AiePartition::derive(&g).expect("derive").expect("aie");
+    let pl = partition.pl_projection(&g).expect("project");
+    assert!(!pl.tasks.contains_key("Add"), "the AI Engine task is gone");
+    let top = &pl.tasks["Top"];
+    assert!(!top.tasks.contains_key("Add"), "and so is its instance");
+    let a_q = &top.fifos["a_q"];
+    assert_eq!(
+        (a_q.depth, a_q.consumed_by.as_ref()),
+        (None, None),
+        "an external FIFO"
+    );
+    assert_eq!(a_q.produced_by, Some(crate::EndpointRef("Load".into(), 0)));
+    let ports: Vec<_> = top
+        .ports
+        .iter()
+        .map(|p| (p.name.as_str(), p.cat, p.width, p.aie_plio))
+        .collect();
+    assert_eq!(
+        ports,
+        [
+            ("n", ArgCategory::Scalar, 32, None),
+            ("a_q", ArgCategory::Ostream, 32, Some(32)),
+            ("c_q", ArgCategory::Istream, 32, Some(32)),
+        ],
+        "the top writes what the AI Engine reads, and reads what it writes"
+    );
 }

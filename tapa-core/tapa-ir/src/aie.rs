@@ -177,6 +177,85 @@ impl AiePartition {
     }
 }
 
+impl AiePartition {
+    /// The PL half of `graph`, the design `tapa synth` builds as RTL: the AI
+    /// Engine tasks and their instances are gone, a net the top declares is
+    /// gone, and every PLIO becomes a top-level stream port of the top task,
+    /// named after its FIFO, carrying `aie_plio`. Codegen gives such a port
+    /// its AXIS interface; `v++` wires it to the PLIO of the same name.
+    pub fn pl_projection(&self, graph: &TaskGraph) -> Result<TaskGraph, AieError> {
+        let mut pl = graph.clone();
+        pl.tasks.retain(|_, task| task.synth != SynthTarget::Aie);
+        let pl_tasks: std::collections::BTreeSet<String> = pl.tasks.keys().cloned().collect();
+        let original = task(graph, &graph.top)?;
+        let top = pl
+            .tasks
+            .get_mut(&graph.top)
+            .ok_or_else(|| AieError(format!("the task graph has no task `{}`", graph.top)))?;
+        top.tasks.retain(|child, _| pl_tasks.contains(child));
+        for stream in &self.streams {
+            let AieStreamKind::Plio { input, width } = stream.kind else {
+                let top_aie_net = top.fifos.get(&stream.fifo).is_some_and(|fifo| {
+                    [&fifo.produced_by, &fifo.consumed_by]
+                        .iter()
+                        .all(|endpoint| {
+                            endpoint
+                                .as_ref()
+                                .and_then(|e| graph.tasks.get(&e.0))
+                                .is_some_and(|task| task.synth == SynthTarget::Aie)
+                        })
+                });
+                if top_aie_net {
+                    top.fifos.remove(&stream.fifo);
+                }
+                continue;
+            };
+            let Some(fifo) = top.fifos.get_mut(&stream.fifo) else {
+                continue;
+            };
+            fifo.depth = None;
+            let endpoint = if input {
+                fifo.consumed_by = None;
+                fifo.produced_by.clone()
+            } else {
+                fifo.produced_by = None;
+                fifo.consumed_by.clone()
+            };
+            let endpoint = endpoint.ok_or_else(|| {
+                AieError(format!(
+                    "the PL side of stream `{}` is not connected",
+                    stream.fifo
+                ))
+            })?;
+            let port_name =
+                child_port_for(original, &endpoint.0, endpoint.1, &stream.fifo).unwrap_or_default();
+            let pl_port = task(graph, &endpoint.0)?.port(&port_name).ok_or_else(|| {
+                AieError(format!(
+                    "the task `{}` has no port `{port_name}`",
+                    endpoint.0
+                ))
+            })?;
+            top.ports.push(crate::Port {
+                cat: if input {
+                    ArgCategory::Ostream
+                } else {
+                    ArgCategory::Istream
+                },
+                name: stream.fifo.clone(),
+                ctype: pl_port.ctype.clone(),
+                width: pl_port.width,
+                chan_count: None,
+                chan_size: None,
+                aie_frame: None,
+                aie_plio: Some(width),
+                stream_depth: None,
+                mmap_addr_width: None,
+            });
+        }
+        Ok(pl)
+    }
+}
+
 fn task<'g>(graph: &'g TaskGraph, name: &str) -> Result<&'g Task, AieError> {
     graph
         .tasks
