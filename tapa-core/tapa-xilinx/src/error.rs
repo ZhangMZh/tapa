@@ -61,6 +61,9 @@ pub enum XilinxError {
     #[error("template render error: {0}")]
     Template(String),
 
+    #[error("AI Engine graph: {0}")]
+    AieGraph(String),
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
