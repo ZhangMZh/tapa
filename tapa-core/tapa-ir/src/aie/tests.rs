@@ -1,0 +1,251 @@
+use super::*;
+
+use serde_json::{json, Value};
+
+fn leaf(ports: &Value, synth: &str) -> Value {
+    json!({"level": "lower", "srcs": ["d.cpp"], "include_dirs": [], "defines": [],
+           "readable_name": "", "synth": synth, "ports": ports})
+}
+
+fn stream(cat: &str, name: &str, width: u32) -> Value {
+    json!({"cat": cat, "name": name, "type": "float", "width": width})
+}
+
+fn scalar(name: &str) -> Value {
+    json!({"cat": "scalar", "name": name, "type": "int", "width": 32})
+}
+
+fn graph(tasks: Value) -> TaskGraph {
+    let mut tasks = tasks;
+    for (name, task) in tasks.as_object_mut().expect("tasks") {
+        task["readable_name"] = json!(name);
+        if task.get("srcs").is_none() {
+            task["srcs"] = json!(["d.cpp"]);
+            task["include_dirs"] = json!([]);
+            task["defines"] = json!([]);
+        }
+    }
+    serde_json::from_value(json!({"schema_version": 3, "top": "Top",
+        "target": "xilinx-vitis", "tasks": tasks}))
+    .expect("graph fixture")
+}
+
+fn arg(name: &str, cat: &str) -> Value {
+    json!({"arg": name, "cat": cat})
+}
+
+/// A PL loader feeds the AI Engine task `add`; a PL storer drains it.
+fn vadd(add: &Value, add_width: u32) -> TaskGraph {
+    graph(json!({
+        "Top": {"level": "upper", "synth": "hls", "ports": [scalar("n")],
+            "tasks": {
+                "Load": [{"args": {"out": arg("a_q", "ostream")}}],
+                "Add": [{"args": {"a": arg("a_q", "istream"), "c": arg("c_q", "ostream"),
+                                  "n": arg("n", "scalar")}}],
+                "Store": [{"args": {"in": arg("c_q", "istream")}}]},
+            "fifos": {
+                "a_q": {"depth": 2, "produced_by": ["Load", 0], "consumed_by": ["Add", 0]},
+                "c_q": {"depth": 2, "produced_by": ["Add", 0], "consumed_by": ["Store", 0]}}},
+        "Load": leaf(&json!([stream("ostream", "out", add_width)]), "hls"),
+        "Add": add.clone(),
+        "Store": leaf(&json!([stream("istream", "in", add_width)]), "hls"),
+    }))
+}
+
+#[test]
+fn a_pl_only_graph_has_no_partition() {
+    let g = vadd(&leaf(&json!([]), "hls"), 32);
+    assert_eq!(AiePartition::derive(&g).expect("derive"), None);
+}
+
+#[test]
+fn boundary_streams_become_plios_and_scalars_runtime_parameters() {
+    let add = leaf(
+        &json!([
+            {"cat": "istream", "name": "a", "type": "vec4f", "width": 128, "aie_frame": 64},
+            stream("ostream", "c", 32),
+            scalar("n"),
+        ]),
+        "aie",
+    );
+    let partition = AiePartition::derive(&vadd(&add, 32))
+        .expect("derive")
+        .expect("aie");
+    assert_eq!(
+        partition.streams,
+        [
+            AieStream {
+                name: "a_q".into(),
+                fifo: "a_q".into(),
+                words: 4,
+                kind: AieStreamKind::Plio {
+                    input: true,
+                    width: 128
+                },
+            },
+            AieStream {
+                name: "c_q".into(),
+                fifo: "c_q".into(),
+                words: 1,
+                kind: AieStreamKind::Plio {
+                    input: false,
+                    width: 32
+                },
+            },
+        ]
+    );
+    let [kernel] = partition.kernels.as_slice() else {
+        panic!("one kernel")
+    };
+    assert_eq!(
+        (kernel.name.as_str(), kernel.call.as_str()),
+        ("Add_0", "Add")
+    );
+    assert_eq!(
+        kernel.ports.iter().map(|p| &p.kind).collect::<Vec<_>>(),
+        [
+            &AiePortKind::Streams {
+                input: true,
+                plural: false,
+                streams: vec![0],
+                words: 4,
+                frame: Some(64)
+            },
+            &AiePortKind::Streams {
+                input: false,
+                plural: false,
+                streams: vec![1],
+                words: 1,
+                frame: None
+            },
+            &AiePortKind::Scalar {
+                ctype: "int".into(),
+                width: 32,
+                value: ScalarBinding::Runtime("n".into())
+            },
+        ]
+    );
+    assert!(!partition.run_forever);
+}
+
+#[test]
+fn an_upper_task_flattens_into_kernels_and_nets() {
+    let g = graph(json!({
+        "Top": {"level": "upper", "synth": "hls", "ports": [],
+            "tasks": {
+                "Load": [{"args": {"out": arg("a_q", "ostream")}}],
+                "Pipe": [{"step": -1, "args": {"a": arg("a_q", "istream"),
+                                               "c": arg("c_q", "ostream")}}],
+                "Store": [{"args": {"in": arg("c_q", "istream")}}]},
+            "fifos": {
+                "a_q": {"depth": 2, "produced_by": ["Load", 0], "consumed_by": ["Pipe", 0]},
+                "c_q": {"depth": 2, "produced_by": ["Pipe", 0], "consumed_by": ["Store", 0]}}},
+        "Load": leaf(&json!([stream("ostream", "out", 32)]), "hls"),
+        "Store": leaf(&json!([stream("istream", "in", 32)]), "hls"),
+        "Pipe": {"level": "upper", "synth": "aie",
+            "ports": [stream("istream", "a", 32), stream("ostream", "c", 32)],
+            "tasks": {"Inc": [
+                {"args": {"in": arg("a", "istream"), "out": arg("mid", "ostream"),
+                          "k": {"arg": {"width": 32, "value": 1}, "cat": "scalar"}}},
+                {"args": {"in": arg("mid", "istream"), "out": arg("c", "ostream"),
+                          "k": {"arg": {"width": 32, "value": 2}, "cat": "scalar"}}}]},
+            "fifos": {"mid": {"depth": 8, "produced_by": ["Inc", 0],
+                              "consumed_by": ["Inc", 1]}}},
+        "Inc": leaf(&json!([stream("istream", "in", 64), stream("ostream", "out", 64),
+                           scalar("k")]), "aie"),
+    }));
+    let partition = AiePartition::derive(&g).expect("derive").expect("aie");
+    assert!(partition.run_forever, "the detached invoke runs forever");
+    assert_eq!(
+        partition
+            .kernels
+            .iter()
+            .map(|k| k.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Pipe_0__Inc_0", "Pipe_0__Inc_1"]
+    );
+    let net = partition
+        .streams
+        .iter()
+        .find(|s| s.fifo == "mid")
+        .expect("net");
+    assert_eq!(net.name, "Pipe_0__mid");
+    assert_eq!(
+        net.kind,
+        AieStreamKind::Net { depth_words: 16 },
+        "8 elements of 2 words"
+    );
+    assert_eq!(
+        partition.kernels[1].ports[2].kind,
+        AiePortKind::Scalar {
+            ctype: "int".into(),
+            width: 32,
+            value: ScalarBinding::Constant(WireValue {
+                width: 32,
+                value: 2
+            })
+        }
+    );
+    let AiePortKind::Streams { streams, .. } = &partition.kernels[1].ports[1].kind else {
+        panic!("stream port")
+    };
+    assert_eq!(
+        partition.streams[streams[0]].name, "c_q",
+        "the upper's port binding"
+    );
+}
+
+#[test]
+fn an_upper_task_rejects_sequential_children() {
+    let mut g = upper_task_graph();
+    g.tasks
+        .get_mut("Pipe")
+        .expect("pipe")
+        .tasks
+        .get_mut("Inc")
+        .expect("inc")[0]
+        .step = 1;
+    let err = AiePartition::derive(&g).expect_err("sequential AIE child");
+    assert!(err.0.contains("invoked sequentially"), "{err}");
+}
+
+#[test]
+fn unsupported_shapes_are_rejected_with_the_reason() {
+    let wide = leaf(
+        &json!([
+            stream("istream", "a", 256),
+            stream("ostream", "c", 256),
+            scalar("n")
+        ]),
+        "aie",
+    );
+    let err = AiePartition::derive(&vadd(&wide, 256)).expect_err("256-bit boundary");
+    assert!(err.0.contains("at most 128 bits"), "{err}");
+
+    let mut nested = vadd(
+        &leaf(
+            &json!([
+                stream("istream", "a", 32),
+                stream("ostream", "c", 32),
+                scalar("n")
+            ]),
+            "aie",
+        ),
+        32,
+    );
+    let top = nested.tasks.remove("Top").expect("top");
+    nested.tasks.insert("Mid".into(), top.clone());
+    let mut new_top = top;
+    new_top.tasks = BTreeMap::from([(
+        "Mid".into(),
+        vec![crate::TaskInstance {
+            name: None,
+            args: BTreeMap::new(),
+            step: 0,
+        }],
+    )]);
+    new_top.fifos = BTreeMap::new();
+    nested.tasks.insert("Top".into(), new_top);
+    let err = AiePartition::derive(&nested).expect_err("AIE below a PL upper");
+    assert!(err.0.contains("must be invoked by the top task"), "{err}");
+}

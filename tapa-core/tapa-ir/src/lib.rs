@@ -7,6 +7,7 @@
 //! the `.zip` archive, where `frt-cosim` — in a different Cargo workspace —
 //! parses it back with these same types.
 
+pub mod aie;
 pub mod bindings;
 pub mod clock;
 pub mod connectivity;
@@ -24,6 +25,10 @@ pub mod work_state;
 
 mod error;
 
+pub use aie::{
+    AieError, AieKernel, AieKernelPort, AiePartition, AiePortKind, AieStream, AieStreamKind,
+    ScalarBinding,
+};
 pub use bindings::{FifoEndpoint, PortBinding};
 pub use clock::{ClockPeriod, ClockPeriodError};
 pub use connectivity::{

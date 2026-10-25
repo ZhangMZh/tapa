@@ -1,0 +1,506 @@
+//! The AI Engine partition of a task graph.
+//!
+//! Tasks tagged `synth: aie` form one ADF graph. tapacc has already resolved
+//! the attributes, the `--target TASK:aie` mappings and the propagation down
+//! an AI Engine upper task; [`AiePartition::derive`] flattens those tasks into
+//! kernels and classifies every stream they touch: a FIFO between two AI
+//! Engine tasks is an AI Engine net, and a FIFO between a PL task and an AI
+//! Engine task is a PLIO. In this version AI Engine tasks are invoked by the
+//! top task, so every PLIO is a FIFO the top declares.
+
+use std::collections::BTreeMap;
+
+use crate::instance::{ArgSource, WireValue};
+use crate::port::{sanitize_identifier_name, ArgCategory};
+use crate::synth_target::SynthTarget;
+use crate::task::{Task, TaskLevel};
+use crate::TaskGraph;
+
+/// Why a task graph has no valid AI Engine partition.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct AieError(pub String);
+
+/// The AI Engine half of a design.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiePartition {
+    /// One per AI Engine leaf instance, in task-graph order.
+    pub kernels: Vec<AieKernel>,
+    /// The streams the kernels read and write.
+    pub streams: Vec<AieStream>,
+    /// Some kernel is invoked detached and never returns: the graph runs
+    /// until the host ends it.
+    pub run_forever: bool,
+}
+
+/// One AI Engine leaf instance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AieKernel {
+    /// Identifier unique in the partition: the sanitized instance path.
+    pub name: String,
+    /// The task graph name of the task.
+    pub task: String,
+    /// The C++ spelling that names the task function (its readable name).
+    pub call: String,
+    /// The task's parameters, in declaration order.
+    pub ports: Vec<AieKernelPort>,
+    /// A `[[tapa::aie_location]]` tile pin.
+    pub location: Option<(u32, u32)>,
+}
+
+/// One parameter of an AI Engine kernel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AieKernelPort {
+    /// The task's parameter name.
+    pub name: String,
+    pub kind: AiePortKind,
+}
+
+/// What a kernel parameter carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AiePortKind {
+    /// A stream port: one stream, or one per channel of an `istreams` /
+    /// `ostreams` port (`plural`).
+    Streams {
+        input: bool,
+        plural: bool,
+        /// Indices into [`AiePartition::streams`].
+        streams: Vec<usize>,
+        /// 32-bit words per element.
+        words: u32,
+        /// `[[tapa::aie_frame(N)]]` elements per frame.
+        frame: Option<u32>,
+    },
+    /// A scalar, read at run time or fixed at the invoke site.
+    Scalar {
+        ctype: String,
+        width: u32,
+        value: ScalarBinding,
+    },
+}
+
+/// Where a scalar parameter's value comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScalarBinding {
+    /// The top task's scalar argument of this name, written by the host as
+    /// a runtime parameter.
+    Runtime(String),
+    /// An invoke-site constant, compiled into the kernel.
+    Constant(WireValue),
+}
+
+/// A stream between two kernels, or between a kernel and the PL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AieStream {
+    /// Identifier: for a PLIO, the PLIO logical name, which is also the name
+    /// of the PL kernel's AXIS port; for a net, the sanitized FIFO path.
+    pub name: String,
+    /// The FIFO's name in the task that declares it.
+    pub fifo: String,
+    /// 32-bit words per element.
+    pub words: u32,
+    pub kind: AieStreamKind,
+}
+
+/// The two kinds of AI Engine stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AieStreamKind {
+    /// A PL↔AI Engine stream: `input` when the PL produces it.
+    Plio { input: bool, width: u32 },
+    /// An AI Engine↔AI Engine stream of `depth_words` 32-bit words.
+    Net { depth_words: u32 },
+}
+
+/// Widest boundary element: one 128-bit PLIO beat.
+const MAX_PLIO_BITS: u32 = 128;
+
+impl AiePartition {
+    /// The AI Engine partition of `graph`, or `None` when no task is on the
+    /// AI Engine.
+    pub fn derive(graph: &TaskGraph) -> Result<Option<Self>, AieError> {
+        if !graph
+            .tasks
+            .values()
+            .any(|task| task.synth == SynthTarget::Aie)
+        {
+            return Ok(None);
+        }
+        let top = task(graph, &graph.top)?;
+        for (name, upper) in &graph.tasks {
+            if name == &graph.top || upper.synth == SynthTarget::Aie {
+                continue;
+            }
+            if let Some(child) = upper
+                .tasks
+                .keys()
+                .find(|child| graph.tasks.get(*child).map(|t| t.synth) == Some(SynthTarget::Aie))
+            {
+                return Err(AieError(format!(
+                    "the PL task `{name}` invokes the AI Engine task `{child}`; AI Engine \
+                     tasks must be invoked by the top task `{}`",
+                    graph.top
+                )));
+            }
+        }
+        let mut builder = Builder {
+            graph,
+            partition: Self {
+                kernels: Vec::new(),
+                streams: Vec::new(),
+                run_forever: false,
+            },
+            top_streams: BTreeMap::new(),
+        };
+        for (child, instances) in &top.tasks {
+            if task(graph, child)?.synth != SynthTarget::Aie {
+                continue;
+            }
+            for (index, instance) in instances.iter().enumerate() {
+                if instance.step > 0 {
+                    return Err(AieError(format!(
+                        "the AI Engine task `{child}` is invoked sequentially (step {}); \
+                         AI Engine kernels run concurrently, so invoke it joined or detached",
+                        instance.step
+                    )));
+                }
+                builder.partition.run_forever |= instance.step < 0;
+                let name = instance.canonical_name(child, index).into_owned();
+                let mut scope = BTreeMap::new();
+                for (port, arg) in &instance.args {
+                    scope.insert(port.clone(), builder.top_binding(child, port, arg)?);
+                }
+                builder.visit(child, index, &sanitize_identifier_name(&name), &scope)?;
+            }
+        }
+        builder.check_locations()?;
+        Ok(Some(builder.partition))
+    }
+}
+
+fn task<'g>(graph: &'g TaskGraph, name: &str) -> Result<&'g Task, AieError> {
+    graph
+        .tasks
+        .get(name)
+        .ok_or_else(|| AieError(format!("the task graph has no task `{name}`")))
+}
+
+/// What a name in a task's scope is bound to.
+#[derive(Debug, Clone)]
+enum Binding {
+    Stream(usize),
+    Scalar(ScalarBinding),
+}
+
+struct Builder<'g> {
+    graph: &'g TaskGraph,
+    partition: AiePartition,
+    /// Top-level FIFO name → stream index, created on first use.
+    top_streams: BTreeMap<String, usize>,
+}
+
+impl Builder<'_> {
+    /// What one argument of a top-level AI Engine invoke is bound to.
+    fn top_binding(
+        &mut self,
+        child: &str,
+        port: &str,
+        arg: &crate::instance::Arg,
+    ) -> Result<Binding, AieError> {
+        let graph = self.graph;
+        let top = task(graph, &graph.top)?;
+        match &arg.arg {
+            ArgSource::Literal(value) => Ok(Binding::Scalar(ScalarBinding::Constant(*value))),
+            ArgSource::Name(name) if arg.cat.is_scalar() => {
+                Ok(Binding::Scalar(ScalarBinding::Runtime(name.clone())))
+            }
+            ArgSource::Name(name) if arg.cat.is_stream() => {
+                if let Some(index) = self.top_streams.get(name) {
+                    return Ok(Binding::Stream(*index));
+                }
+                let fifo = top.fifos.get(name).filter(|fifo| fifo.depth.is_some());
+                let Some(fifo) = fifo else {
+                    return Err(AieError(format!(
+                        "port `{port}` of the AI Engine task `{child}` is bound to the top \
+                         task's port `{name}`; connect an AI Engine task to the PL through a \
+                         stream the top declares"
+                    )));
+                };
+                let endpoint_on_aie = |endpoint: Option<&crate::EndpointRef>| {
+                    endpoint
+                        .and_then(|e| graph.tasks.get(&e.0))
+                        .is_some_and(|t| t.synth == SynthTarget::Aie)
+                };
+                let producer_aie = endpoint_on_aie(fifo.produced_by.as_ref());
+                let consumer_aie = endpoint_on_aie(fifo.consumed_by.as_ref());
+                let words = stream_words(graph, child, port)?;
+                let kind = if producer_aie && consumer_aie {
+                    AieStreamKind::Net {
+                        depth_words: fifo.depth.unwrap_or(0) * words,
+                    }
+                } else {
+                    let aie_port = task(graph, child)?.port(port);
+                    let width = aie_port.and_then(|p| p.aie_plio).unwrap_or(words * 32);
+                    let bits = words * 32;
+                    if bits > MAX_PLIO_BITS {
+                        return Err(AieError(format!(
+                            "stream `{name}` between the PL and the AI Engine task `{child}` \
+                             carries {bits}-bit elements; a PL↔AI Engine stream carries at most \
+                             {MAX_PLIO_BITS} bits per element, so split it into \
+                             tapa::vec_t<T, 4> elements of 32-bit T"
+                        )));
+                    }
+                    AieStreamKind::Plio {
+                        input: !producer_aie,
+                        width: plio_width(width),
+                    }
+                };
+                let index = self.push_stream(sanitize_identifier_name(name), name, words, kind);
+                self.top_streams.insert(name.clone(), index);
+                Ok(Binding::Stream(index))
+            }
+            ArgSource::Name(name) => Err(AieError(format!(
+                "port `{port}` of the AI Engine task `{child}` is bound to the memory `{name}`; \
+                 AI Engine tasks have no memory path"
+            ))),
+        }
+    }
+
+    fn push_stream(&mut self, name: String, fifo: &str, words: u32, kind: AieStreamKind) -> usize {
+        self.partition.streams.push(AieStream {
+            name,
+            fifo: fifo.to_string(),
+            words,
+            kind,
+        });
+        self.partition.streams.len() - 1
+    }
+
+    /// Flattens one AI Engine task instance whose ports are bound by `scope`.
+    fn visit(
+        &mut self,
+        task_name: &str,
+        index: usize,
+        path: &str,
+        scope: &BTreeMap<String, Binding>,
+    ) -> Result<(), AieError> {
+        let graph = self.graph;
+        let def = task(graph, task_name)?;
+        if def.level == TaskLevel::Lower {
+            let kernel = Self::kernel(task_name, index, path, def, scope)?;
+            self.partition.kernels.push(kernel);
+            return Ok(());
+        }
+        // An AI Engine upper task: its FIFOs are nets; its children see
+        // either those nets or the bindings of the upper task's own ports.
+        let mut inner: BTreeMap<String, Binding> = BTreeMap::new();
+        for (fifo_name, fifo) in &def.fifos {
+            let Some(endpoint) = fifo.produced_by.as_ref().or(fifo.consumed_by.as_ref()) else {
+                continue;
+            };
+            let port = child_port_for(def, &endpoint.0, endpoint.1, fifo_name).unwrap_or_default();
+            let words = stream_words(graph, &endpoint.0, &port)?;
+            let stream = self.push_stream(
+                sanitize_identifier_name(&format!("{path}__{fifo_name}")),
+                fifo_name,
+                words,
+                AieStreamKind::Net {
+                    depth_words: fifo.depth.unwrap_or(0) * words,
+                },
+            );
+            inner.insert(fifo_name.clone(), Binding::Stream(stream));
+        }
+        for (child, instances) in &def.tasks {
+            for (child_index, instance) in instances.iter().enumerate() {
+                if instance.step > 0 {
+                    return Err(AieError(format!(
+                        "the AI Engine task `{child}` is invoked sequentially (step {}); \
+                         AI Engine kernels run concurrently, so invoke it joined or detached",
+                        instance.step
+                    )));
+                }
+                self.partition.run_forever |= instance.step < 0;
+                let mut child_scope = BTreeMap::new();
+                for (port, arg) in &instance.args {
+                    let binding = match &arg.arg {
+                        ArgSource::Literal(value) => {
+                            Binding::Scalar(ScalarBinding::Constant(*value))
+                        }
+                        ArgSource::Name(name) => inner
+                            .get(name)
+                            .or_else(|| scope.get(name))
+                            .cloned()
+                            .ok_or_else(|| {
+                                AieError(format!(
+                                    "`{name}` bound to `{child}.{port}` in the AI Engine task \
+                                     `{task_name}` is neither a stream it declares nor one of \
+                                     its ports"
+                                ))
+                            })?,
+                    };
+                    child_scope.insert(port.clone(), binding);
+                }
+                let child_name = instance.canonical_name(child, child_index);
+                let child_path = sanitize_identifier_name(&format!("{path}__{child_name}"));
+                self.visit(child, child_index, &child_path, &child_scope)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn kernel(
+        task_name: &str,
+        index: usize,
+        path: &str,
+        def: &Task,
+        scope: &BTreeMap<String, Binding>,
+    ) -> Result<AieKernel, AieError> {
+        let mut ports = Vec::new();
+        for port in &def.ports {
+            let kind = if port.cat.is_stream() {
+                let plural = matches!(port.cat, ArgCategory::Istreams | ArgCategory::Ostreams);
+                let channels: Vec<String> = if plural {
+                    (0..port.chan_count.unwrap_or(0))
+                        .map(|i| format!("{}[{i}]", port.name))
+                        .collect()
+                } else {
+                    vec![port.name.clone()]
+                };
+                let mut streams = Vec::new();
+                for channel in &channels {
+                    match scope.get(channel) {
+                        Some(Binding::Stream(stream)) => streams.push(*stream),
+                        _ => {
+                            return Err(AieError(format!(
+                                "stream port `{channel}` of the AI Engine task `{task_name}` \
+                                 is not bound to a stream"
+                            )))
+                        }
+                    }
+                }
+                AiePortKind::Streams {
+                    input: port.cat.is_input_stream(),
+                    plural,
+                    streams,
+                    words: port.width.div_ceil(32),
+                    frame: port.aie_frame,
+                }
+            } else if port.cat.is_scalar() {
+                let Some(Binding::Scalar(value)) = scope.get(&port.name) else {
+                    return Err(AieError(format!(
+                        "scalar port `{}` of the AI Engine task `{task_name}` is not bound to \
+                         a top-task scalar or a constant",
+                        port.name
+                    )));
+                };
+                AiePortKind::Scalar {
+                    ctype: port.ctype.clone(),
+                    width: port.width,
+                    value: value.clone(),
+                }
+            } else {
+                return Err(AieError(format!(
+                    "the AI Engine task `{task_name}` takes the memory port `{}`; AI Engine \
+                     tasks have no memory path",
+                    port.name
+                )));
+            };
+            ports.push(AieKernelPort {
+                name: port.name.clone(),
+                kind,
+            });
+        }
+        let location = def
+            .aie_location
+            .iter()
+            .find(|pin| pin.instance.is_none_or(|i| i as usize == index))
+            .map(|pin| (pin.col, pin.row));
+        Ok(AieKernel {
+            name: path.to_string(),
+            task: task_name.to_string(),
+            call: def.readable_name.clone(),
+            ports,
+            location,
+        })
+    }
+
+    /// A pin without an instance index must name a task with one instance,
+    /// and no two kernels may share a tile.
+    fn check_locations(&self) -> Result<(), AieError> {
+        for (name, def) in &self.graph.tasks {
+            let instances = self
+                .partition
+                .kernels
+                .iter()
+                .filter(|k| &k.task == name)
+                .count();
+            for pin in &def.aie_location {
+                match pin.instance {
+                    None if instances > 1 => {
+                        return Err(AieError(format!(
+                            "[[tapa::aie_location({}, {})]] on `{name}` names no instance, but \
+                             the task has {instances}; add the instance index as a third \
+                             argument",
+                            pin.col, pin.row
+                        )))
+                    }
+                    Some(i) if i as usize >= instances => {
+                        return Err(AieError(format!(
+                            "[[tapa::aie_location({}, {}, {i})]] on `{name}` names instance \
+                             {i}, but the task has {instances}",
+                            pin.col, pin.row
+                        )))
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut tiles = BTreeMap::new();
+        for kernel in &self.partition.kernels {
+            if let Some(tile) = kernel.location {
+                if let Some(other) = tiles.insert(tile, &kernel.name) {
+                    return Err(AieError(format!(
+                        "the AI Engine kernels `{other}` and `{}` are both pinned to tile \
+                         ({}, {})",
+                        kernel.name, tile.0, tile.1
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The child port of `parent`'s instance `child[index]` bound to `fifo`.
+fn child_port_for(parent: &Task, child: &str, index: u32, fifo: &str) -> Option<String> {
+    parent
+        .tasks
+        .get(child)?
+        .get(index as usize)?
+        .args
+        .iter()
+        .find(|(_, arg)| arg.name() == Some(fifo))
+        .map(|(port, _)| port.clone())
+}
+
+/// 32-bit words per element of `task`'s stream port `port` (a channel name
+/// like `a[2]` resolves to its plural port `a`).
+fn stream_words(graph: &TaskGraph, task_name: &str, port: &str) -> Result<u32, AieError> {
+    let def = task(graph, task_name)?;
+    def.port(port)
+        .map(|p| p.width.div_ceil(32))
+        .ok_or_else(|| AieError(format!("the task `{task_name}` has no port `{port}`")))
+}
+
+/// The PLIO width carrying `bits`-bit beats: 32, 64 or 128.
+const fn plio_width(bits: u32) -> u32 {
+    if bits <= 32 {
+        32
+    } else if bits <= 64 {
+        64
+    } else {
+        128
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -1,4 +1,380 @@
 pub mod tapa_ir
+pub mod tapa_ir::aie
+pub enum tapa_ir::aie::AiePortKind
+pub tapa_ir::aie::AiePortKind::Scalar
+pub tapa_ir::aie::AiePortKind::Scalar::ctype: alloc::string::String
+pub tapa_ir::aie::AiePortKind::Scalar::value: tapa_ir::aie::ScalarBinding
+pub tapa_ir::aie::AiePortKind::Scalar::width: u32
+pub tapa_ir::aie::AiePortKind::Streams
+pub tapa_ir::aie::AiePortKind::Streams::frame: core::option::Option<u32>
+pub tapa_ir::aie::AiePortKind::Streams::input: bool
+pub tapa_ir::aie::AiePortKind::Streams::plural: bool
+pub tapa_ir::aie::AiePortKind::Streams::streams: alloc::vec::Vec<usize>
+pub tapa_ir::aie::AiePortKind::Streams::words: u32
+impl core::clone::Clone for tapa_ir::aie::AiePortKind
+pub fn tapa_ir::aie::AiePortKind::clone(&self) -> tapa_ir::aie::AiePortKind
+impl core::cmp::Eq for tapa_ir::aie::AiePortKind
+impl core::cmp::PartialEq for tapa_ir::aie::AiePortKind
+pub fn tapa_ir::aie::AiePortKind::eq(&self, &tapa_ir::aie::AiePortKind) -> bool
+impl core::fmt::Debug for tapa_ir::aie::AiePortKind
+pub fn tapa_ir::aie::AiePortKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AiePortKind
+impl core::marker::Freeze for tapa_ir::aie::AiePortKind
+impl core::marker::Send for tapa_ir::aie::AiePortKind
+impl core::marker::Sync for tapa_ir::aie::AiePortKind
+impl core::marker::Unpin for tapa_ir::aie::AiePortKind
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AiePortKind
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AiePortKind
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AiePortKind
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AiePortKind where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AiePortKind::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AiePortKind where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AiePortKind::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AiePortKind where U: core::convert::From<T>
+pub fn tapa_ir::aie::AiePortKind::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AiePortKind where U: core::convert::Into<T>
+pub type tapa_ir::aie::AiePortKind::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AiePortKind::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AiePortKind where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AiePortKind::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AiePortKind::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AiePortKind where T: core::clone::Clone
+pub type tapa_ir::aie::AiePortKind::Owned = T
+pub fn tapa_ir::aie::AiePortKind::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AiePortKind::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::AiePortKind where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AiePortKind::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AiePortKind where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AiePortKind::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AiePortKind where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AiePortKind::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AiePortKind where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AiePortKind::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AiePortKind
+pub fn tapa_ir::aie::AiePortKind::from(T) -> T
+pub enum tapa_ir::aie::AieStreamKind
+pub tapa_ir::aie::AieStreamKind::Net
+pub tapa_ir::aie::AieStreamKind::Net::depth_words: u32
+pub tapa_ir::aie::AieStreamKind::Plio
+pub tapa_ir::aie::AieStreamKind::Plio::input: bool
+pub tapa_ir::aie::AieStreamKind::Plio::width: u32
+impl core::clone::Clone for tapa_ir::aie::AieStreamKind
+pub fn tapa_ir::aie::AieStreamKind::clone(&self) -> tapa_ir::aie::AieStreamKind
+impl core::cmp::Eq for tapa_ir::aie::AieStreamKind
+impl core::cmp::PartialEq for tapa_ir::aie::AieStreamKind
+pub fn tapa_ir::aie::AieStreamKind::eq(&self, &tapa_ir::aie::AieStreamKind) -> bool
+impl core::fmt::Debug for tapa_ir::aie::AieStreamKind
+pub fn tapa_ir::aie::AieStreamKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tapa_ir::aie::AieStreamKind
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AieStreamKind
+impl core::marker::Freeze for tapa_ir::aie::AieStreamKind
+impl core::marker::Send for tapa_ir::aie::AieStreamKind
+impl core::marker::Sync for tapa_ir::aie::AieStreamKind
+impl core::marker::Unpin for tapa_ir::aie::AieStreamKind
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AieStreamKind
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AieStreamKind
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AieStreamKind
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AieStreamKind where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieStreamKind::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AieStreamKind where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieStreamKind::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AieStreamKind where U: core::convert::From<T>
+pub fn tapa_ir::aie::AieStreamKind::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AieStreamKind where U: core::convert::Into<T>
+pub type tapa_ir::aie::AieStreamKind::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AieStreamKind::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AieStreamKind where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AieStreamKind::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AieStreamKind::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AieStreamKind where T: core::clone::Clone
+pub type tapa_ir::aie::AieStreamKind::Owned = T
+pub fn tapa_ir::aie::AieStreamKind::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AieStreamKind::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::AieStreamKind where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AieStreamKind::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AieStreamKind where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieStreamKind::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AieStreamKind where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieStreamKind::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AieStreamKind where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AieStreamKind::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AieStreamKind
+pub fn tapa_ir::aie::AieStreamKind::from(T) -> T
+pub enum tapa_ir::aie::ScalarBinding
+pub tapa_ir::aie::ScalarBinding::Constant(tapa_ir::instance::WireValue)
+pub tapa_ir::aie::ScalarBinding::Runtime(alloc::string::String)
+impl core::clone::Clone for tapa_ir::aie::ScalarBinding
+pub fn tapa_ir::aie::ScalarBinding::clone(&self) -> tapa_ir::aie::ScalarBinding
+impl core::cmp::Eq for tapa_ir::aie::ScalarBinding
+impl core::cmp::PartialEq for tapa_ir::aie::ScalarBinding
+pub fn tapa_ir::aie::ScalarBinding::eq(&self, &tapa_ir::aie::ScalarBinding) -> bool
+impl core::fmt::Debug for tapa_ir::aie::ScalarBinding
+pub fn tapa_ir::aie::ScalarBinding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::ScalarBinding
+impl core::marker::Freeze for tapa_ir::aie::ScalarBinding
+impl core::marker::Send for tapa_ir::aie::ScalarBinding
+impl core::marker::Sync for tapa_ir::aie::ScalarBinding
+impl core::marker::Unpin for tapa_ir::aie::ScalarBinding
+impl core::marker::UnsafeUnpin for tapa_ir::aie::ScalarBinding
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::ScalarBinding
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::ScalarBinding
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::ScalarBinding where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::ScalarBinding::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::ScalarBinding where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::ScalarBinding::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::ScalarBinding where U: core::convert::From<T>
+pub fn tapa_ir::aie::ScalarBinding::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::ScalarBinding where U: core::convert::Into<T>
+pub type tapa_ir::aie::ScalarBinding::Error = core::convert::Infallible
+pub fn tapa_ir::aie::ScalarBinding::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::ScalarBinding where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::ScalarBinding::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::ScalarBinding::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::ScalarBinding where T: core::clone::Clone
+pub type tapa_ir::aie::ScalarBinding::Owned = T
+pub fn tapa_ir::aie::ScalarBinding::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::ScalarBinding::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::ScalarBinding where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::ScalarBinding::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::ScalarBinding where T: ?core::marker::Sized
+pub fn tapa_ir::aie::ScalarBinding::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::ScalarBinding where T: ?core::marker::Sized
+pub fn tapa_ir::aie::ScalarBinding::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::ScalarBinding where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::ScalarBinding::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::ScalarBinding
+pub fn tapa_ir::aie::ScalarBinding::from(T) -> T
+pub struct tapa_ir::aie::AieError(pub alloc::string::String)
+impl core::clone::Clone for tapa_ir::aie::AieError
+pub fn tapa_ir::aie::AieError::clone(&self) -> tapa_ir::aie::AieError
+impl core::cmp::Eq for tapa_ir::aie::AieError
+impl core::cmp::PartialEq for tapa_ir::aie::AieError
+pub fn tapa_ir::aie::AieError::eq(&self, &tapa_ir::aie::AieError) -> bool
+impl core::error::Error for tapa_ir::aie::AieError
+impl core::fmt::Debug for tapa_ir::aie::AieError
+pub fn tapa_ir::aie::AieError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tapa_ir::aie::AieError
+pub fn tapa_ir::aie::AieError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AieError
+impl core::marker::Freeze for tapa_ir::aie::AieError
+impl core::marker::Send for tapa_ir::aie::AieError
+impl core::marker::Sync for tapa_ir::aie::AieError
+impl core::marker::Unpin for tapa_ir::aie::AieError
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AieError
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AieError
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AieError
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AieError where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieError::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AieError where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieError::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AieError where U: core::convert::From<T>
+pub fn tapa_ir::aie::AieError::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AieError where U: core::convert::Into<T>
+pub type tapa_ir::aie::AieError::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AieError::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AieError where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AieError::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AieError::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AieError where T: core::clone::Clone
+pub type tapa_ir::aie::AieError::Owned = T
+pub fn tapa_ir::aie::AieError::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AieError::to_owned(&self) -> T
+impl<T> alloc::string::ToString for tapa_ir::aie::AieError where T: core::fmt::Display + ?core::marker::Sized
+pub fn tapa_ir::aie::AieError::to_string(&self) -> alloc::string::String
+impl<T> core::any::Any for tapa_ir::aie::AieError where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AieError::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AieError where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieError::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AieError where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieError::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AieError where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AieError::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AieError
+pub fn tapa_ir::aie::AieError::from(T) -> T
+pub struct tapa_ir::aie::AieKernel
+pub tapa_ir::aie::AieKernel::call: alloc::string::String
+pub tapa_ir::aie::AieKernel::location: core::option::Option<(u32, u32)>
+pub tapa_ir::aie::AieKernel::name: alloc::string::String
+pub tapa_ir::aie::AieKernel::ports: alloc::vec::Vec<tapa_ir::aie::AieKernelPort>
+pub tapa_ir::aie::AieKernel::task: alloc::string::String
+impl core::clone::Clone for tapa_ir::aie::AieKernel
+pub fn tapa_ir::aie::AieKernel::clone(&self) -> tapa_ir::aie::AieKernel
+impl core::cmp::Eq for tapa_ir::aie::AieKernel
+impl core::cmp::PartialEq for tapa_ir::aie::AieKernel
+pub fn tapa_ir::aie::AieKernel::eq(&self, &tapa_ir::aie::AieKernel) -> bool
+impl core::fmt::Debug for tapa_ir::aie::AieKernel
+pub fn tapa_ir::aie::AieKernel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AieKernel
+impl core::marker::Freeze for tapa_ir::aie::AieKernel
+impl core::marker::Send for tapa_ir::aie::AieKernel
+impl core::marker::Sync for tapa_ir::aie::AieKernel
+impl core::marker::Unpin for tapa_ir::aie::AieKernel
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AieKernel
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AieKernel
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AieKernel
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AieKernel where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernel::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AieKernel where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernel::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AieKernel where U: core::convert::From<T>
+pub fn tapa_ir::aie::AieKernel::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AieKernel where U: core::convert::Into<T>
+pub type tapa_ir::aie::AieKernel::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AieKernel::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AieKernel where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AieKernel::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AieKernel::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AieKernel where T: core::clone::Clone
+pub type tapa_ir::aie::AieKernel::Owned = T
+pub fn tapa_ir::aie::AieKernel::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AieKernel::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::AieKernel where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernel::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AieKernel where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernel::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AieKernel where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernel::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AieKernel where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AieKernel::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AieKernel
+pub fn tapa_ir::aie::AieKernel::from(T) -> T
+pub struct tapa_ir::aie::AieKernelPort
+pub tapa_ir::aie::AieKernelPort::kind: tapa_ir::aie::AiePortKind
+pub tapa_ir::aie::AieKernelPort::name: alloc::string::String
+impl core::clone::Clone for tapa_ir::aie::AieKernelPort
+pub fn tapa_ir::aie::AieKernelPort::clone(&self) -> tapa_ir::aie::AieKernelPort
+impl core::cmp::Eq for tapa_ir::aie::AieKernelPort
+impl core::cmp::PartialEq for tapa_ir::aie::AieKernelPort
+pub fn tapa_ir::aie::AieKernelPort::eq(&self, &tapa_ir::aie::AieKernelPort) -> bool
+impl core::fmt::Debug for tapa_ir::aie::AieKernelPort
+pub fn tapa_ir::aie::AieKernelPort::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AieKernelPort
+impl core::marker::Freeze for tapa_ir::aie::AieKernelPort
+impl core::marker::Send for tapa_ir::aie::AieKernelPort
+impl core::marker::Sync for tapa_ir::aie::AieKernelPort
+impl core::marker::Unpin for tapa_ir::aie::AieKernelPort
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AieKernelPort
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AieKernelPort
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AieKernelPort
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AieKernelPort where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernelPort::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AieKernelPort where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernelPort::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AieKernelPort where U: core::convert::From<T>
+pub fn tapa_ir::aie::AieKernelPort::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AieKernelPort where U: core::convert::Into<T>
+pub type tapa_ir::aie::AieKernelPort::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AieKernelPort::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AieKernelPort where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AieKernelPort::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AieKernelPort::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AieKernelPort where T: core::clone::Clone
+pub type tapa_ir::aie::AieKernelPort::Owned = T
+pub fn tapa_ir::aie::AieKernelPort::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AieKernelPort::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::AieKernelPort where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernelPort::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AieKernelPort where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernelPort::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AieKernelPort where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernelPort::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AieKernelPort where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AieKernelPort::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AieKernelPort
+pub fn tapa_ir::aie::AieKernelPort::from(T) -> T
+pub struct tapa_ir::aie::AiePartition
+pub tapa_ir::aie::AiePartition::kernels: alloc::vec::Vec<tapa_ir::aie::AieKernel>
+pub tapa_ir::aie::AiePartition::run_forever: bool
+pub tapa_ir::aie::AiePartition::streams: alloc::vec::Vec<tapa_ir::aie::AieStream>
+impl tapa_ir::aie::AiePartition
+pub fn tapa_ir::aie::AiePartition::derive(&tapa_ir::graph::TaskGraph) -> core::result::Result<core::option::Option<Self>, tapa_ir::aie::AieError>
+impl core::clone::Clone for tapa_ir::aie::AiePartition
+pub fn tapa_ir::aie::AiePartition::clone(&self) -> tapa_ir::aie::AiePartition
+impl core::cmp::Eq for tapa_ir::aie::AiePartition
+impl core::cmp::PartialEq for tapa_ir::aie::AiePartition
+pub fn tapa_ir::aie::AiePartition::eq(&self, &tapa_ir::aie::AiePartition) -> bool
+impl core::fmt::Debug for tapa_ir::aie::AiePartition
+pub fn tapa_ir::aie::AiePartition::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AiePartition
+impl core::marker::Freeze for tapa_ir::aie::AiePartition
+impl core::marker::Send for tapa_ir::aie::AiePartition
+impl core::marker::Sync for tapa_ir::aie::AiePartition
+impl core::marker::Unpin for tapa_ir::aie::AiePartition
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AiePartition
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AiePartition
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AiePartition
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AiePartition where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AiePartition::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AiePartition where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AiePartition::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AiePartition where U: core::convert::From<T>
+pub fn tapa_ir::aie::AiePartition::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AiePartition where U: core::convert::Into<T>
+pub type tapa_ir::aie::AiePartition::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AiePartition::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AiePartition where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AiePartition::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AiePartition::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AiePartition where T: core::clone::Clone
+pub type tapa_ir::aie::AiePartition::Owned = T
+pub fn tapa_ir::aie::AiePartition::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AiePartition::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::AiePartition where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AiePartition::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AiePartition where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AiePartition::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AiePartition where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AiePartition::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AiePartition where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AiePartition::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AiePartition
+pub fn tapa_ir::aie::AiePartition::from(T) -> T
+pub struct tapa_ir::aie::AieStream
+pub tapa_ir::aie::AieStream::fifo: alloc::string::String
+pub tapa_ir::aie::AieStream::kind: tapa_ir::aie::AieStreamKind
+pub tapa_ir::aie::AieStream::name: alloc::string::String
+pub tapa_ir::aie::AieStream::words: u32
+impl core::clone::Clone for tapa_ir::aie::AieStream
+pub fn tapa_ir::aie::AieStream::clone(&self) -> tapa_ir::aie::AieStream
+impl core::cmp::Eq for tapa_ir::aie::AieStream
+impl core::cmp::PartialEq for tapa_ir::aie::AieStream
+pub fn tapa_ir::aie::AieStream::eq(&self, &tapa_ir::aie::AieStream) -> bool
+impl core::fmt::Debug for tapa_ir::aie::AieStream
+pub fn tapa_ir::aie::AieStream::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AieStream
+impl core::marker::Freeze for tapa_ir::aie::AieStream
+impl core::marker::Send for tapa_ir::aie::AieStream
+impl core::marker::Sync for tapa_ir::aie::AieStream
+impl core::marker::Unpin for tapa_ir::aie::AieStream
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AieStream
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AieStream
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AieStream
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AieStream where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieStream::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AieStream where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieStream::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AieStream where U: core::convert::From<T>
+pub fn tapa_ir::aie::AieStream::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AieStream where U: core::convert::Into<T>
+pub type tapa_ir::aie::AieStream::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AieStream::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AieStream where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AieStream::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AieStream::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AieStream where T: core::clone::Clone
+pub type tapa_ir::aie::AieStream::Owned = T
+pub fn tapa_ir::aie::AieStream::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AieStream::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::AieStream where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AieStream::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AieStream where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieStream::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AieStream where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieStream::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AieStream where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AieStream::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AieStream
+pub fn tapa_ir::aie::AieStream::from(T) -> T
 pub mod tapa_ir::bindings
 pub struct tapa_ir::bindings::FifoEndpoint<'a>
 pub tapa_ir::bindings::FifoEndpoint::binding: core::option::Option<tapa_ir::bindings::PortBinding<'a>>
@@ -2392,6 +2768,106 @@ pub fn tapa_ir::work_state::WorkState::from(T) -> T
 impl<T> serde_core::de::DeserializeOwned for tapa_ir::work_state::WorkState where T: for<'de> serde_core::de::Deserialize<'de>
 pub const tapa_ir::work_state::FILE_NAME: &str
 pub const tapa_ir::work_state::VERSION: u32
+pub enum tapa_ir::AiePortKind
+pub tapa_ir::AiePortKind::Scalar
+pub tapa_ir::AiePortKind::Scalar::ctype: alloc::string::String
+pub tapa_ir::AiePortKind::Scalar::value: tapa_ir::aie::ScalarBinding
+pub tapa_ir::AiePortKind::Scalar::width: u32
+pub tapa_ir::AiePortKind::Streams
+pub tapa_ir::AiePortKind::Streams::frame: core::option::Option<u32>
+pub tapa_ir::AiePortKind::Streams::input: bool
+pub tapa_ir::AiePortKind::Streams::plural: bool
+pub tapa_ir::AiePortKind::Streams::streams: alloc::vec::Vec<usize>
+pub tapa_ir::AiePortKind::Streams::words: u32
+impl core::clone::Clone for tapa_ir::aie::AiePortKind
+pub fn tapa_ir::aie::AiePortKind::clone(&self) -> tapa_ir::aie::AiePortKind
+impl core::cmp::Eq for tapa_ir::aie::AiePortKind
+impl core::cmp::PartialEq for tapa_ir::aie::AiePortKind
+pub fn tapa_ir::aie::AiePortKind::eq(&self, &tapa_ir::aie::AiePortKind) -> bool
+impl core::fmt::Debug for tapa_ir::aie::AiePortKind
+pub fn tapa_ir::aie::AiePortKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AiePortKind
+impl core::marker::Freeze for tapa_ir::aie::AiePortKind
+impl core::marker::Send for tapa_ir::aie::AiePortKind
+impl core::marker::Sync for tapa_ir::aie::AiePortKind
+impl core::marker::Unpin for tapa_ir::aie::AiePortKind
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AiePortKind
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AiePortKind
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AiePortKind
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AiePortKind where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AiePortKind::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AiePortKind where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AiePortKind::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AiePortKind where U: core::convert::From<T>
+pub fn tapa_ir::aie::AiePortKind::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AiePortKind where U: core::convert::Into<T>
+pub type tapa_ir::aie::AiePortKind::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AiePortKind::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AiePortKind where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AiePortKind::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AiePortKind::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AiePortKind where T: core::clone::Clone
+pub type tapa_ir::aie::AiePortKind::Owned = T
+pub fn tapa_ir::aie::AiePortKind::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AiePortKind::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::AiePortKind where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AiePortKind::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AiePortKind where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AiePortKind::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AiePortKind where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AiePortKind::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AiePortKind where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AiePortKind::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AiePortKind
+pub fn tapa_ir::aie::AiePortKind::from(T) -> T
+pub enum tapa_ir::AieStreamKind
+pub tapa_ir::AieStreamKind::Net
+pub tapa_ir::AieStreamKind::Net::depth_words: u32
+pub tapa_ir::AieStreamKind::Plio
+pub tapa_ir::AieStreamKind::Plio::input: bool
+pub tapa_ir::AieStreamKind::Plio::width: u32
+impl core::clone::Clone for tapa_ir::aie::AieStreamKind
+pub fn tapa_ir::aie::AieStreamKind::clone(&self) -> tapa_ir::aie::AieStreamKind
+impl core::cmp::Eq for tapa_ir::aie::AieStreamKind
+impl core::cmp::PartialEq for tapa_ir::aie::AieStreamKind
+pub fn tapa_ir::aie::AieStreamKind::eq(&self, &tapa_ir::aie::AieStreamKind) -> bool
+impl core::fmt::Debug for tapa_ir::aie::AieStreamKind
+pub fn tapa_ir::aie::AieStreamKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tapa_ir::aie::AieStreamKind
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AieStreamKind
+impl core::marker::Freeze for tapa_ir::aie::AieStreamKind
+impl core::marker::Send for tapa_ir::aie::AieStreamKind
+impl core::marker::Sync for tapa_ir::aie::AieStreamKind
+impl core::marker::Unpin for tapa_ir::aie::AieStreamKind
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AieStreamKind
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AieStreamKind
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AieStreamKind
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AieStreamKind where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieStreamKind::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AieStreamKind where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieStreamKind::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AieStreamKind where U: core::convert::From<T>
+pub fn tapa_ir::aie::AieStreamKind::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AieStreamKind where U: core::convert::Into<T>
+pub type tapa_ir::aie::AieStreamKind::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AieStreamKind::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AieStreamKind where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AieStreamKind::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AieStreamKind::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AieStreamKind where T: core::clone::Clone
+pub type tapa_ir::aie::AieStreamKind::Owned = T
+pub fn tapa_ir::aie::AieStreamKind::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AieStreamKind::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::AieStreamKind where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AieStreamKind::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AieStreamKind where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieStreamKind::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AieStreamKind where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieStreamKind::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AieStreamKind where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AieStreamKind::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AieStreamKind
+pub fn tapa_ir::aie::AieStreamKind::from(T) -> T
 pub enum tapa_ir::ArgCategory
 pub tapa_ir::ArgCategory::AsyncMmap
 pub tapa_ir::ArgCategory::Immap
@@ -2968,6 +3444,50 @@ pub unsafe fn tapa_ir::floorplan::RoutedChannel::clone_to_uninit(&self, *mut u8)
 impl<T> core::convert::From<T> for tapa_ir::floorplan::RoutedChannel
 pub fn tapa_ir::floorplan::RoutedChannel::from(T) -> T
 impl<T> serde_core::de::DeserializeOwned for tapa_ir::floorplan::RoutedChannel where T: for<'de> serde_core::de::Deserialize<'de>
+pub enum tapa_ir::ScalarBinding
+pub tapa_ir::ScalarBinding::Constant(tapa_ir::instance::WireValue)
+pub tapa_ir::ScalarBinding::Runtime(alloc::string::String)
+impl core::clone::Clone for tapa_ir::aie::ScalarBinding
+pub fn tapa_ir::aie::ScalarBinding::clone(&self) -> tapa_ir::aie::ScalarBinding
+impl core::cmp::Eq for tapa_ir::aie::ScalarBinding
+impl core::cmp::PartialEq for tapa_ir::aie::ScalarBinding
+pub fn tapa_ir::aie::ScalarBinding::eq(&self, &tapa_ir::aie::ScalarBinding) -> bool
+impl core::fmt::Debug for tapa_ir::aie::ScalarBinding
+pub fn tapa_ir::aie::ScalarBinding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::ScalarBinding
+impl core::marker::Freeze for tapa_ir::aie::ScalarBinding
+impl core::marker::Send for tapa_ir::aie::ScalarBinding
+impl core::marker::Sync for tapa_ir::aie::ScalarBinding
+impl core::marker::Unpin for tapa_ir::aie::ScalarBinding
+impl core::marker::UnsafeUnpin for tapa_ir::aie::ScalarBinding
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::ScalarBinding
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::ScalarBinding
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::ScalarBinding where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::ScalarBinding::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::ScalarBinding where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::ScalarBinding::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::ScalarBinding where U: core::convert::From<T>
+pub fn tapa_ir::aie::ScalarBinding::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::ScalarBinding where U: core::convert::Into<T>
+pub type tapa_ir::aie::ScalarBinding::Error = core::convert::Infallible
+pub fn tapa_ir::aie::ScalarBinding::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::ScalarBinding where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::ScalarBinding::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::ScalarBinding::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::ScalarBinding where T: core::clone::Clone
+pub type tapa_ir::aie::ScalarBinding::Owned = T
+pub fn tapa_ir::aie::ScalarBinding::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::ScalarBinding::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::ScalarBinding where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::ScalarBinding::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::ScalarBinding where T: ?core::marker::Sized
+pub fn tapa_ir::aie::ScalarBinding::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::ScalarBinding where T: ?core::marker::Sized
+pub fn tapa_ir::aie::ScalarBinding::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::ScalarBinding where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::ScalarBinding::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::ScalarBinding
+pub fn tapa_ir::aie::ScalarBinding::from(T) -> T
 pub enum tapa_ir::SynthTarget
 pub tapa_ir::SynthTarget::Aie
 pub tapa_ir::SynthTarget::Hls
@@ -3165,6 +3685,144 @@ impl<T> core::borrow::BorrowMut<T> for tapa_ir::transforms::TransformError where
 pub fn tapa_ir::transforms::TransformError::borrow_mut(&mut self) -> &mut T
 impl<T> core::convert::From<T> for tapa_ir::transforms::TransformError
 pub fn tapa_ir::transforms::TransformError::from(T) -> T
+pub struct tapa_ir::AieError(pub alloc::string::String)
+impl core::clone::Clone for tapa_ir::aie::AieError
+pub fn tapa_ir::aie::AieError::clone(&self) -> tapa_ir::aie::AieError
+impl core::cmp::Eq for tapa_ir::aie::AieError
+impl core::cmp::PartialEq for tapa_ir::aie::AieError
+pub fn tapa_ir::aie::AieError::eq(&self, &tapa_ir::aie::AieError) -> bool
+impl core::error::Error for tapa_ir::aie::AieError
+impl core::fmt::Debug for tapa_ir::aie::AieError
+pub fn tapa_ir::aie::AieError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tapa_ir::aie::AieError
+pub fn tapa_ir::aie::AieError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AieError
+impl core::marker::Freeze for tapa_ir::aie::AieError
+impl core::marker::Send for tapa_ir::aie::AieError
+impl core::marker::Sync for tapa_ir::aie::AieError
+impl core::marker::Unpin for tapa_ir::aie::AieError
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AieError
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AieError
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AieError
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AieError where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieError::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AieError where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieError::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AieError where U: core::convert::From<T>
+pub fn tapa_ir::aie::AieError::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AieError where U: core::convert::Into<T>
+pub type tapa_ir::aie::AieError::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AieError::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AieError where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AieError::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AieError::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AieError where T: core::clone::Clone
+pub type tapa_ir::aie::AieError::Owned = T
+pub fn tapa_ir::aie::AieError::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AieError::to_owned(&self) -> T
+impl<T> alloc::string::ToString for tapa_ir::aie::AieError where T: core::fmt::Display + ?core::marker::Sized
+pub fn tapa_ir::aie::AieError::to_string(&self) -> alloc::string::String
+impl<T> core::any::Any for tapa_ir::aie::AieError where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AieError::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AieError where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieError::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AieError where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieError::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AieError where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AieError::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AieError
+pub fn tapa_ir::aie::AieError::from(T) -> T
+pub struct tapa_ir::AieKernel
+pub tapa_ir::AieKernel::call: alloc::string::String
+pub tapa_ir::AieKernel::location: core::option::Option<(u32, u32)>
+pub tapa_ir::AieKernel::name: alloc::string::String
+pub tapa_ir::AieKernel::ports: alloc::vec::Vec<tapa_ir::aie::AieKernelPort>
+pub tapa_ir::AieKernel::task: alloc::string::String
+impl core::clone::Clone for tapa_ir::aie::AieKernel
+pub fn tapa_ir::aie::AieKernel::clone(&self) -> tapa_ir::aie::AieKernel
+impl core::cmp::Eq for tapa_ir::aie::AieKernel
+impl core::cmp::PartialEq for tapa_ir::aie::AieKernel
+pub fn tapa_ir::aie::AieKernel::eq(&self, &tapa_ir::aie::AieKernel) -> bool
+impl core::fmt::Debug for tapa_ir::aie::AieKernel
+pub fn tapa_ir::aie::AieKernel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AieKernel
+impl core::marker::Freeze for tapa_ir::aie::AieKernel
+impl core::marker::Send for tapa_ir::aie::AieKernel
+impl core::marker::Sync for tapa_ir::aie::AieKernel
+impl core::marker::Unpin for tapa_ir::aie::AieKernel
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AieKernel
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AieKernel
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AieKernel
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AieKernel where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernel::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AieKernel where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernel::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AieKernel where U: core::convert::From<T>
+pub fn tapa_ir::aie::AieKernel::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AieKernel where U: core::convert::Into<T>
+pub type tapa_ir::aie::AieKernel::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AieKernel::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AieKernel where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AieKernel::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AieKernel::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AieKernel where T: core::clone::Clone
+pub type tapa_ir::aie::AieKernel::Owned = T
+pub fn tapa_ir::aie::AieKernel::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AieKernel::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::AieKernel where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernel::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AieKernel where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernel::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AieKernel where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernel::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AieKernel where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AieKernel::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AieKernel
+pub fn tapa_ir::aie::AieKernel::from(T) -> T
+pub struct tapa_ir::AieKernelPort
+pub tapa_ir::AieKernelPort::kind: tapa_ir::aie::AiePortKind
+pub tapa_ir::AieKernelPort::name: alloc::string::String
+impl core::clone::Clone for tapa_ir::aie::AieKernelPort
+pub fn tapa_ir::aie::AieKernelPort::clone(&self) -> tapa_ir::aie::AieKernelPort
+impl core::cmp::Eq for tapa_ir::aie::AieKernelPort
+impl core::cmp::PartialEq for tapa_ir::aie::AieKernelPort
+pub fn tapa_ir::aie::AieKernelPort::eq(&self, &tapa_ir::aie::AieKernelPort) -> bool
+impl core::fmt::Debug for tapa_ir::aie::AieKernelPort
+pub fn tapa_ir::aie::AieKernelPort::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AieKernelPort
+impl core::marker::Freeze for tapa_ir::aie::AieKernelPort
+impl core::marker::Send for tapa_ir::aie::AieKernelPort
+impl core::marker::Sync for tapa_ir::aie::AieKernelPort
+impl core::marker::Unpin for tapa_ir::aie::AieKernelPort
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AieKernelPort
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AieKernelPort
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AieKernelPort
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AieKernelPort where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernelPort::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AieKernelPort where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernelPort::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AieKernelPort where U: core::convert::From<T>
+pub fn tapa_ir::aie::AieKernelPort::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AieKernelPort where U: core::convert::Into<T>
+pub type tapa_ir::aie::AieKernelPort::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AieKernelPort::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AieKernelPort where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AieKernelPort::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AieKernelPort::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AieKernelPort where T: core::clone::Clone
+pub type tapa_ir::aie::AieKernelPort::Owned = T
+pub fn tapa_ir::aie::AieKernelPort::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AieKernelPort::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::AieKernelPort where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernelPort::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AieKernelPort where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernelPort::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AieKernelPort where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieKernelPort::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AieKernelPort where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AieKernelPort::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AieKernelPort
+pub fn tapa_ir::aie::AieKernelPort::from(T) -> T
 pub struct tapa_ir::AieLocation
 pub tapa_ir::AieLocation::col: u32
 pub tapa_ir::AieLocation::instance: core::option::Option<u32>
@@ -3216,6 +3874,99 @@ pub unsafe fn tapa_ir::task::AieLocation::clone_to_uninit(&self, *mut u8)
 impl<T> core::convert::From<T> for tapa_ir::task::AieLocation
 pub fn tapa_ir::task::AieLocation::from(T) -> T
 impl<T> serde_core::de::DeserializeOwned for tapa_ir::task::AieLocation where T: for<'de> serde_core::de::Deserialize<'de>
+pub struct tapa_ir::AiePartition
+pub tapa_ir::AiePartition::kernels: alloc::vec::Vec<tapa_ir::aie::AieKernel>
+pub tapa_ir::AiePartition::run_forever: bool
+pub tapa_ir::AiePartition::streams: alloc::vec::Vec<tapa_ir::aie::AieStream>
+impl tapa_ir::aie::AiePartition
+pub fn tapa_ir::aie::AiePartition::derive(&tapa_ir::graph::TaskGraph) -> core::result::Result<core::option::Option<Self>, tapa_ir::aie::AieError>
+impl core::clone::Clone for tapa_ir::aie::AiePartition
+pub fn tapa_ir::aie::AiePartition::clone(&self) -> tapa_ir::aie::AiePartition
+impl core::cmp::Eq for tapa_ir::aie::AiePartition
+impl core::cmp::PartialEq for tapa_ir::aie::AiePartition
+pub fn tapa_ir::aie::AiePartition::eq(&self, &tapa_ir::aie::AiePartition) -> bool
+impl core::fmt::Debug for tapa_ir::aie::AiePartition
+pub fn tapa_ir::aie::AiePartition::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AiePartition
+impl core::marker::Freeze for tapa_ir::aie::AiePartition
+impl core::marker::Send for tapa_ir::aie::AiePartition
+impl core::marker::Sync for tapa_ir::aie::AiePartition
+impl core::marker::Unpin for tapa_ir::aie::AiePartition
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AiePartition
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AiePartition
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AiePartition
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AiePartition where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AiePartition::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AiePartition where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AiePartition::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AiePartition where U: core::convert::From<T>
+pub fn tapa_ir::aie::AiePartition::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AiePartition where U: core::convert::Into<T>
+pub type tapa_ir::aie::AiePartition::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AiePartition::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AiePartition where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AiePartition::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AiePartition::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AiePartition where T: core::clone::Clone
+pub type tapa_ir::aie::AiePartition::Owned = T
+pub fn tapa_ir::aie::AiePartition::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AiePartition::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::AiePartition where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AiePartition::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AiePartition where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AiePartition::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AiePartition where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AiePartition::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AiePartition where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AiePartition::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AiePartition
+pub fn tapa_ir::aie::AiePartition::from(T) -> T
+pub struct tapa_ir::AieStream
+pub tapa_ir::AieStream::fifo: alloc::string::String
+pub tapa_ir::AieStream::kind: tapa_ir::aie::AieStreamKind
+pub tapa_ir::AieStream::name: alloc::string::String
+pub tapa_ir::AieStream::words: u32
+impl core::clone::Clone for tapa_ir::aie::AieStream
+pub fn tapa_ir::aie::AieStream::clone(&self) -> tapa_ir::aie::AieStream
+impl core::cmp::Eq for tapa_ir::aie::AieStream
+impl core::cmp::PartialEq for tapa_ir::aie::AieStream
+pub fn tapa_ir::aie::AieStream::eq(&self, &tapa_ir::aie::AieStream) -> bool
+impl core::fmt::Debug for tapa_ir::aie::AieStream
+pub fn tapa_ir::aie::AieStream::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tapa_ir::aie::AieStream
+impl core::marker::Freeze for tapa_ir::aie::AieStream
+impl core::marker::Send for tapa_ir::aie::AieStream
+impl core::marker::Sync for tapa_ir::aie::AieStream
+impl core::marker::Unpin for tapa_ir::aie::AieStream
+impl core::marker::UnsafeUnpin for tapa_ir::aie::AieStream
+impl core::panic::unwind_safe::RefUnwindSafe for tapa_ir::aie::AieStream
+impl core::panic::unwind_safe::UnwindSafe for tapa_ir::aie::AieStream
+impl<Q, K> equivalent::Equivalent<K> for tapa_ir::aie::AieStream where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieStream::equivalent(&self, &K) -> bool
+impl<Q, K> hashbrown::Equivalent<K> for tapa_ir::aie::AieStream where Q: core::cmp::Eq + ?core::marker::Sized, K: core::borrow::Borrow<Q> + ?core::marker::Sized
+pub fn tapa_ir::aie::AieStream::equivalent(&self, &K) -> bool
+impl<T, U> core::convert::Into<U> for tapa_ir::aie::AieStream where U: core::convert::From<T>
+pub fn tapa_ir::aie::AieStream::into(self) -> U
+impl<T, U> core::convert::TryFrom<U> for tapa_ir::aie::AieStream where U: core::convert::Into<T>
+pub type tapa_ir::aie::AieStream::Error = core::convert::Infallible
+pub fn tapa_ir::aie::AieStream::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
+impl<T, U> core::convert::TryInto<U> for tapa_ir::aie::AieStream where U: core::convert::TryFrom<T>
+pub type tapa_ir::aie::AieStream::Error = <U as core::convert::TryFrom<T>>::Error
+pub fn tapa_ir::aie::AieStream::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
+impl<T> alloc::borrow::ToOwned for tapa_ir::aie::AieStream where T: core::clone::Clone
+pub type tapa_ir::aie::AieStream::Owned = T
+pub fn tapa_ir::aie::AieStream::clone_into(&self, &mut T)
+pub fn tapa_ir::aie::AieStream::to_owned(&self) -> T
+impl<T> core::any::Any for tapa_ir::aie::AieStream where T: 'static + ?core::marker::Sized
+pub fn tapa_ir::aie::AieStream::type_id(&self) -> core::any::TypeId
+impl<T> core::borrow::Borrow<T> for tapa_ir::aie::AieStream where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieStream::borrow(&self) -> &T
+impl<T> core::borrow::BorrowMut<T> for tapa_ir::aie::AieStream where T: ?core::marker::Sized
+pub fn tapa_ir::aie::AieStream::borrow_mut(&mut self) -> &mut T
+impl<T> core::clone::CloneToUninit for tapa_ir::aie::AieStream where T: core::clone::Clone
+pub unsafe fn tapa_ir::aie::AieStream::clone_to_uninit(&self, *mut u8)
+impl<T> core::convert::From<T> for tapa_ir::aie::AieStream
+pub fn tapa_ir::aie::AieStream::from(T) -> T
 pub struct tapa_ir::Area
 pub tapa_ir::Area::bram_18k: u64
 pub tapa_ir::Area::dsp: u64
