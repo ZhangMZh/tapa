@@ -21,6 +21,7 @@ use crate::aie::{device, dir, pl_freq_mhz, prepare, GraphBuild};
 use crate::context::CliContext;
 use crate::error::{CliError, Result};
 use crate::state::work as work_io;
+use crate::steps::synth::report::{fold_aiesim_timing, AiesimSection, AiesimStreamTiming};
 
 #[derive(Debug, Clone, Parser)]
 #[command(
@@ -207,6 +208,7 @@ fn run_with(
     simulate(runner, &graph_dir, target)?;
 
     let mut mismatches = Vec::new();
+    let mut measured = BTreeMap::new();
     for stream in &partition.streams {
         let AieStreamKind::Plio { input: false, .. } = stream.kind else {
             continue;
@@ -214,6 +216,11 @@ fn run_with(
         let output = simulator_output(&graph_dir, target, &stream.name);
         let trace = plio::parse_output(&fs::read_to_string(&output)?);
         let expected = read_words(&args.stimulus.join(format!("{}.words", stream.fifo)))?;
+        if args.cycle_accurate {
+            if let Some(timing) = AiesimStreamTiming::from_beat_times(&trace.beat_times_ns) {
+                measured.insert(stream.fifo.clone(), timing);
+            }
+        }
         let result = compare_output(&stream.fifo, transfer_words(stream), &trace, &expected);
         if result.is_err() {
             mismatches.push(stream.fifo.clone());
@@ -224,6 +231,15 @@ fn run_with(
     }
     if mismatches.is_empty() {
         println!("AI Engine simulation matches software simulation");
+        // Only `aiesimulator` times beats, and only a fully matching run may
+        // touch the reports a previous `tapa synth` wrote; with no root
+        // report (analyze-only work dir) this stays a successful no-op.
+        if let Some(timing) = timing_to_fold(args.cycle_accurate, &mismatches, measured) {
+            let updated = fold_aiesim_timing(&ctx.work_dir, &timing)?;
+            if !updated.is_empty() {
+                println!("aiesim timing folded into {}", updated.join(", "));
+            }
+        }
         Ok(())
     } else {
         Err(CliError::Report(format!(
@@ -231,6 +247,17 @@ fn run_with(
             mismatches.join(", ")
         )))
     }
+}
+
+/// The timing this run may fold into the root reports, if any: only a
+/// `--cycle-accurate` run measures PLIO timing, and any output mismatch
+/// must leave prior reports untouched.
+fn timing_to_fold(
+    cycle_accurate: bool,
+    mismatches: &[String],
+    streams: BTreeMap<String, AiesimStreamTiming>,
+) -> Option<AiesimSection> {
+    (cycle_accurate && mismatches.is_empty()).then_some(AiesimSection { streams })
 }
 
 #[cfg(test)]
@@ -258,5 +285,23 @@ mod tests {
         let mut non_multiple = padded;
         non_multiple[3] = 9;
         compare_output("q", 12, &trace(&non_multiple), &[1, 2]).unwrap_err();
+    }
+
+    #[test]
+    fn only_fully_matching_cycle_accurate_runs_fold_timing() {
+        let measured = BTreeMap::from([(
+            "c_q".to_string(),
+            AiesimStreamTiming::from_beat_times(&[240.0, 256.0]).expect("two beats"),
+        )]);
+        let folded = timing_to_fold(true, &[], measured.clone()).expect("fold");
+        assert_eq!(folded.streams, measured);
+        assert!(
+            timing_to_fold(false, &[], measured.clone()).is_none(),
+            "an x86sim run has no PLIO timing to fold"
+        );
+        assert!(
+            timing_to_fold(true, &["c_q".to_string()], measured).is_none(),
+            "a mismatch must leave prior reports untouched"
+        );
     }
 }

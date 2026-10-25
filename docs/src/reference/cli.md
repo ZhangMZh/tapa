@@ -304,7 +304,7 @@ simulation recorded, and compare what the graph writes back. See
 | Flag | Description |
 |------|-------------|
 | `--arg NAME=VALUE` | Value of a top-task scalar the AI Engine tasks read. Repeatable. |
-| `--cycle-accurate` | Compile for hardware and run `aiesimulator`, reporting when each output stream's beats arrive. Needs the AI Engine compiler licence. |
+| `--cycle-accurate` | Compile for hardware and run `aiesimulator`, reporting when each output stream's beats arrive; when every output matches, that timing is also folded into the `aie.aiesim` section of the existing `report.json`/`report.yaml` (no report is created when `tapa synth` has not run). Needs the AI Engine compiler licence. |
 | `--platform PLATFORM` / `-p PLATFORM` | Vitis platform; defaults to the one `tapa synth` used. |
 | `--part-num PART` | Part number, when no platform is known. |
 | `--cycles N` | AI Engine cycles a never-returning graph runs before it is ended (default 100000). |

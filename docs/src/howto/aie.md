@@ -126,6 +126,28 @@ c_q: 1024 of 1024 words, beats at 230.4..1862.4 ns (6.40 ns apart)
 AI Engine simulation matches software simulation
 ```
 
+When the work directory holds the `report.json` / `report.yaml` a previous
+`tapa synth` wrote, a run in which every output stream matches also folds
+that timing into their `aie` block under `aiesim`, preserving the rest of
+the report:
+
+```yaml
+aie:
+  aiesim:
+    streams:
+      c_q:
+        beats: 128
+        first_beat_ns: 230.4
+        last_beat_ns: 1043.2
+        mean_beat_spacing_ns: 6.4
+```
+
+A stream with a single beat reports no `mean_beat_spacing_ns`, since it has
+no interval to average. `tapa aiesim` also works on a work directory that
+has only been analyzed, which has no report yet; then no report is created
+and the timing stays on the console. A run with any output mismatch leaves
+both files untouched.
+
 On an AI Engine 1 device, a kernel reads about 32 bits from its input streams
 per AI Engine cycle in total, however many stream ports it reads. That is one
 128-bit beat every 3.2 ns at 1.25 GHz, so the two-input add above runs at

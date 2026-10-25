@@ -30,7 +30,7 @@ mod hls_run;
 mod hls_sources;
 mod metrics;
 mod post_synth_util;
-mod report;
+pub(crate) mod report;
 pub(crate) mod rtl_codegen;
 mod runner;
 
