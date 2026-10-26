@@ -419,7 +419,16 @@ fn verilator_hls_stream_input_refills_without_bubble() {
         tb.contains("stream_in_have_s = tapa_stream_istream_step("),
         "{tb}"
     );
-    assert!(tb.contains("stream_in_have_s && dut->s_read"), "{tb}");
+    let tick = tb.find("static void tick()").expect("clock driver");
+    let settled = tick + tb[tick..].find("dut->eval();").expect("settle inputs");
+    let sample = tb
+        .find("stream_in_consumed_s = stream_in_have_s && dut->s_read;")
+        .expect("sample input handshake");
+    let edge = tick + tb[tick..].find("dut->ap_clk = 1;").expect("rising edge");
+    assert!(settled < sample && sample < edge, "{tb}");
+    let service = &tb[tb.find("static void service_streams()").expect("streams")..];
+    assert!(service.contains("stream_in_consumed_s,"), "{tb}");
+    assert!(!service.contains("&& dut->s_read"), "{tb}");
 }
 
 #[test]

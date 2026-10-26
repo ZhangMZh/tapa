@@ -107,6 +107,9 @@ static std::deque<std::remove_reference_t<decltype(dut->{{ arg.axi.awid }})>> b_
 
 {% for arg in stream_args %}
 static bool stream_in_have_{{ arg.ident }} = false;
+{% if mode == "hls" %}
+static bool stream_in_consumed_{{ arg.ident }} = false;
+{% endif %}
 static std::array<uint8_t, {{ arg.dpi_width_bytes }}> stream_in_data_{{ arg.ident }} = {};
 {% endfor %}
 
@@ -115,6 +118,13 @@ static void tick() {
   dut->ap_clk = 0;
   dut->eval();
   if (dut->ap_rst_n) {
+{% if mode == "hls" %}
+    // Capture the handshake at this edge. The state after the edge may
+    // request another read before its payload has actually been consumed.
+{% for arg in stream_args %}
+    stream_in_consumed_{{ arg.ident }} = stream_in_have_{{ arg.ident }} && dut->{{ arg.sig.read }};
+{% endfor %}
+{% endif %}
 {% for arg in mmap_args %}
     if (dut->{{ arg.axi.arvalid }} && dut->{{ arg.axi.arready }}) {
       rd_q_{{ arg.ident }}.push_back({dut->{{ arg.axi.araddr }}, (uint8_t)dut->{{ arg.axi.arlen }},
@@ -239,7 +249,7 @@ static void service_streams() {
 {% for arg in stream_args %}
   stream_in_have_{{ arg.ident }} = tapa_stream_istream_step(
       "{{ arg.name }}",
-      stream_in_have_{{ arg.ident }} && dut->{{ arg.sig.read }},
+      stream_in_consumed_{{ arg.ident }},
       stream_in_data_{{ arg.ident }}.data());
   dut->{{ arg.sig.empty_n }} = stream_in_have_{{ arg.ident }} ? 1 : 0;
 {% if arg.has_peek %}
