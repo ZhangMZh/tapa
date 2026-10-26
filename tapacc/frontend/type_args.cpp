@@ -101,4 +101,27 @@ int64_t ArraySize(const clang::ParmVarDecl* param) {
   return IntTemplateArg(param->getType(), 1).value_or(0);
 }
 
+uint32_t StreamElementWidth(const clang::ParmVarDecl* param) {
+  const auto* arg = GetTemplateArg(param->getType(), 0);
+  if (arg == nullptr || arg->getKind() != clang::TemplateArgument::Type) {
+    return 0;
+  }
+  const auto type = PeelType(arg->getAsType()).getCanonicalType();
+  if (const auto* record = type->getAsRecordDecl()) {
+    const auto name = record->getQualifiedNameAsString();
+    if (name == "tapa::u" || name == "tapa::i" || name == "ap_uint" ||
+        name == "ap_int") {
+      if (const auto width = IntTemplateArg(type, 0)) {
+        return static_cast<uint32_t>(*width);
+      }
+    }
+  }
+  return ElementWidth(param);
+}
+
+uint32_t AxisDataWidth(const clang::ParmVarDecl* param) {
+  const uint32_t width = StreamElementWidth(param);
+  return (width + 7) / 8 * 8;
+}
+
 }  // namespace tapa::cc

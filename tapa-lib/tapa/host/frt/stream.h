@@ -54,7 +54,7 @@ class StreamBase : public StreamArg {
   }
 
   void push_bytes(const std::string& bytes) {
-    CHECK_EQ(bytes.size(), sizeof(T));
+    CHECK_EQ(bytes.size(), StreamCodec<T>::kBytes);
     CHECK_EQ(
         frt_shmq_push(handle_, reinterpret_cast<const uint8_t*>(bytes.data()),
                       bytes.size()),
@@ -63,7 +63,7 @@ class StreamBase : public StreamArg {
   }
 
   std::string front_bytes() const {
-    std::string bytes(sizeof(T), '\0');
+    std::string bytes(StreamCodec<T>::kBytes, '\0');
     CHECK_EQ(frt_shmq_front(handle_, reinterpret_cast<uint8_t*>(bytes.data()),
                             bytes.size()),
              0)
@@ -72,7 +72,7 @@ class StreamBase : public StreamArg {
   }
 
   std::string pop_bytes() {
-    std::string bytes(sizeof(T), '\0');
+    std::string bytes(StreamCodec<T>::kBytes, '\0');
     CHECK_EQ(frt_shmq_pop(handle_, reinterpret_cast<uint8_t*>(bytes.data()),
                           bytes.size()),
              0)
@@ -91,9 +91,9 @@ class StreamBase : public StreamArg {
 
   static Init MakeInit(uint64_t depth) {
     std::array<char, 4096> path_buf{};
-    void* handle =
-        frt_shmq_create(static_cast<uint32_t>(depth == 0 ? 1 : depth),
-                        sizeof(T), path_buf.data(), path_buf.size());
+    void* handle = frt_shmq_create(
+        static_cast<uint32_t>(depth == 0 ? 1 : depth), StreamCodec<T>::kBytes,
+        path_buf.data(), path_buf.size());
     CHECK(handle != nullptr) << "failed to create shared-memory stream";
     Init init;
     init.context.path = std::string(path_buf.data());

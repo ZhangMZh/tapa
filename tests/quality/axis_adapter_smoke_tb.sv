@@ -4,28 +4,31 @@
 // in axis_adapter_smoke_main.cpp: driving the clock from C++ keeps the model
 // free of delay controls, so Verilator builds it without --timing and thus
 // without a C++20 compiler (the CI image is bionic with gcc-7).
-module tb (
+module tb #(
+    parameter DATA_WIDTH = 8,
+    parameter AXIS_WIDTH = ((DATA_WIDTH + 7) / 8) * 8
+) (
     input  wire       clk,
     input  wire       reset,
 
-    input  wire [7:0] s_axis_tdata,
+    input  wire [AXIS_WIDTH-1:0] s_axis_tdata,
     input  wire       s_axis_tvalid,
     output wire       s_axis_tready,
     input  wire       s_axis_tlast,
-    output wire [8:0] m_stream_dout,
+    output wire [DATA_WIDTH:0] m_stream_dout,
     output wire       m_stream_empty_n,
     input  wire       m_stream_read,
 
-    input  wire [8:0] s_stream_din,
+    input  wire [DATA_WIDTH:0] s_stream_din,
     output wire       s_stream_full_n,
     input  wire       s_stream_write,
-    output wire [7:0] m_axis_tdata,
+    output wire [AXIS_WIDTH-1:0] m_axis_tdata,
     output wire       m_axis_tvalid,
     input  wire       m_axis_tready,
     output wire       m_axis_tlast
 );
 
-  axis_to_stream_adapter #(.DATA_WIDTH(8)) axis_to_stream (
+  axis_to_stream_adapter #(.DATA_WIDTH(DATA_WIDTH)) axis_to_stream (
     .clk(clk),
     .reset(reset),
     .s_axis_tdata(s_axis_tdata),
@@ -37,7 +40,7 @@ module tb (
     .m_stream_read(m_stream_read)
   );
 
-  stream_to_axis_adapter #(.DATA_WIDTH(8)) stream_to_axis (
+  stream_to_axis_adapter #(.DATA_WIDTH(DATA_WIDTH)) stream_to_axis (
     .clk(clk),
     .reset(reset),
     .s_stream_din(s_stream_din),

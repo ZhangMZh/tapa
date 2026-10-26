@@ -81,6 +81,56 @@ bool Contains(const std::string& haystack, const std::string& needle) {
   return haystack.find(needle) != std::string::npos;
 }
 
+TEST(Rewrite, VitisStreamsUseByteAlignedPayloadForSignatureAndWrites) {
+  const TreePipelineRun run = test_support::RunTreePipeline(
+      {VirtualTu{"/proj/src/stream.cpp", R"cpp(
+#include "stream.h"
+                   void Copy(tapa::istream<Word>& in, tapa::ostream<Word>& out,
+                             tapa::ostream<tapa::i<17>>& narrow) {
+                     out.write(in.read());
+                   }
+                   [[tapa::target("xilinx_vitis")]]
+                   void Top(tapa::istream<Word>& in, tapa::ostream<Word>& out,
+                            tapa::ostream<tapa::i<17>>& narrow) {
+                     tapa::task().invoke(Copy, in, out, narrow);
+                   }
+                 )cpp"}},
+      "Top", TempRoot("stream"), {"-std=c++17"},
+      {{"/proj/src/stream.h", R"cpp(
+          namespace tapa {
+          template <int W>
+          struct u {
+            char storage[128];
+          };
+          template <int W>
+          struct i {
+            char storage[128];
+          };
+          }  // namespace tapa
+          using Word = tapa::u<544>;
+          void Top(tapa::istream<Word>& in, tapa::ostream<Word>& out,
+                   tapa::ostream<tapa::i<17>>& narrow);
+        )cpp"}});
+  ASSERT_TRUE(run.ok) << (run.diags.empty() ? run.json : run.diags.front());
+  const auto& code = run.files.at("stream.cpp");
+  const auto& header = run.files.at("stream.h");
+  EXPECT_TRUE(Contains(header, "hls::stream<qdma_axis<544, 0, 0, 0> >& in"));
+  EXPECT_TRUE(Contains(header, "hls::stream<qdma_axis<24, 0, 0, 0> >& narrow"));
+  for (const auto* file : {&code, &header}) {
+    // Vendor templates must be declared before the rewritten signature and
+    // outside its C linkage block, including for declarations in headers.
+    EXPECT_LT(file->find("#include \"ap_axi_sdata.h\""),
+              file->find("extern \"C\""));
+    EXPECT_LT(file->find("#include \"hls_stream.h\""),
+              file->find("extern \"C\""));
+  }
+  EXPECT_TRUE(Contains(code, "hls::stream<qdma_axis<544, 0, 0, 0> >& in"));
+  EXPECT_TRUE(Contains(code, "hls::stream<qdma_axis<544, 0, 0, 0> >& out"));
+  EXPECT_TRUE(Contains(code, "hls::stream<qdma_axis<24, 0, 0, 0> >& narrow"));
+  EXPECT_TRUE(Contains(code, "out.write(qdma_axis<544, 0, 0, 0>());"));
+  EXPECT_TRUE(Contains(code, "narrow.write(qdma_axis<24, 0, 0, 0>());"));
+}
+
 constexpr char kAttrs[] = R"cpp(
   float DeclFirst(int);
   inline float DeclFirst(int x) { return x + 1; }

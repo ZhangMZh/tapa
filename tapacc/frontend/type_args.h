@@ -49,6 +49,13 @@ std::string ElementTypeName(const clang::ParmVarDecl* param);
 // Bit width of the element (0th template arg) type of a port, or 0 if absent.
 uint32_t ElementWidth(const clang::ParmVarDecl* param);
 
+// Stream payload width: arbitrary-precision integers use their declared W,
+// while other elements retain their object-layout width.
+uint32_t StreamElementWidth(const clang::ParmVarDecl* param);
+
+// Byte-aligned TDATA width of the unsigned QDMA envelope at the Vitis top.
+uint32_t AxisDataWidth(const clang::ParmVarDecl* param);
+
 // Channel count (template arg at index 1) of an array-interface port, or 0.
 int64_t ArraySize(const clang::ParmVarDecl* param);
 

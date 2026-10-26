@@ -41,6 +41,11 @@ pub const fn stream_data_wire_width(elem_width: u32) -> u32 {
     elem_width.saturating_add(1)
 }
 
+/// AXI4-Stream TDATA is byte-aligned.
+pub const fn axis_data_width(elem_width: u32) -> u32 {
+    elem_width.div_ceil(8) * 8
+}
+
 /// Scalar-stream data/flow port name: `{base}_s{suffix}`.
 #[must_use]
 pub fn stream_port_name(base: &str, suffix: &str) -> String {

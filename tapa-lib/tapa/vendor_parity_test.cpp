@@ -144,6 +144,27 @@ TEST(VendorParity, IntegerObjectLayout) {
   CheckIntLayout<1024>();
 }
 
+template <typename T, typename Vendor>
+void CheckStreamFrame() {
+  // Set every bit, including the signed bit and bits beyond the first limb.
+  const internal::elem_t<T> portable{T(-1), true};
+  const internal::elem_t<Vendor> vendor{Vendor(-1), true};
+  const auto bytes = internal::frt::ToBinaryString(portable);
+  EXPECT_EQ(bytes.size(), (T::width + 7) / 8 + 1);
+  EXPECT_EQ(bytes, internal::frt::ToBinaryString(vendor));
+  const auto decoded =
+      internal::frt::FromBinaryString<internal::elem_t<Vendor> >(bytes);
+  EXPECT_EQ(decoded.val, vendor.val);
+  EXPECT_TRUE(decoded.eot);
+}
+
+TEST(VendorParity, StreamFrames) {
+  CheckStreamFrame<u<7>, ap_uint<7> >();
+  CheckStreamFrame<i<17>, ap_int<17> >();
+  CheckStreamFrame<u<544>, ap_uint<544> >();
+  CheckStreamFrame<i<544>, ap_int<544> >();
+}
+
 // A struct is where a wrong alignment shows up: the size alone can agree
 // while every member after the value sits somewhere else.
 template <int W>

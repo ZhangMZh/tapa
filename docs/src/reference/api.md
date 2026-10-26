@@ -81,6 +81,8 @@ tapa::task().invoke(MyKernel, tapa::executable("my_kernel.xo"), arg1, arg2);
 
 Streams are the fundamental inter-task communication primitive. Each stream is a fixed-depth FIFO. Blocking operations stall until data or space is available; non-blocking operations return immediately.
 
+For direct integer elements (`tapa::u<W>`, `tapa::i<W>`, `ap_uint<W>` and `ap_int<W>`), the task graph records the declared payload width `W`, independently of the C++ object's size and alignment. Internal FIFO data wires carry `W` data bits plus one EoT bit. Vitis top-level AXI4-Stream ports carry `8 * ceil(W / 8)` TDATA bits, with zero padding above the payload and EoT on TLAST. The unsigned QDMA envelope preserves signed payloads as their `W`-bit two's-complement pattern; all TKEEP bytes are valid.
+
 ### `tapa::stream<T, Depth>`
 
 Owner type for a point-to-point FIFO. Declare inter-task channels inside an

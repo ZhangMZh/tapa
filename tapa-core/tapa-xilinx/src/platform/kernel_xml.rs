@@ -5,7 +5,7 @@
 //! template byte-for-byte (modulo XML-escaping invariants).
 
 use serde::{Deserialize, Serialize};
-use tapa_protocol::{M_AXI_PREFIX, S_AXI_NAME};
+use tapa_protocol::{axis_data_width, M_AXI_PREFIX, S_AXI_NAME};
 
 use crate::error::{Result, XilinxError};
 
@@ -25,7 +25,8 @@ pub struct KernelXmlPort {
     pub name: String,
     pub category: PortCategory,
     /// Bit width; 32 for a typical `int` scalar, 512 for a wide MMAP
-    /// channel, etc.
+    /// channel, etc. Stream payload widths are rounded to whole bytes when
+    /// emitting the AXIS dataWidth attribute.
     pub width: u32,
     /// Optional user-specified port name override. Empty string means
     /// "use `name`".
@@ -142,7 +143,7 @@ pub fn emit_kernel_xml(args: &KernelXmlArgs) -> Result<String> {
                     name: port.name.clone(),
                     mode: mode.into(),
                     range: None,
-                    data_width: port.width,
+                    data_width: axis_data_width(port.width),
                     port_type: "stream".into(),
                     base: None,
                 });
@@ -232,14 +233,14 @@ mod tests {
                 KernelXmlPort {
                     name: "i0".into(),
                     category: PortCategory::IStream,
-                    width: 64,
+                    width: 17,
                     port: String::new(),
                     ctype: "tapa::istream<int>".into(),
                 },
                 KernelXmlPort {
                     name: "o0".into(),
                     category: PortCategory::OStream,
-                    width: 64,
+                    width: 544,
                     port: String::new(),
                     ctype: "tapa::ostream<int>".into(),
                 },
@@ -250,6 +251,8 @@ mod tests {
         assert!(xml.contains("mode=\"write_only\""));
         assert!(xml.contains("hwControlProtocol=\"ap_ctrl_none\""));
         assert!(!xml.contains("s_axi_control"));
+        assert!(xml.contains("dataWidth=\"24\""));
+        assert!(xml.contains("dataWidth=\"544\""));
     }
 
     #[test]

@@ -1,0 +1,66 @@
+"""Stream width alignment across host frames, internal FIFOs and AXIS."""
+
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//bazel:tapa_rules.bzl", "tapa_xo")
+
+cc_binary(
+    name = "stream-width-alignment-host",
+    srcs = [
+        "stream.cpp",
+        "stream.h",
+        "stream-host.cpp",
+    ],
+    deps = [
+        "//tapa-lib:tapa-host",
+        "@gflags",
+    ],
+)
+
+sh_test(
+    name = "stream-width-alignment",
+    srcs = ["//bazel:sim_env.sh"],
+    args = ["$(rootpath stream-width-alignment-host)"],
+    data = [":stream-width-alignment-host"],
+    env = {"TAPA_CONCURRENCY": "2"},
+)
+
+[
+    tapa_xo(
+        name = "stream-width-alignment-" + flow,
+        srcs = ["stream.cpp"],
+        hdrs = ["stream.h"],
+        target = target,
+        top_name = "StreamWidthAlignment",
+    )
+    for flow, target in [
+        ("xo", "xilinx-vitis"),
+        ("zip", "xilinx-hls"),
+    ]
+]
+
+[
+    sh_test(
+        name = "stream-width-alignment-" + flow + "sim",
+        size = "enormous",
+        timeout = "moderate",
+        srcs = ["//bazel:sim_env.sh"],
+        args = [
+            "$(rootpath stream-width-alignment-host)",
+            "--bitstream=$(rootpath stream-width-alignment-" + flow + ")",
+            "--cosim_simulator=verilator",
+        ],
+        data = [
+            ":stream-width-alignment-host",
+            ":stream-width-alignment-" + flow,
+            "//fpga-runtime:cargo_release_artifacts",
+            "@verilator//:verilator_executable",
+        ],
+        env = {"VERILATOR_BIN": "$(rootpath @verilator//:verilator_executable)"},
+        tags = ["cpu:2"],
+    )
+    for flow in [
+        "xo",
+        "zip",
+    ]
+]

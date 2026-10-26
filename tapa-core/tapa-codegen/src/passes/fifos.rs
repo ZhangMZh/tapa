@@ -440,7 +440,8 @@ pub fn connect_fifos(
                             .find_port(&format!("{canonical_base}_TKEEP"))
                             .is_some()
                         {
-                            let keep_width = stream_width.div_ceil(8).max(1);
+                            let keep_width =
+                                (tapa_protocol::axis_data_width(stream_width) / 8).max(1);
                             mm.add_assign(ContinuousAssign::new(
                                 Expr::ident(format!("{canonical_base}_TKEEP")),
                                 Expr::lit(format!(

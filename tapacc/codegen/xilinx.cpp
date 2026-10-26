@@ -238,8 +238,8 @@ void XilinxBackend::RewriteSignature(const TaskModel& task, bool is_top,
   // Middle/top: replace mmap parameters with 64-bit base addresses, on every
   // declaration of the function (the forward declaration and the definition),
   // so the emitted signatures agree.
-  bool rewrote_axis_stream = false;
   for (const clang::FunctionDecl* decl : task.def->redecls()) {
+    bool rewrote_axis_stream = false;
     for (const clang::ParmVarDecl* param : decl->parameters()) {
       const std::string name = param->getNameAsString();
       const TapaKind kind = ClassifyTapaType(param);
@@ -263,8 +263,7 @@ void XilinxBackend::RewriteSignature(const TaskModel& task, bool is_top,
         // `tapa::istream` disaggregated `_s_*` member ports.
         if (const auto* arg = GetTemplateArg(param->getType(), 0)) {
           if (arg->getKind() == clang::TemplateArgument::Type) {
-            const uint32_t w =
-                param->getASTContext().getTypeInfo(arg->getAsType()).Width;
+            const uint32_t w = AxisDataWidth(param);
             edits.ReplaceText(
                 param->getTypeSourceInfo()->getTypeLoc().getSourceRange(),
                 "hls::stream<qdma_axis<" + std::to_string(w) + ", 0, 0, 0> >&");
@@ -273,16 +272,14 @@ void XilinxBackend::RewriteSignature(const TaskModel& task, bool is_top,
         }
       }
     }
-  }
-
-  // The rewritten signature (and the dummy writes in the top task's body) spell
-  // qdma_axis<...>, whose definition lives in ap_axi_sdata.h. This runs once
-  // per emitted cpp (RewriteSignature is called for the top task in every
-  // file), so every file that carries the rewritten decl gets the header.
-  if (rewrote_axis_stream) {
-    edits.InsertTextAfter(task.def->getBeginLoc(),
-                          "#include \"ap_axi_sdata.h\"\n"
-                          "#include \"hls_stream.h\"\n\n");
+    // A declaration can live in a header included before the definition.
+    // Make qdma_axis available at each rewritten declaration, not just in
+    // the translation unit containing the function body.
+    if (rewrote_axis_stream) {
+      edits.InsertTextAfter(decl->getBeginLoc(),
+                            "#include \"ap_axi_sdata.h\"\n"
+                            "#include \"hls_stream.h\"\n\n");
+    }
   }
 }
 

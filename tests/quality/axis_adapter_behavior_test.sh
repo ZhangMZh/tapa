@@ -53,22 +53,26 @@ trap 'rm -rf "${tmp}"' EXIT
 # delay controls to schedule. That keeps the generated code buildable by the
 # CI image's gcc-7 (Verilator's --timing output needs C++20 coroutines, and
 # the generated verilated.mk hard-codes `CXX = c++`).
-"${VERILATOR}" \
-  --cc \
-  --exe \
-  --build \
-  --assert \
-  --sv \
-  --no-timing \
-  -Wno-fatal \
-  "$(resolve_runfile tapa-core/tapa-codegen/assets/verilog/axis_adapter.v)" \
-  "$(resolve_runfile tapa-core/tapa-codegen/assets/verilog/fifo.v)" \
-  "$(resolve_runfile tapa-core/tapa-codegen/assets/verilog/fifo_fwd.v)" \
-  "$(resolve_runfile tapa-core/tapa-codegen/assets/verilog/fifo_srl.v)" \
-  "$(resolve_runfile tapa-core/tapa-codegen/assets/verilog/fifo_bram.v)" \
-  "$(resolve_runfile tests/quality/axis_adapter_smoke_tb.sv)" \
-  "$(resolve_runfile tests/quality/axis_adapter_smoke_main.cpp)" \
-  --Mdir "${tmp}/obj_dir" \
-  --top-module tb
+for width in 8 17; do
+  "${VERILATOR}" \
+    --cc \
+    --exe \
+    --build \
+    --assert \
+    --sv \
+    --no-timing \
+    -Wno-fatal \
+    "$(resolve_runfile tapa-core/tapa-codegen/assets/verilog/axis_adapter.v)" \
+    "$(resolve_runfile tapa-core/tapa-codegen/assets/verilog/fifo.v)" \
+    "$(resolve_runfile tapa-core/tapa-codegen/assets/verilog/fifo_fwd.v)" \
+    "$(resolve_runfile tapa-core/tapa-codegen/assets/verilog/fifo_srl.v)" \
+    "$(resolve_runfile tapa-core/tapa-codegen/assets/verilog/fifo_bram.v)" \
+    "$(resolve_runfile tests/quality/axis_adapter_smoke_tb.sv)" \
+    "$(resolve_runfile tests/quality/axis_adapter_smoke_main.cpp)" \
+    --Mdir "${tmp}/obj_dir" \
+    --top-module tb \
+    -GDATA_WIDTH="${width}" \
+    -CFLAGS "-DTEST_DATA_WIDTH=${width}"
 
-"${tmp}/obj_dir/Vtb"
+  "${tmp}/obj_dir/Vtb"
+done

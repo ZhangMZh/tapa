@@ -141,7 +141,9 @@ std::vector<Port> BuildPorts(const clang::ASTContext& ctx,
     CheckParamShape(ctx, param, kind);
     const std::string name = param->getNameAsString();
     const std::string elem = ElementTypeName(param);
-    const uint32_t elem_width = ElementWidth(param);
+    const uint32_t elem_width = IsStreamInterface(kind)
+                                    ? StreamElementWidth(param)
+                                    : ElementWidth(param);
 
     switch (kind) {
       case TapaKind::kMmap:

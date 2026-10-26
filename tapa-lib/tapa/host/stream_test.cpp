@@ -162,6 +162,45 @@ TEST(StringifyTest, TapaInternalElemFromBinaryString) {
   EXPECT_EQ(val.val, 1.f);
 }
 
+template <typename T>
+void CheckStreamFrame() {
+  constexpr int kBits = T::width;
+  constexpr size_t kDataBytes = (kBits + 7) / 8;
+  internal::elem_t<T> token{};
+  token.val[0] = true;
+  token.val[kBits - 1] = true;
+  token.eot = true;
+  const std::string bytes = internal::frt::ToBinaryString(token);
+  ASSERT_EQ(bytes.size(), kDataBytes + 1);
+  EXPECT_EQ(static_cast<unsigned char>(bytes[0]) & 1u, 1u);
+  EXPECT_EQ(static_cast<unsigned char>(bytes[kDataBytes - 1]),
+            (1u << ((kBits - 1) % 8)) | (kDataBytes == 1 ? 1u : 0u));
+  EXPECT_EQ(bytes[kDataBytes], 1);
+  const auto decoded =
+      internal::frt::FromBinaryString<internal::elem_t<T>>(bytes);
+  EXPECT_EQ(decoded.val, token.val);
+  EXPECT_TRUE(decoded.eot);
+
+  // Exercise the queue's allocation size, peek and both transfer directions.
+  internal::frt::Stream<internal::elem_t<T>> queue(2);
+  token.eot = false;
+  queue.push(token);
+  queue.push({T{}, true});
+  EXPECT_EQ(queue.front().val, token.val);
+  EXPECT_FALSE(queue.pop().eot);
+  EXPECT_TRUE(queue.pop().eot);
+  EXPECT_TRUE(queue.empty());
+}
+
+TEST(StringifyTest, StreamFramesKeepPayloadAndEotSeparate) {
+  CheckStreamFrame<u<7>>();
+  CheckStreamFrame<u<17>>();
+  CheckStreamFrame<i<17>>();
+  CheckStreamFrame<u<544>>();
+  CheckStreamFrame<i<544>>();
+  CheckStreamFrame<u<512>>();
+}
+
 TEST(StreamNameTest, StreamsHaveIndexedNames) {
   tapa::streams<int, 3> data_q("data");
 

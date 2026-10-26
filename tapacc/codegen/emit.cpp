@@ -35,7 +35,7 @@ void EmitDummyStreamRW(const clang::ParmVarDecl* param, TapaKind kind,
       std::string type = ElementTypeName(param);
       if (qdma) {
         type =
-            "qdma_axis<" + std::to_string(ElementWidth(param)) + ", 0, 0, 0>";
+            "qdma_axis<" + std::to_string(AxisDataWidth(param)) + ", 0, 0, 0>";
       }
       dummy_write(name, type);
       break;
